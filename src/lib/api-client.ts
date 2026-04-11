@@ -1,6 +1,8 @@
-// In production (Vercel), frontend and backend share the same domain, so we use a relative path.
-// In development, the Vite dev server proxy or direct URL is used.
-const BASE_URL = import.meta.env.PROD ? "/api" : "http://localhost:3001/api";
+// If we are running on localhost, use the local backend server. 
+// Otherwise, we are deployed on Vercel so we just use the relative /api path (which routes to the Serverless function).
+const BASE_URL = typeof window !== "undefined" && window.location.hostname === "localhost" 
+  ? "http://localhost:3001/api" 
+  : "/api";
 
 /** Pull the JWT from the persisted auth store in localStorage */
 function getToken(): string | null {
