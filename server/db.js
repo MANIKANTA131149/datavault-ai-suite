@@ -1,9 +1,6 @@
 const { MongoClient, ServerApiVersion } = require("mongodb");
-const dns = require("dns");
-
-// Use Google public DNS — the local DNS may not support SRV record lookups
-// required by the REDACTED connection string.
-dns.setServers(["8.8.8.8", "8.8.4.4"]);
+// Vercel serverless environments provide their own DNS resolvers.
+// Modifying them manually will cause FUNCTION_INVOCATION_FAILED.
 
 const uri =
   "REDACTED
