@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen, Settings2, Search } from "lucide-react";
+import { Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen, Settings2, Search, Eye, X, Database, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { runAgent, type AgentStep } from "@/lib/agent";
 import type { Provider } from "@/lib/llm-client";
 import { toast } from "sonner";
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 
 const COMMAND_COLORS: Record<string, string> = {
   GetSheetDescription: "bg-primary/10 text-primary",
@@ -92,9 +92,17 @@ function StepCard({ step }: { step: AgentStep }) {
 function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
-  const isChartable = isArray && result.length > 0 && Object.keys(result[0]).length === 2;
-  const [chartType, setChartType] = useState<"bar" | "pie">("bar");
+  const keys = isArray && result.length > 0 ? Object.keys(result[0]) : [];
+  const numericKeys = keys.filter((k) => typeof result?.[0]?.[k] === "number");
+  const dateKeys = keys.filter((k) => !isNaN(Date.parse(String(result?.[0]?.[k]))) && String(result?.[0]?.[k]).length > 4);
+  const isChartable = isArray && result.length > 0 && keys.length >= 2;
+  const isLineable = isChartable && dateKeys.length > 0 && numericKeys.length > 0;
+  const defaultChart = isLineable ? "line" : "bar";
+  const [chartType, setChartType] = useState<"bar" | "pie" | "line" | "area">(defaultChart);
   const [showJson, setShowJson] = useState(false);
+
+  const valueKey = numericKeys[0] || keys[1];
+  const labelKey = keys.find((k) => k !== valueKey) || keys[0];
 
   const downloadCSV = () => {
     if (!isArray) return;
@@ -123,25 +131,48 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
         {isChartable && (
           <div>
             <div className="flex gap-1 mb-3">
-              <button onClick={() => setChartType("bar")} className={`text-xs px-2 py-1 rounded ${chartType === "bar" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>Bar</button>
-              <button onClick={() => setChartType("pie")} className={`text-xs px-2 py-1 rounded ${chartType === "pie" ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>Pie</button>
+              {(["bar", "line", "area", "pie"] as const).map((t) => (
+                <button key={t} onClick={() => setChartType(t)} className={`text-xs px-2 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                  {t}
+                </button>
+              ))}
             </div>
-            <div className="h-48">
+            <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
-                {chartType === "bar" ? (
-                  <BarChart data={result.slice(0, 20)}>
-                    <XAxis dataKey={Object.keys(result[0])[0]} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
-                    <Bar dataKey={Object.keys(result[0])[1]} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                ) : (
+                {chartType === "pie" ? (
                   <PieChart>
-                    <Pie data={result.slice(0, 10)} dataKey={Object.keys(result[0])[1]} nameKey={Object.keys(result[0])[0]} cx="50%" cy="50%" outerRadius={80}>
+                    <Pie data={result.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={80}>
                       {result.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                     </Pie>
                     <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
                   </PieChart>
+                ) : chartType === "line" ? (
+                  <LineChart data={result.slice(0, 50)}>
+                    <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                  </LineChart>
+                ) : chartType === "area" ? (
+                  <AreaChart data={result.slice(0, 50)}>
+                    <defs>
+                      <linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill="url(#rg)" strokeWidth={2} dot={false} />
+                  </AreaChart>
+                ) : (
+                  <BarChart data={result.slice(0, 20)}>
+                    <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <Bar dataKey={valueKey} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 )}
               </ResponsiveContainer>
             </div>
@@ -203,10 +234,161 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
   );
 }
 
+// ─── Data Preview Panel ───────────────────────────────────────────────────────
+function DataPreviewPanel({
+  dataset,
+  sheet,
+  onClose,
+}: {
+  dataset: ReturnType<typeof useDatasetStore>["datasets"][0];
+  sheet: string;
+  onClose: () => void;
+}) {
+  const { loadDatasetData } = useDatasetStore();
+  const [sheetData, setSheetData] = useState<{ columns: any[]; rows: any[] } | null>(null);
+  const [loadingData, setLoadingData] = useState(false);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 100;
+
+  useEffect(() => {
+    const inMem = dataset.data?.sheets[sheet];
+    if (inMem) { setSheetData(inMem); return; }
+    setLoadingData(true);
+    loadDatasetData(dataset.id).then((fileData) => {
+      setSheetData(fileData?.sheets[sheet] || null);
+      setLoadingData(false);
+    });
+  }, [dataset.id, sheet]);
+
+  const filtered = useMemo(() => {
+    if (!sheetData) return [];
+    if (!search.trim()) return sheetData.rows;
+    const q = search.toLowerCase();
+    return sheetData.rows.filter((row) =>
+      Object.values(row).some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [sheetData, search]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  return (
+    <motion.div
+      className="absolute inset-0 z-50 bg-background flex flex-col"
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 16 }}
+      transition={{ duration: 0.18 }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 h-12 border-b border-border bg-background-secondary shrink-0">
+        <div className="flex items-center gap-2">
+          <Database size={14} className="text-primary" />
+          <span className="font-medium text-sm text-foreground">{dataset.fileName}</span>
+          <span className="text-muted-foreground">·</span>
+          <span className="text-sm text-muted-foreground">{sheet}</span>
+          {sheetData && (
+            <>
+              <span className="text-xs text-muted-foreground bg-card border border-border px-2 py-0.5 rounded">{sheetData.rows.length.toLocaleString()} rows</span>
+              <span className="text-xs text-muted-foreground bg-card border border-border px-2 py-0.5 rounded">{sheetData.columns.length} cols</span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              className="pl-7 pr-3 h-7 text-xs bg-card border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-44"
+              placeholder="Search rows..."
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            />
+          </div>
+          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+
+      {/* Column type badges */}
+      {sheetData && (
+        <div className="flex gap-4 px-5 py-2 border-b border-border bg-card/40 overflow-x-auto shrink-0">
+          {sheetData.columns.map((col: any) => (
+            <div key={col.name} className="flex flex-col gap-0.5 shrink-0">
+              <span className="text-xs font-medium text-foreground">{col.name}</span>
+              <span className={["text-xs px-1.5 py-0.5 rounded font-mono", col.dtype === "number" ? "bg-blue-500/10 text-blue-400" : col.dtype === "date" ? "bg-purple-500/10 text-purple-400" : col.dtype === "boolean" ? "bg-amber-500/10 text-amber-400" : "bg-muted/60 text-muted-foreground"].join(" ")}>{col.dtype}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Body */}
+      {loadingData ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground">Loading dataset from storage...</p>
+          </div>
+        </div>
+      ) : !sheetData ? (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-muted-foreground text-sm">No data available for this sheet</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex-1 overflow-auto scrollbar-thin">
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 bg-background-secondary z-10">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border">#</th>
+                  {sheetData.columns.map((col: any) => (
+                    <th key={col.name} className="px-4 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-b border-border">
+                      {col.name}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((row: any, i: number) => (
+                  <tr key={i} className="hover:bg-card/50 transition-colors">
+                    <td className="px-4 py-2 text-muted-foreground border-b border-border/40">{page * PAGE_SIZE + i + 1}</td>
+                    {sheetData.columns.map((col: any) => (
+                      <td key={col.name} className="px-4 py-2 text-foreground max-w-[240px] truncate border-b border-border/40">
+                        {String(row[col.name] ?? "")}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-2.5 border-t border-border bg-background-secondary shrink-0">
+              <span className="text-xs text-muted-foreground">
+                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()} rows
+              </span>
+              <div className="flex gap-1.5">
+                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">
+                  Previous
+                </button>
+                <span className="px-2 h-7 text-xs flex items-center text-muted-foreground">{page + 1} / {totalPages}</span>
+                <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </motion.div>
+  );
+}
+
 export default function QueryPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { datasets } = useDatasetStore();
+  const { datasets, getDataset } = useDatasetStore();
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
   const { addEntry } = useHistoryStore();
 
@@ -219,10 +401,12 @@ export default function QueryPage() {
   const [finalResult, setFinalResult] = useState<any>(null);
   const [showResult, setShowResult] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const selectedDataset = datasets.find((d) => d.id === selectedDatasetId);
+  // Use getDataset so we get the in-memory parsed data (not just persisted metadata)
+  const selectedDataset = getDataset(selectedDatasetId) ?? datasets.find((d) => d.id === selectedDatasetId);
 
   useEffect(() => {
     if (selectedDataset && !selectedSheet) setSelectedSheet(selectedDataset.sheetNames[0]);
@@ -243,7 +427,19 @@ export default function QueryPage() {
     setCurrentSteps([]);
     setFinalResult(null);
 
-    const sheetData = selectedDataset!.data.sheets[selectedSheet];
+    let sheetData = selectedDataset?.data?.sheets[selectedSheet];
+    if (!sheetData) {
+      // Data not in memory — try fetching from MongoDB (happens after re-login)
+      toast.info("Loading dataset from storage…");
+      const { loadDatasetData } = useDatasetStore.getState();
+      const fetched = await loadDatasetData(selectedDatasetId);
+      sheetData = fetched?.sheets[selectedSheet];
+    }
+    if (!sheetData) {
+      toast.error("Dataset data unavailable. Please re-upload the file.");
+      setIsRunning(false);
+      return;
+    }
     const steps: AgentStep[] = [];
     const startTime = Date.now();
 
@@ -288,7 +484,16 @@ export default function QueryPage() {
   const apiKeyForProvider = providerConfigs[activeProvider]?.apiKey || "";
 
   return (
-    <div className="flex h-[calc(100vh-56px)]">
+    <div className="flex h-[calc(100vh-56px)] relative">
+      <AnimatePresence>
+        {showPreview && selectedDataset && (
+          <DataPreviewPanel
+            dataset={selectedDataset}
+            sheet={selectedSheet}
+            onClose={() => setShowPreview(false)}
+          />
+        )}
+      </AnimatePresence>
       {/* Left: Context Panel */}
       <div className="w-[280px] border-r border-border bg-background-secondary flex flex-col shrink-0 overflow-auto hidden lg:flex">
         <div className="p-4 space-y-4">
@@ -320,6 +525,17 @@ export default function QueryPage() {
               <Badge variant="outline" className="border-border text-xs">{selectedDataset.rowCounts[selectedSheet]} rows</Badge>
               <Badge variant="outline" className="border-border text-xs">{selectedDataset.columnCounts[selectedSheet]} cols</Badge>
             </div>
+          )}
+
+          {selectedDataset && (
+            <button
+              onClick={() => setShowPreview(true)}
+              className="flex items-center gap-2 w-full text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-card/80 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all"
+            >
+              <Table2 size={12} />
+              Preview data
+              <Eye size={11} className="ml-auto" />
+            </button>
           )}
 
           <Separator className="bg-border" />

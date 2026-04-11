@@ -104,7 +104,7 @@ export function AppSidebar() {
               <CreditCard size={14} className="mr-2" /> Billing
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => { logout(); navigate("/auth"); }} className="text-destructive focus:text-destructive">
+            <DropdownMenuItem onClick={async () => { await logout(); navigate("/auth"); }} className="text-destructive focus:text-destructive">
               <LogOut size={14} className="mr-2" /> Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

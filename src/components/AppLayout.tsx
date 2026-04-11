@@ -1,9 +1,13 @@
-import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom";
+import { useEffect } from "react";
+import { useLocation, Outlet, Navigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useAuthStore } from "@/stores/auth-store";
 import { useLLMStore, PROVIDER_LABELS } from "@/stores/llm-store";
+import { useDatasetStore } from "@/stores/dataset-store";
+import { useHistoryStore } from "@/stores/history-store";
+import { useSettingsStore } from "@/stores/settings-store";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/dashboard": "Dashboard",
@@ -17,6 +21,21 @@ export default function AppLayout() {
   const { user } = useAuthStore();
   const location = useLocation();
   const { activeProvider, activeModel } = useLLMStore();
+  const { fetchDatasets } = useDatasetStore();
+  const { fetchHistory } = useHistoryStore();
+  const { fetchSettings, applyTheme, theme } = useSettingsStore();
+
+  // Load all user data from MongoDB on mount, and apply saved theme immediately
+  useEffect(() => {
+    if (user) {
+      fetchDatasets();
+      fetchHistory();
+      fetchSettings();
+    } else {
+      // Ensure default theme is applied even before settings load
+      applyTheme(theme);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!user) return <Navigate to="/auth" replace />;
 

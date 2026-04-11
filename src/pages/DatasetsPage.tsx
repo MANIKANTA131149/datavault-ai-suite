@@ -20,7 +20,7 @@ function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onCl
   const { removeDataset } = useDatasetStore();
   const navigate = useNavigate();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const sheet = dataset.data.sheets[activeSheet];
+  const sheet = dataset.data?.sheets[activeSheet];
 
   return (
     <motion.div
@@ -47,7 +47,14 @@ function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onCl
         </div>
       )}
 
-      <Tabs defaultValue="preview" className="flex-1 flex flex-col overflow-hidden">
+      {!dataset.data && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+          <FileText size={32} className="text-muted-foreground/40" />
+          <p className="text-sm font-medium text-foreground">Data not available</p>
+          <p className="text-xs text-muted-foreground">Dataset previews are only available in the current session. Re-upload the file to view its contents again.</p>
+        </div>
+      )}
+      <Tabs defaultValue="preview" className="flex-1 flex flex-col overflow-hidden" style={{ display: dataset.data ? undefined : 'none' }}>
         <TabsList className="mx-4 mt-3 bg-card">
           <TabsTrigger value="preview">Preview</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
@@ -169,7 +176,7 @@ function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onCl
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)} className="border-border">Cancel</Button>
-            <Button variant="destructive" onClick={() => { removeDataset(dataset.id); setDeleteOpen(false); toast.success("Dataset deleted"); }}>Delete</Button>
+            <Button variant="destructive" onClick={async () => { await removeDataset(dataset.id); setDeleteOpen(false); toast.success("Dataset deleted"); }}>Delete</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -187,7 +194,7 @@ export default function DatasetsPage() {
       setParsing(true);
       try {
         const parsed = await parseFile(file);
-        addDataset(parsed);
+        await addDataset(parsed);
         toast.success(`${file.name} uploaded successfully`);
       } catch (err: any) {
         toast.error(`Failed to parse ${file.name}: ${err.message}`);

@@ -11,13 +11,15 @@ export interface AgentStep {
   isFinal: boolean;
 }
 
-const SYSTEM_PROMPT = `You are a data analysis agent. You have access to a dataset. Answer the user's question by issuing commands.
+const SYSTEM_PROMPT = `You are an efficient data analysis agent. Minimize the number of turns — answer as directly as possible.
 
-Available commands (respond with EXACTLY one JSON object per turn):
-1. {"command": "GetSheetDescription"} - Get overview of the dataset
-2. {"command": "GetColumns"} - Get column names and types
-3. {"command": "QuerySheet", "args": {"operation": "filter|sort|groupby|aggregate|select|head|unique|count", "params": {...}}} - Query the data
-4. {"command": "ExecuteFinalQuery", "args": {"operation": "...", "params": {...}}} - Final query that produces the answer
+You receive full column info in the first message. Use it to answer immediately.
+
+Commands (respond with EXACTLY one JSON object):
+1. {"command": "Answer", "args": {"value": <any>}} — Use this to answer directly WITHOUT querying, when you can infer the answer from column metadata alone (e.g. "how many columns", "what are the columns", "what types")
+2. {"command": "ExecuteFinalQuery", "args": {"operation": "filter|sort|groupby|aggregate|select|head|unique|count", "params": {...}}} — Execute ONE query and return the answer. Use this for most questions.
+3. {"command": "QuerySheet", "args": {"operation": "...", "params": {...}}} — Only if you MUST do an intermediate step before the final query.
+4. {"command": "GetSheetDescription"} or {"command": "GetColumns"} — Only if column info is insufficient.
 
 Operation params:
 - filter: {"column": "col", "operator": ">|<|==|!=|>=|<=|contains", "value": X}
@@ -29,7 +31,11 @@ Operation params:
 - unique: {"column": "col"}
 - count: {}
 
-Respond with ONLY the JSON command. No other text.`;
+RULES:
+- ALWAYS prefer Answer or ExecuteFinalQuery on turn 1.
+- NEVER call GetSheetDescription or GetColumns unless the column list is missing.
+- NEVER use QuerySheet when ExecuteFinalQuery will do.
+- Respond with ONLY the JSON. No explanation, no text.`;
 
 function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
   switch (operation) {
@@ -140,9 +146,17 @@ export async function* runAgent(
   const messages: { role: string; content: string }[] = [];
   const prompt = systemPromptOverride || SYSTEM_PROMPT;
   let turn = 0;
-  const maxTurns = 8;
+  const maxTurns = 6;
 
-  messages.push({ role: "user", content: `Dataset has ${sheetData.rows.length} rows, columns: ${sheetData.columns.map((c) => `${c.name} (${c.dtype})`).join(", ")}.\n\nQuestion: ${question}` });
+  // Build rich upfront context so the LLM can answer on turn 1
+  const columnSummary = sheetData.columns
+    .map((c) => `${c.name} (${c.dtype}, ${c.nonNullCount} non-null, ${c.uniqueCount} unique, samples: ${c.sampleValues.slice(0, 3).join(", ")})`)
+    .join("\n  ");
+
+  messages.push({
+    role: "user",
+    content: `Dataset: ${sheetData.rows.length} rows, ${sheetData.columns.length} columns.\nColumns:\n  ${columnSummary}\n\nQuestion: ${question}\n\nRespond with a single JSON command. Prefer Answer or ExecuteFinalQuery directly.`,
+  });
 
   while (turn < maxTurns) {
     turn++;
@@ -182,6 +196,10 @@ export async function* runAgent(
     let result: any;
 
     switch (command) {
+      case "Answer":
+        // Direct answer without querying — LLM inferred from metadata
+        result = args.value !== undefined ? args.value : args;
+        break;
       case "GetSheetDescription":
         result = {
           rowCount: sheetData.rows.length,
@@ -206,7 +224,7 @@ export async function* runAgent(
         result = { error: `Unknown command: ${command}` };
     }
 
-    const isFinal = command === "ExecuteFinalQuery";
+    const isFinal = command === "ExecuteFinalQuery" || command === "Answer";
     const durationMs = Date.now() - startTime;
 
     yield {
@@ -224,7 +242,7 @@ export async function* runAgent(
     messages.push({ role: "assistant", content: llmResponse.content });
     messages.push({
       role: "user",
-      content: `Result: ${JSON.stringify(result).slice(0, 2000)}${JSON.stringify(result).length > 2000 ? "... (truncated)" : ""}\n\nContinue analysis or use ExecuteFinalQuery to provide the final answer.`,
+      content: `Result: ${JSON.stringify(result).slice(0, 2000)}${JSON.stringify(result).length > 2000 ? "... (truncated)" : ""}\n\nNow issue ExecuteFinalQuery or Answer to complete the task. Do NOT do more intermediate steps unless strictly necessary.`,
     });
   }
 
