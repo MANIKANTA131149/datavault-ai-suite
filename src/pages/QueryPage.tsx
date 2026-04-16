@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useId } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen, Settings2, Search, Eye, X, Database, Table2 } from "lucide-react";
@@ -39,6 +39,59 @@ const SUGGESTED_PROMPTS = [
   "Find rows where value > 1000",
   "What is the average order value?",
 ];
+
+type ChartType = "bar" | "pie" | "line" | "area";
+
+function toChartNumber(value: any): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/,/g, "").trim();
+    if (!cleaned) return null;
+    const parsed = Number(cleaned);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getChartMeta(result: any) {
+  const rows: Record<string, any>[] = Array.isArray(result)
+    ? result.filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
+    : [];
+  const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const numericKeys = keys.filter((k) => rows.some((row) => toChartNumber(row[k]) !== null));
+  const valueKey = numericKeys[0] || "";
+  const labelKey = keys.find((k) => k !== valueKey) || keys[0] || "";
+  const dateKeys = keys.filter((k) =>
+    rows.some((row) => {
+      const value = String(row[k] ?? "");
+      return value.length > 4 && !Number.isNaN(Date.parse(value));
+    })
+  );
+  const chartRows = valueKey
+    ? rows
+        .map((row) => {
+          const numeric = toChartNumber(row[valueKey]);
+          if (numeric === null) return null;
+          return { ...row, [valueKey]: numeric };
+        })
+        .filter((row): row is Record<string, any> => row !== null)
+    : [];
+  const isChartable = chartRows.length > 0 && Boolean(valueKey) && Boolean(labelKey);
+  const defaultChart: ChartType = dateKeys.includes(labelKey) ? "line" : "bar";
+
+  return { rows, keys, chartRows, valueKey, labelKey, isChartable, defaultChart };
+}
+
+function getFinalStep(steps?: AgentStep[]) {
+  if (!steps || steps.length === 0) return null;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (step.isFinal || step.command === "ExecuteFinalQuery" || step.command === "Answer" || step.command === "FinalAnswer") {
+      return step;
+    }
+  }
+  return null;
+}
 
 function StepCard({ step }: { step: AgentStep }) {
   const [expanded, setExpanded] = useState(false);
@@ -92,22 +145,20 @@ function StepCard({ step }: { step: AgentStep }) {
 function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
-  const keys = isArray && result.length > 0 ? Object.keys(result[0]) : [];
-  const numericKeys = keys.filter((k) => typeof result?.[0]?.[k] === "number");
-  const dateKeys = keys.filter((k) => !isNaN(Date.parse(String(result?.[0]?.[k]))) && String(result?.[0]?.[k]).length > 4);
-  const isChartable = isArray && result.length > 0 && keys.length >= 2;
-  const isLineable = isChartable && dateKeys.length > 0 && numericKeys.length > 0;
-  const defaultChart = isLineable ? "line" : "bar";
-  const [chartType, setChartType] = useState<"bar" | "pie" | "line" | "area">(defaultChart);
+  const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
+  const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
+  const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const [showJson, setShowJson] = useState(false);
+  const areaGradientId = useId().replace(/:/g, "");
 
-  const valueKey = numericKeys[0] || keys[1];
-  const labelKey = keys.find((k) => k !== valueKey) || keys[0];
+  useEffect(() => {
+    setChartType(defaultChart);
+  }, [defaultChart]);
 
   const downloadCSV = () => {
-    if (!isArray) return;
-    const headers = Object.keys(result[0]);
-    const csv = [headers.join(","), ...result.map((r: any) => headers.map((h) => JSON.stringify(r[h] ?? "")).join(","))].join("\n");
+    if (!isArray || rows.length === 0) return;
+    const headers = Object.keys(rows[0]);
+    const csv = [headers.join(","), ...rows.map((r: any) => headers.map((h) => JSON.stringify(r[h] ?? "")).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = "result.csv"; a.click();
@@ -127,6 +178,12 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
             <p className="text-4xl font-semibold text-foreground font-mono">{typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}</p>
           </div>
         )}
+        {isPrimitiveValue && (
+          <div className="text-center py-8">
+            <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Result</p>
+            <p className="text-4xl font-semibold text-foreground font-mono">{String(result)}</p>
+          </div>
+        )}
 
         {isChartable && (
           <div>
@@ -141,22 +198,22 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
               <ResponsiveContainer width="100%" height="100%">
                 {chartType === "pie" ? (
                   <PieChart>
-                    <Pie data={result.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={80}>
-                      {result.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                    <Pie data={chartRows.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={80}>
+                      {chartRows.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                     </Pie>
                     <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
                   </PieChart>
                 ) : chartType === "line" ? (
-                  <LineChart data={result.slice(0, 50)}>
+                  <LineChart data={chartRows.slice(0, 50)}>
                     <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
                     <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                   </LineChart>
                 ) : chartType === "area" ? (
-                  <AreaChart data={result.slice(0, 50)}>
+                  <AreaChart data={chartRows.slice(0, 50)}>
                     <defs>
-                      <linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
                         <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                       </linearGradient>
@@ -164,10 +221,10 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
                     <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
-                    <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill="url(#rg)" strokeWidth={2} dot={false} />
+                    <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
                   </AreaChart>
                 ) : (
-                  <BarChart data={result.slice(0, 20)}>
+                  <BarChart data={chartRows.slice(0, 20)}>
                     <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
@@ -179,18 +236,18 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
           </div>
         )}
 
-        {isArray && !isChartable && (
+        {isArray && !isChartable && rows.length > 0 && (
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full text-xs">
               <thead className="bg-card">
                 <tr>
-                  {Object.keys(result[0] || {}).map((k) => (
+                  {Object.keys(rows[0] || {}).map((k) => (
                     <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {result.slice(0, 20).map((row: any, i: number) => (
+                {rows.slice(0, 20).map((row: any, i: number) => (
                   <tr key={i} className="border-t border-border/50">
                     {Object.values(row).map((v: any, j) => (
                       <td key={j} className="px-3 py-1.5 text-foreground max-w-[120px] truncate">{String(v ?? "")}</td>
@@ -230,6 +287,118 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
           </CollapsibleContent>
         </Collapsible>
       </div>
+    </div>
+  );
+}
+
+function InlineFinalResult({ result }: { result: any }) {
+  const isArray = Array.isArray(result);
+  const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
+  const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
+  const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
+  const [chartType, setChartType] = useState<ChartType>(defaultChart);
+  const areaGradientId = useId().replace(/:/g, "");
+
+  useEffect(() => {
+    setChartType(defaultChart);
+  }, [defaultChart]);
+
+  return (
+    <div className="ml-10 mt-1 mb-3 rounded-md border border-border bg-card p-3 space-y-3">
+      <p className="text-xs text-muted-foreground font-medium">Result</p>
+
+      {isSingleValue && (
+        <p className="text-2xl font-semibold text-foreground font-mono">
+          {typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}
+        </p>
+      )}
+      {isPrimitiveValue && (
+        <p className="text-2xl font-semibold text-foreground font-mono">{String(result)}</p>
+      )}
+
+      {isChartable && (
+        <div>
+          <div className="flex gap-1 mb-2">
+            {(["bar", "line", "area", "pie"] as const).map((t) => (
+              <button key={t} onClick={() => setChartType(t)} className={`text-xs px-2 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              {chartType === "pie" ? (
+                <PieChart>
+                  <Pie data={chartRows.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
+                    {chartRows.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  </Pie>
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                </PieChart>
+              ) : chartType === "line" ? (
+                <LineChart data={chartRows.slice(0, 50)}>
+                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                </LineChart>
+              ) : chartType === "area" ? (
+                <AreaChart data={chartRows.slice(0, 50)}>
+                  <defs>
+                    <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
+                </AreaChart>
+              ) : (
+                <BarChart data={chartRows.slice(0, 20)}>
+                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <Bar dataKey={valueKey} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {isArray && !isChartable && rows.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full text-xs">
+            <thead className="bg-background-secondary">
+              <tr>
+                {Object.keys(rows[0] || {}).map((k) => (
+                  <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 10).map((row: any, i: number) => (
+                <tr key={i} className="border-t border-border/50">
+                  {Object.values(row).map((v: any, j) => (
+                    <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {typeof result === "string" && (
+        <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>
+      )}
+
+      {!isArray && !isSingleValue && typeof result === "object" && result !== null && (
+        <pre className="bg-background-secondary rounded-md p-2 border border-border text-xs font-mono text-foreground overflow-auto max-h-52 scrollbar-thin">
+          {JSON.stringify(result, null, 2)}
+        </pre>
+      )}
     </div>
   );
 }
@@ -413,6 +582,7 @@ export default function QueryPage() {
   }, [selectedDataset, selectedSheet]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentSteps]);
+  const currentFinalStep = getFinalStep(currentSteps);
 
   const handleSend = async () => {
     if (!input.trim() || isRunning) return;
@@ -620,37 +790,42 @@ export default function QueryPage() {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <div key={i}>
-              {msg.role === "user" ? (
-                <div className="flex justify-end">
-                  <div className="bg-card rounded-lg px-4 py-2.5 max-w-md border border-border">
-                    <p className="text-sm text-foreground">{msg.content}</p>
+          {messages.map((msg, i) => {
+            const finalStep = getFinalStep(msg.steps);
+            return (
+              <div key={i}>
+                {msg.role === "user" ? (
+                  <div className="flex justify-end">
+                    <div className="bg-card rounded-lg px-4 py-2.5 max-w-md border border-border">
+                      <p className="text-sm text-foreground">{msg.content}</p>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {msg.steps && msg.steps.length > 0 ? (
-                    msg.steps.map((step, j) => <StepCard key={j} step={step} />)
-                  ) : (
-                    <div className="bg-destructive/10 rounded-lg px-4 py-2.5 border border-destructive/20">
-                      <p className="text-sm text-destructive">{msg.content}</p>
-                    </div>
-                  )}
-                  {msg.steps && msg.steps.length > 0 && (
-                    <div className="flex gap-3 text-xs text-muted-foreground pl-10 pt-1">
-                      <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
-                      <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <div className="space-y-1">
+                    {msg.steps && msg.steps.length > 0 ? (
+                      msg.steps.map((step, j) => <StepCard key={j} step={step} />)
+                    ) : (
+                      <div className="bg-destructive/10 rounded-lg px-4 py-2.5 border border-destructive/20">
+                        <p className="text-sm text-destructive">{msg.content}</p>
+                      </div>
+                    )}
+                    {msg.steps && msg.steps.length > 0 && (
+                      <div className="flex gap-3 text-xs text-muted-foreground pl-10 pt-1">
+                        <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
+                        <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
+                      </div>
+                    )}
+                    {finalStep && <InlineFinalResult result={finalStep.result} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {isRunning && (
             <div className="space-y-1">
               {currentSteps.map((step, j) => <StepCard key={j} step={step} />)}
+              {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
               <div className="flex items-center gap-2 pl-10">
                 <div className="flex gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0s" }} />

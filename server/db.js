@@ -3,7 +3,7 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 // Modifying them manually will cause FUNCTION_INVOCATION_FAILED.
 
 const uri =
-  "REDACTED
+  "mongodb://manikantaganta015:Mani-1234@demo-shard-00-00.bjyen.mongodb.net:27017,demo-shard-00-01.bjyen.mongodb.net:27017,demo-shard-00-02.bjyen.mongodb.net:27017/?ssl=true&replicaSet=atlas-cc2h4z-shard-0&authSource=admin&retryWrites=true&w=majority&appName=Demo";
 
 let db = null;
 let client = null;

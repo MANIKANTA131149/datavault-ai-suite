@@ -10,7 +10,7 @@ export const PROVIDER_MODELS: Record<Provider, string[]> = {
   azure: ["gpt-4o", "gpt-4-turbo"],
   cohere: ["command-r-plus", "command-r"],
   mistral: ["mistral-large", "mistral-medium", "open-mistral-7b"],
-  together: ["meta-llama/Llama-3-70b", "mistralai/Mixtral-8x7B"],
+  together: ["Apriel-1.6-15b-Thinker", "mistralai/Mixtral-8x7B"],
   ollama: ["llama3", "mistral", "gemma"],
 };
 
