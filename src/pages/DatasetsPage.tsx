@@ -1,7 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,17 +10,178 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { parseFile } from "@/lib/file-parser";
+import type { ColumnInfo, ParsedFile } from "@/lib/file-parser";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 
+// ─── Column Intelligence Helpers ─────────────────────────────────────────────
+function detectColumnTag(col: ColumnInfo, totalRows: number): { tag: string; color: string; icon: React.ElementType } {
+  const name = col.name.toLowerCase();
+  if (col.dtype === "date") return { tag: "Date", color: "bg-purple-500/10 text-purple-400", icon: Calendar };
+  if (col.dtype === "boolean") return { tag: "Boolean", color: "bg-amber-500/10 text-amber-400", icon: ToggleLeft };
+  if (col.uniqueCount === totalRows && col.dtype !== "number") return { tag: "ID", color: "bg-blue-500/10 text-blue-400", icon: Hash };
+  if (col.dtype === "number") return { tag: "Metric", color: "bg-green-500/10 text-green-400", icon: TrendingUp };
+  if (col.uniqueCount <= Math.max(10, totalRows * 0.05)) return { tag: "Dimension", color: "bg-pink-500/10 text-pink-400", icon: Tag };
+  return { tag: "Text", color: "bg-muted/60 text-muted-foreground", icon: FileText };
+}
+
+function computeDataQuality(col: ColumnInfo, totalRows: number) {
+  const nullPct = totalRows > 0 ? ((totalRows - col.nonNullCount) / totalRows) * 100 : 0;
+  const cardinalityPct = totalRows > 0 ? (col.uniqueCount / totalRows) * 100 : 0;
+  // Quality score: 100 - null% - (high cardinality for non-ID columns penalty)
+  let score = 100 - nullPct;
+  return { nullPct, cardinalityPct, score: Math.max(0, Math.round(score)) };
+}
+
+function ColumnIntelligenceTab({ sheet }: { sheet: { columns: ColumnInfo[]; rows: Record<string, any>[] } }) {
+  const totalRows = sheet.rows.length;
+
+  // Pre-compute all column stats
+  const colStats = useMemo(() => {
+    return sheet.columns.map((col) => {
+      const tagInfo = detectColumnTag(col, totalRows);
+      const quality = computeDataQuality(col, totalRows);
+
+      let nums: number[] = [];
+      let freqData: { name: string; value: number }[] = [];
+
+      if (col.dtype === "number") {
+        nums = sheet.rows.map((r) => Number(r[col.name])).filter((n) => !isNaN(n));
+      } else {
+        const counts: Record<string, number> = {};
+        for (const row of sheet.rows) {
+          const v = String(row[col.name] ?? "");
+          counts[v] = (counts[v] || 0) + 1;
+        }
+        freqData = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, value]) => ({ name: name.slice(0, 18), value }));
+      }
+
+      const min = nums.length ? Math.min(...nums) : null;
+      const max = nums.length ? Math.max(...nums) : null;
+      const mean = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+      const sorted = [...nums].sort((a, b) => a - b);
+      const median = sorted.length ? (sorted.length % 2 === 0 ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2 : sorted[Math.floor(sorted.length / 2)]) : null;
+
+      return { col, tagInfo, quality, nums, freqData, min, max, mean, median };
+    });
+  }, [sheet]);
+
+  // Overall dataset quality
+  const avgQuality = Math.round(colStats.reduce((s, c) => s + c.quality.score, 0) / colStats.length);
+  const qualityColor = avgQuality >= 80 ? "text-green-400" : avgQuality >= 60 ? "text-amber-400" : "text-red-400";
+  const qualityBg = avgQuality >= 80 ? "bg-green-500/10" : avgQuality >= 60 ? "bg-amber-500/10" : "bg-red-500/10";
+
+  return (
+    <div className="mt-3 space-y-4">
+      {/* Dataset Quality Banner */}
+      <div className={`flex items-center justify-between rounded-lg ${qualityBg} border border-border px-4 py-3`}>
+        <div className="flex items-center gap-2">
+          {avgQuality >= 80 ? <CheckCircle2 size={16} className="text-green-400" /> : <AlertTriangle size={16} className="text-amber-400" />}
+          <span className="text-sm font-medium text-foreground">Data Quality Score</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <span className={`text-2xl font-bold ${qualityColor}`}>{avgQuality}</span>
+            <span className="text-xs text-muted-foreground">/100</span>
+          </div>
+          <div className="w-24 h-2 bg-border rounded-full overflow-hidden">
+            <div className={`h-2 rounded-full ${avgQuality >= 80 ? "bg-green-400" : avgQuality >= 60 ? "bg-amber-400" : "bg-red-400"}`} style={{ width: `${avgQuality}%` }} />
+          </div>
+        </div>
+      </div>
+
+      {/* Column Cards */}
+      {colStats.map(({ col, tagInfo, quality, nums, freqData, min, max, mean, median }) => {
+        const TagIcon = tagInfo.icon;
+        return (
+          <Card key={col.name} className="p-4 bg-card border-border space-y-3">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-mono font-medium text-foreground truncate">{col.name}</span>
+                <Badge className={`${tagInfo.color} border-0 text-xs gap-1 shrink-0`}>
+                  <TagIcon size={9} />{tagInfo.tag}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge variant="outline" className="border-border text-xs">{col.dtype}</Badge>
+              </div>
+            </div>
+
+            {/* Quality Bar */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Completeness</span>
+                <span>{(100 - quality.nullPct).toFixed(0)}% filled · {col.uniqueCount.toLocaleString()} unique · {col.nonNullCount.toLocaleString()} non-null</span>
+              </div>
+              <div className="h-1.5 bg-border rounded-full overflow-hidden">
+                <div className="h-1.5 rounded-full bg-primary" style={{ width: `${100 - quality.nullPct}%` }} />
+              </div>
+            </div>
+
+            {/* Numeric Stats */}
+            {nums.length > 0 && (
+              <div className="grid grid-cols-4 gap-2">
+                {[{ l: "Min", v: min }, { l: "Max", v: max }, { l: "Mean", v: mean }, { l: "Median", v: median }].map((s) => (
+                  <div key={s.l} className="bg-background-secondary rounded-md p-2 border border-border">
+                    <p className="text-xs text-muted-foreground">{s.l}</p>
+                    <p className="text-xs font-mono font-medium text-foreground">
+                      {s.v !== null ? s.v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Frequency Chart for Categorical */}
+            {freqData.length > 0 && (
+              <div className="h-24">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={freqData} layout="vertical">
+                    <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} />
+                    <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} width={90} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
+                    <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Sample Values */}
+            <div className="flex gap-1 flex-wrap">
+              {col.sampleValues.slice(0, 5).map((v, i) => (
+                <span key={i} className="text-xs bg-background-secondary border border-border rounded px-1.5 py-0.5 text-muted-foreground font-mono">{String(v)}</span>
+              ))}
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onClose: () => void }) {
   const [activeSheet, setActiveSheet] = useState(dataset.sheetNames[0]);
-  const { removeDataset } = useDatasetStore();
+  const { removeDataset, loadDatasetData } = useDatasetStore();
   const navigate = useNavigate();
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const sheet = dataset.data?.sheets[activeSheet];
+  const [loadingData, setLoadingData] = useState(false);
+  const [localData, setLocalData] = useState<ParsedFile | null>(dataset.data || null);
+
+  // Lazy-load data from MongoDB if not in memory
+  useEffect(() => {
+    if (!localData && !loadingData) {
+      setLoadingData(true);
+      loadDatasetData(dataset.id).then((data) => {
+        setLocalData(data);
+        setLoadingData(false);
+      });
+    }
+  }, [dataset.id]);
+
+  const sheet = localData?.sheets[activeSheet];
 
   return (
     <motion.div
@@ -47,18 +208,25 @@ function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onCl
         </div>
       )}
 
-      {!dataset.data && (
+      {loadingData && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm font-medium text-foreground">Loading dataset from storage...</p>
+          <p className="text-xs text-muted-foreground">Fetching full data from MongoDB</p>
+        </div>
+      )}
+      {!loadingData && !localData && (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
           <FileText size={32} className="text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">Data not available</p>
-          <p className="text-xs text-muted-foreground">Dataset previews are only available in the current session. Re-upload the file to view its contents again.</p>
+          <p className="text-xs text-muted-foreground">The dataset could not be loaded from storage. This may happen if the file was too large to store. Re-upload the file to view its contents.</p>
         </div>
       )}
-      <Tabs defaultValue="preview" className="flex-1 flex flex-col overflow-hidden" style={{ display: dataset.data ? undefined : 'none' }}>
+      <Tabs defaultValue="preview" className="flex-1 flex flex-col overflow-hidden" style={{ display: localData ? undefined : 'none' }}>
         <TabsList className="mx-4 mt-3 bg-card">
           <TabsTrigger value="preview">Preview</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
-          <TabsTrigger value="statistics">Statistics</TabsTrigger>
+          <TabsTrigger value="statistics">Intelligence</TabsTrigger>
         </TabsList>
 
         <TabsContent value="preview" className="flex-1 overflow-auto px-4 pb-4">
@@ -112,50 +280,13 @@ function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onCl
         </TabsContent>
 
         <TabsContent value="statistics" className="flex-1 overflow-auto px-4 pb-4">
-          <div className="mt-3 space-y-4">
-            {sheet?.columns.filter((c) => c.dtype === "number").map((col) => {
-              const nums = sheet.rows.map((r) => Number(r[col.name])).filter((n) => !isNaN(n));
-              if (nums.length === 0) return null;
-              const min = Math.min(...nums);
-              const max = Math.max(...nums);
-              const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
-              return (
-                <div key={col.name}>
-                  <p className="text-xs font-medium text-foreground mb-2">{col.name}</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[{ l: "Min", v: min }, { l: "Max", v: max }, { l: "Mean", v: mean }].map((m) => (
-                      <Card key={m.l} className="p-2 bg-card border-border">
-                        <p className="text-xs text-muted-foreground">{m.l}</p>
-                        <p className="text-sm font-mono text-foreground">{m.v.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-            {sheet?.columns.filter((c) => c.dtype === "string").slice(0, 3).map((col) => {
-              const counts: Record<string, number> = {};
-              for (const row of sheet.rows) {
-                const v = String(row[col.name] ?? "");
-                counts[v] = (counts[v] || 0) + 1;
-              }
-              const data = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, value]) => ({ name, value }));
-              return (
-                <div key={col.name}>
-                  <p className="text-xs font-medium text-foreground mb-2">{col.name} — Top values</p>
-                  <div className="h-32">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={data} layout="vertical">
-                        <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                        <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} width={80} />
-                        <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {sheet ? (
+            <ColumnIntelligenceTab sheet={sheet} />
+          ) : (
+            <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+              Load the dataset to view column intelligence
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 

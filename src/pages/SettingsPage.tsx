@@ -15,7 +15,7 @@ import { useSettingsStore, type Theme, type CodeFont } from "@/stores/settings-s
 import type { Provider } from "@/lib/llm-client";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Trash2, Check, Shield, Palette, User, CreditCard, Cpu, Save, Eye, EyeOff } from "lucide-react";
+import { Trash2, Check, Shield, Palette, User, CreditCard, Cpu, Save, Eye, EyeOff, Key, Copy, Plus } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
 export default function SettingsPage() {
@@ -34,6 +34,7 @@ export default function SettingsPage() {
       (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""])
     )
   );
+
 
   const totalTokens = entries.reduce((s, e) => s + e.totalTokens, 0);
   const successRate = entries.length
@@ -104,8 +105,8 @@ export default function SettingsPage() {
       <Tabs defaultValue="profile">
         <TabsList className="bg-background-secondary">
           <TabsTrigger value="profile" className="flex items-center gap-2"><User size={13} />Profile</TabsTrigger>
-          <TabsTrigger value="apikeys" className="flex items-center gap-2"><Shield size={13} />API Keys</TabsTrigger>
-          <TabsTrigger value="providers" className="flex items-center gap-2"><Cpu size={13} />Providers</TabsTrigger>
+          <TabsTrigger value="apikeys" className="flex items-center gap-2"><Cpu size={13} />Providers</TabsTrigger>
+
           <TabsTrigger value="appearance" className="flex items-center gap-2"><Palette size={13} />Appearance</TabsTrigger>
           <TabsTrigger value="billing" className="flex items-center gap-2"><CreditCard size={13} />Usage</TabsTrigger>
         </TabsList>
@@ -151,12 +152,12 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* ─── API Keys ────────────────────────────────────────────────────────── */}
+        {/* ─── API Keys (Providers) ────────────────────────────────────────────────── */}
         <TabsContent value="apikeys" className="mt-6 space-y-4">
           <div className="flex items-center justify-between mb-2">
             <div>
               <p className="text-sm font-medium text-foreground">{configuredCount} of {Object.keys(PROVIDER_LABELS).length} providers configured</p>
-              <p className="text-xs text-muted-foreground">Keys are encrypted and stored in your account</p>
+              <p className="text-xs text-muted-foreground">Provider keys are used for running queries via DataVault UI</p>
             </div>
             <Button onClick={handleSaveApiKeys} disabled={savingKeys} size="sm">
               <Save size={13} className="mr-2" />
@@ -228,6 +229,8 @@ export default function SettingsPage() {
             {savingKeys ? "Saving to account..." : "Save All API Keys to Account"}
           </Button>
         </TabsContent>
+
+
 
         {/* ─── Providers ───────────────────────────────────────────────────────── */}
         <TabsContent value="providers" className="mt-6 space-y-4">
@@ -366,6 +369,8 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+
     </div>
   );
 }

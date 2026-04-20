@@ -3,10 +3,13 @@ import { persist } from "zustand/middleware";
 
 const API = "http://localhost:3001/api";
 
+export type UserRole = "admin" | "analyst" | "viewer";
+
 interface User {
   name: string;
   email: string;
   avatarInitials: string;
+  role: UserRole;
 }
 
 interface AuthState {
@@ -18,6 +21,13 @@ interface AuthState {
   logout: () => Promise<void>;
   setFirstLoginDone: () => void;
   updateUserName: (name: string) => void;
+  updateUserRole: (role: UserRole) => void;
+  hydrateRole: () => Promise<void>;
+  isAdmin: () => boolean;
+  isAnalyst: () => boolean;
+  canQuery: () => boolean;
+  canUpload: () => boolean;
+  canManageUsers: () => boolean;
 }
 
 function buildInitials(name: string): string {
@@ -50,7 +60,12 @@ export const useAuthStore = create<AuthState>()(
         const { token, user } = await res.json();
         set({
           token,
-          user: { name: user.name, email: user.email, avatarInitials: buildInitials(user.name) },
+          user: {
+            name: user.name,
+            email: user.email,
+            avatarInitials: buildInitials(user.name),
+            role: user.role || "viewer",
+          },
           isFirstLogin: false,
         });
       },
@@ -69,7 +84,12 @@ export const useAuthStore = create<AuthState>()(
         const { token, user } = await res.json();
         set({
           token,
-          user: { name: user.name, email: user.email, avatarInitials: buildInitials(user.name) },
+          user: {
+            name: user.name,
+            email: user.email,
+            avatarInitials: buildInitials(user.name),
+            role: user.role || "viewer",
+          },
           isFirstLogin: true,
         });
       },
@@ -79,7 +99,6 @@ export const useAuthStore = create<AuthState>()(
         const token = get().token;
         if (token) {
           try {
-            // Notify server (server preserves all data — just a session signal)
             await fetch(`${API}/auth/signout`, {
               method: "POST",
               headers: {
@@ -91,7 +110,6 @@ export const useAuthStore = create<AuthState>()(
             // Ignore network errors on logout
           }
         }
-        // Only clear the in-memory auth state; data in MongoDB is untouched
         set({ user: null, token: null, isFirstLogin: false });
       },
 
@@ -102,10 +120,48 @@ export const useAuthStore = create<AuthState>()(
         if (!u) return;
         set({ user: { ...u, name, avatarInitials: buildInitials(name) } });
       },
+
+      updateUserRole: (role: UserRole) => {
+        const u = get().user;
+        if (!u) return;
+        set({ user: { ...u, role } });
+      },
+
+      // Fetch fresh role from server (handles role changes by admin)
+      hydrateRole: async () => {
+        const token = get().token;
+        if (!token) return;
+        try {
+          const res = await fetch(`${API}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const u = get().user;
+            if (u && data.role) {
+              set({ user: { ...u, role: data.role } });
+            }
+          }
+        } catch {
+          // Ignore — will use cached role
+        }
+      },
+
+      // ─── RBAC Permission Helpers ───────────────────────────────────────────
+      isAdmin: () => get().user?.role === "admin",
+      isAnalyst: () => get().user?.role === "analyst" || get().user?.role === "admin",
+      canQuery: () => {
+        const role = get().user?.role;
+        return role === "admin" || role === "analyst";
+      },
+      canUpload: () => {
+        const role = get().user?.role;
+        return role === "admin" || role === "analyst";
+      },
+      canManageUsers: () => get().user?.role === "admin",
     }),
     {
       name: "datavault-auth",
-      // Only persist user identity + token — never credentials
       partialize: (state) => ({
         user: state.user,
         token: state.token,

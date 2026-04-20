@@ -1,36 +1,47 @@
 import { useEffect } from "react";
 import { useLocation, Outlet, Navigate } from "react-router-dom";
-import { Bell } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { AppSidebar } from "@/components/AppSidebar";
+import { NotificationBell } from "@/components/NotificationBell";
 import { useAuthStore } from "@/stores/auth-store";
 import { useLLMStore, PROVIDER_LABELS } from "@/stores/llm-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useInsightsStore } from "@/stores/insights-store";
+
+import { useNotificationsStore } from "@/stores/notifications-store";
+import { Badge } from "@/components/ui/badge";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/dashboard": "Dashboard",
   "/app/datasets": "Datasets",
   "/app/query": "Query",
   "/app/history": "History",
+  "/app/insights": "Insights",
+  "/app/admin": "Admin",
   "/app/settings": "Settings",
 };
 
 export default function AppLayout() {
-  const { user } = useAuthStore();
+  const { user, hydrateRole } = useAuthStore();
   const location = useLocation();
   const { activeProvider, activeModel } = useLLMStore();
   const { fetchDatasets } = useDatasetStore();
   const { fetchHistory } = useHistoryStore();
   const { fetchSettings, applyTheme, theme } = useSettingsStore();
+  const { fetchInsights } = useInsightsStore();
+  const { fetchNotifications } = useNotificationsStore();
 
   // Load all user data from MongoDB on mount, and apply saved theme immediately
   useEffect(() => {
     if (user) {
       fetchDatasets();
+
       fetchHistory();
       fetchSettings();
+      fetchInsights();
+      fetchNotifications();
+      hydrateRole(); // Refresh role from server in case admin changed it
     } else {
       // Ensure default theme is applied even before settings load
       applyTheme(theme);
@@ -54,9 +65,7 @@ export default function AppLayout() {
               <span className="w-1.5 h-1.5 rounded-full bg-success inline-block" />
               {PROVIDER_LABELS[activeProvider]} · {activeModel}
             </Badge>
-            <button className="text-muted-foreground hover:text-foreground transition-colors relative">
-              <Bell size={18} />
-            </button>
+            <NotificationBell />
             <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-semibold">
               {user.avatarInitials}
             </div>

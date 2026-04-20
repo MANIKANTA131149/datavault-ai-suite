@@ -1,7 +1,12 @@
-import { useState, useRef, useEffect, useMemo, useId } from "react";
+import { useState, useRef, useEffect, useMemo, useId, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen, Settings2, Search, Eye, X, Database, Table2 } from "lucide-react";
+import {
+  Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
+  Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
+  LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
+  MessageSquarePlus, Trash2, BarChart3, FileDown, Layout,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -12,34 +17,139 @@ import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
-import { runAgent, type AgentStep } from "@/lib/agent";
-import type { Provider } from "@/lib/llm-client";
-import { toast } from "sonner";
-import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
+import { useInsightsStore } from "@/stores/insights-store";
 
+import { runAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import type { Provider } from "@/lib/llm-client";
+import type { ColumnInfo } from "@/lib/file-parser";
+import { toast } from "sonner";
+import { generatePDF } from "@/lib/pdf-report";
+import {
+  BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area,
+  XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer,
+} from "recharts";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 const COMMAND_COLORS: Record<string, string> = {
   GetSheetDescription: "bg-primary/10 text-primary",
   GetColumns: "bg-accent/10 text-accent",
   QuerySheet: "bg-warning/10 text-warning",
   ExecuteFinalQuery: "bg-success/10 text-success",
   FinalAnswer: "bg-success/10 text-success",
+  NarrativeAnswer: "bg-purple-500/10 text-purple-400",
+  Answer: "bg-success/10 text-success",
   Error: "bg-destructive/10 text-destructive",
 };
 
-const CHART_COLORS = ["hsl(217, 91%, 60%)", "hsl(263, 70%, 58%)", "hsl(160, 84%, 39%)", "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)"];
-
-const SUGGESTED_PROMPTS = [
-  "What is the total revenue?",
-  "Show top 10 by sales",
-  "What are the unique categories?",
-  "Find rows where value > 1000",
-  "What is the average order value?",
+const CHART_COLORS = [
+  "hsl(217, 91%, 60%)", "hsl(263, 70%, 58%)", "hsl(160, 84%, 39%)",
+  "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)",
 ];
 
+// ─── Query Templates ──────────────────────────────────────────────────────────
+const QUERY_TEMPLATES = [
+  {
+    category: "📊 Sales & Revenue",
+    templates: [
+      "What is the total revenue?",
+      "Show top 10 products by sales",
+      "What is the revenue by region?",
+      "Compare revenue month over month",
+      "Which customer has the highest lifetime value?",
+      "What is the average order value?",
+      "Show sales trend over time",
+    ],
+  },
+  {
+    category: "👥 People & HR",
+    templates: [
+      "How many employees are there by department?",
+      "What is the average salary by role?",
+      "Show headcount growth over time",
+      "Which department has the highest attrition?",
+      "What is the salary distribution?",
+    ],
+  },
+  {
+    category: "💰 Finance",
+    templates: [
+      "What is the total expense by category?",
+      "Show budget vs actual comparison",
+      "What are the top cost drivers?",
+      "Calculate the profit margin",
+      "Show cash flow trend",
+    ],
+  },
+  {
+    category: "⚙️ Operations",
+    templates: [
+      "What is the on-time delivery rate?",
+      "Show defect rate by category",
+      "What are the top issues by frequency?",
+      "Calculate average resolution time",
+      "Which supplier has the lowest quality score?",
+    ],
+  },
+  {
+    category: "🔍 Exploration",
+    templates: [
+      "What is this dataset about?",
+      "What can I ask about this data?",
+      "Show me a summary of all columns",
+      "Find any outliers in the data",
+      "What are the unique values in each column?",
+      "Which columns have missing data?",
+    ],
+  },
+];
+
+// ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
+const SHORTCUTS = [
+  { keys: ["Ctrl", "Enter"], label: "Run query" },
+  { keys: ["Ctrl", "K"], label: "Command palette" },
+  { keys: ["Ctrl", "Shift", "C"], label: "Clear conversation" },
+  { keys: ["Ctrl", "Shift", "B"], label: "Bookmark result" },
+  { keys: ["Ctrl", "Shift", "E"], label: "Export center" },
+  { keys: ["Ctrl", "Shift", "T"], label: "Templates library" },
+  { keys: ["Escape"], label: "Close panels" },
+  { keys: ["?"], label: "Keyboard shortcuts" },
+];
+
+// ─── Smart Suggestion Generator ──────────────────────────────────────────────
+function generateSmartSuggestions(columns: ColumnInfo[]): string[] {
+  const suggestions: string[] = [];
+  const numericCols = columns.filter((c) => c.dtype === "number").map((c) => c.name);
+  const stringCols = columns.filter((c) => c.dtype === "string").map((c) => c.name);
+  const dateCols = columns.filter((c) => c.dtype === "date").map((c) => c.name);
+
+  if (numericCols.length > 0) {
+    suggestions.push(`What is the total ${numericCols[0]}?`);
+    suggestions.push(`What is the average ${numericCols[0]}?`);
+    if (numericCols.length > 1) suggestions.push(`Show the correlation between ${numericCols[0]} and ${numericCols[1]}`);
+    suggestions.push(`Find outliers in ${numericCols[0]}`);
+    suggestions.push(`What are the percentiles (p25, p50, p75, p95) of ${numericCols[0]}?`);
+  }
+  if (stringCols.length > 0) {
+    suggestions.push(`What are the unique ${stringCols[0]} values?`);
+    if (numericCols.length > 0) suggestions.push(`What is the total ${numericCols[0]} by ${stringCols[0]}?`);
+    if (numericCols.length > 0) suggestions.push(`Which ${stringCols[0]} has the highest ${numericCols[0]}?`);
+  }
+  if (dateCols.length > 0 && numericCols.length > 0) {
+    suggestions.push(`Show ${numericCols[0]} trend by month`);
+    suggestions.push(`What is the ${numericCols[0]} by quarter?`);
+  }
+  suggestions.push("What is this dataset about?");
+  suggestions.push("Show me a summary of all columns");
+
+  return suggestions.slice(0, 8);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 type ChartType = "bar" | "pie" | "line" | "area";
 
 function toChartNumber(value: any): number | null {
@@ -54,13 +164,23 @@ function toChartNumber(value: any): number | null {
 }
 
 function getChartMeta(result: any) {
-  const rows: Record<string, any>[] = Array.isArray(result)
-    ? result.filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
+  // Unwrap common wrapper formats: {data: [...]}, {rows: [...]}, {result: [...]}
+  let rawData = result;
+  if (!Array.isArray(rawData) && typeof rawData === "object" && rawData !== null) {
+    if (Array.isArray(rawData.data)) rawData = rawData.data;
+    else if (Array.isArray(rawData.rows)) rawData = rawData.rows;
+    else if (Array.isArray(rawData.result)) rawData = rawData.result;
+  }
+
+  const rows: Record<string, any>[] = Array.isArray(rawData)
+    ? rawData.filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
     : [];
   const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
   const numericKeys = keys.filter((k) => rows.some((row) => toChartNumber(row[k]) !== null));
+  const nonNumericKeys = keys.filter((k) => !numericKeys.includes(k));
   const valueKey = numericKeys[0] || "";
-  const labelKey = keys.find((k) => k !== valueKey) || keys[0] || "";
+  // Prefer a non-numeric key as label; fallback to the second key or first key
+  const labelKey = nonNumericKeys[0] || (keys.length > 1 ? keys.find((k) => k !== valueKey) : keys[0]) || "";
   const dateKeys = keys.filter((k) =>
     rows.some((row) => {
       const value = String(row[k] ?? "");
@@ -76,9 +196,9 @@ function getChartMeta(result: any) {
         })
         .filter((row): row is Record<string, any> => row !== null)
     : [];
-  const isChartable = chartRows.length > 0 && Boolean(valueKey) && Boolean(labelKey);
+  // Chartable = at least 2 data points, a valid numeric key, and ideally a label key
+  const isChartable = chartRows.length >= 2 && Boolean(valueKey) && Boolean(labelKey) && labelKey !== valueKey;
   const defaultChart: ChartType = dateKeys.includes(labelKey) ? "line" : "bar";
-
   return { rows, keys, chartRows, valueKey, labelKey, isChartable, defaultChart };
 }
 
@@ -86,13 +206,97 @@ function getFinalStep(steps?: AgentStep[]) {
   if (!steps || steps.length === 0) return null;
   for (let i = steps.length - 1; i >= 0; i--) {
     const step = steps[i];
-    if (step.isFinal || step.command === "ExecuteFinalQuery" || step.command === "Answer" || step.command === "FinalAnswer") {
+    if (step.isFinal || step.command === "ExecuteFinalQuery" || step.command === "Answer" ||
+        step.command === "FinalAnswer" || step.command === "NarrativeAnswer") {
       return step;
     }
   }
   return null;
 }
 
+// ─── Export Utilities ─────────────────────────────────────────────────────────
+function exportJSON(result: any, filename = "result.json") {
+  const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportMarkdown(result: any, query: string, filename = "result.md") {
+  let md = `# Query Result\n\n**Query:** ${query}\n\n**Date:** ${new Date().toLocaleString()}\n\n`;
+  if (Array.isArray(result) && result.length > 0 && typeof result[0] === "object") {
+    const headers = Object.keys(result[0]);
+    md += `| ${headers.join(" | ")} |\n| ${headers.map(() => "---").join(" | ")} |\n`;
+    for (const row of result) {
+      md += `| ${headers.map((h) => String(row[h] ?? "")).join(" | ")} |\n`;
+    }
+  } else if (result?.narrative) {
+    md += result.narrative;
+  } else {
+    md += "```json\n" + JSON.stringify(result, null, 2) + "\n```";
+  }
+  const blob = new Blob([md], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportHTML(result: any, query: string, filename = "result.html") {
+  let tableHtml = "";
+  if (Array.isArray(result) && result.length > 0 && typeof result[0] === "object") {
+    const headers = Object.keys(result[0]);
+    tableHtml = `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-family:sans-serif;font-size:13px">
+      <thead style="background:#f0f0f0"><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${result.map((row: any) => `<tr>${headers.map((h) => `<td>${row[h] ?? ""}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>`;
+  } else {
+    tableHtml = `<pre style="font-family:monospace">${JSON.stringify(result, null, 2)}</pre>`;
+  }
+  const html = `<!DOCTYPE html><html><head><title>DataVault Export</title></head><body>
+    <h2 style="font-family:sans-serif">Query: ${query}</h2>
+    <p style="font-family:sans-serif;color:#888">${new Date().toLocaleString()}</p>
+    ${tableHtml}</body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportCSV(result: any, filename = "result.csv") {
+  const rows: Record<string, any>[] = Array.isArray(result) ? result : [];
+  if (rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => JSON.stringify(r[h] ?? "")).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── NarrativeResult Component ────────────────────────────────────────────────
+function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
+  return (
+    <div className="ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <Sparkles size={13} className="text-purple-400" />
+        <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
+      </div>
+      {result.highlights && result.highlights.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+          {result.highlights.map((h, i) => (
+            <div key={i} className="bg-card rounded-md p-2.5 border border-border">
+              <p className="text-xs text-muted-foreground">{h.label}</p>
+              <p className="text-sm font-semibold text-foreground font-mono">{h.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{result.narrative}</div>
+    </div>
+  );
+}
+
+// ─── StepCard Component ───────────────────────────────────────────────────────
 function StepCard({ step }: { step: AgentStep }) {
   const [expanded, setExpanded] = useState(false);
   const colorClass = COMMAND_COLORS[step.command] || "bg-muted text-muted-foreground";
@@ -142,40 +346,95 @@ function StepCard({ step }: { step: AgentStep }) {
   );
 }
 
-function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) {
+// ─── ResultPanel (Right Sidebar) ─────────────────────────────────────────────
+function ResultPanel({
+  result, query, onClose, onBookmark,
+}: {
+  result: any; query: string; onClose: () => void; onBookmark: () => void;
+  datasetName: string;
+}) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
+  const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
-  const [showJson, setShowJson] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const isEmptyArray = isArray && rows.length === 0;
+  const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
+  const isBlankString = typeof result === "string" && !result.trim();
+
   const areaGradientId = useId().replace(/:/g, "");
 
-  useEffect(() => {
-    setChartType(defaultChart);
-  }, [defaultChart]);
-
-  const downloadCSV = () => {
-    if (!isArray || rows.length === 0) return;
-    const headers = Object.keys(rows[0]);
-    const csv = [headers.join(","), ...rows.map((r: any) => headers.map((h) => JSON.stringify(r[h] ?? "")).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "result.csv"; a.click();
-    URL.revokeObjectURL(url);
-  };
+  useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
 
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between p-4 border-b border-border">
         <h3 className="text-sm font-semibold text-foreground">Result</h3>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><PanelRightClose size={16} /></button>
+        <div className="flex gap-1">
+
+          <button onClick={onBookmark} title="Save as Insight" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
+            <BookmarkPlus size={14} />
+          </button>
+          <button onClick={() => setShowExport(!showExport)} title="Export" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
+            <Download size={14} />
+          </button>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
+            <PanelRightClose size={14} />
+          </button>
+        </div>
       </div>
+
+      {showExport && (
+        <div className="p-3 border-b border-border bg-card/40 space-y-2">
+          <p className="text-xs text-muted-foreground font-medium">Export As</p>
+          <div className="flex flex-wrap gap-1.5">
+            {isArray && (
+              <button onClick={() => { exportCSV(result); toast.success("CSV downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+                <BarChart3 size={10} /> CSV
+              </button>
+            )}
+            <button onClick={() => { exportJSON(result); toast.success("JSON downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+              <FileJson size={10} /> JSON
+            </button>
+            <button onClick={() => { exportMarkdown(result, query); toast.success("Markdown downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+              <FileText size={10} /> Markdown
+            </button>
+            <button onClick={() => { exportHTML(result, query); toast.success("HTML downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+              <Code2 size={10} /> HTML
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {isNarrative && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={13} className="text-purple-400" />
+              <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
+            </div>
+            {result.highlights?.length > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                {result.highlights.map((h: any, i: number) => (
+                  <div key={i} className="bg-card rounded-md p-2.5 border border-border">
+                    <p className="text-xs text-muted-foreground">{h.label}</p>
+                    <p className="text-sm font-semibold text-foreground">{h.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{result.narrative}</p>
+          </div>
+        )}
+
         {isSingleValue && (
           <div className="text-center py-8">
             <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Result</p>
-            <p className="text-4xl font-semibold text-foreground font-mono">{typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}</p>
+            <p className="text-4xl font-semibold text-foreground font-mono">
+              {typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}
+            </p>
           </div>
         )}
         {isPrimitiveValue && (
@@ -201,13 +460,13 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
                     <Pie data={chartRows.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={80}>
                       {chartRows.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                     </Pie>
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   </PieChart>
                 ) : chartType === "line" ? (
                   <LineChart data={chartRows.slice(0, 50)}>
                     <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                     <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                   </LineChart>
                 ) : chartType === "area" ? (
@@ -220,14 +479,14 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
                     </defs>
                     <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                     <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
                   </AreaChart>
                 ) : (
                   <BarChart data={chartRows.slice(0, 20)}>
                     <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                     <Bar dataKey={valueKey} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 )}
@@ -236,7 +495,7 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
           </div>
         )}
 
-        {isArray && !isChartable && rows.length > 0 && (
+        {isArray && rows.length > 0 && (
           <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full text-xs">
               <thead className="bg-card">
@@ -259,7 +518,22 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
           </div>
         )}
 
-        {typeof result === "string" && (
+        {isEmptyArray && (
+          <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+            No rows returned for this query.
+          </div>
+        )}
+        {isEmptyObject && (
+          <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+            Query returned an empty object.
+          </div>
+        )}
+        {isBlankString && (
+          <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+            No answer returned from the model.
+          </div>
+        )}
+        {typeof result === "string" && !isBlankString && (
           <div className="bg-card rounded-md p-4 border border-border">
             <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>
           </div>
@@ -269,39 +543,32 @@ function ResultPanel({ result, onClose }: { result: any; onClose: () => void }) 
           <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { navigator.clipboard.writeText(JSON.stringify(result, null, 2)); toast.success("Copied"); }}>
             <Copy size={12} className="mr-1" /> Copy
           </Button>
-          {isArray && (
-            <Button variant="outline" size="sm" className="border-border text-xs" onClick={downloadCSV}>
-              <Download size={12} className="mr-1" /> CSV
-            </Button>
-          )}
         </div>
-
-        <Collapsible open={showJson} onOpenChange={setShowJson}>
-          <CollapsibleTrigger className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-            {showJson ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Result as JSON
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <pre className="mt-2 bg-card rounded-md p-3 border border-border text-xs font-mono text-foreground overflow-auto max-h-60 scrollbar-thin">
-              {JSON.stringify(result, null, 2)}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
       </div>
+
+
     </div>
   );
 }
 
+// ─── InlineFinalResult ────────────────────────────────────────────────────────
 function InlineFinalResult({ result }: { result: any }) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
+  const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const areaGradientId = useId().replace(/:/g, "");
+  const isEmptyArray = isArray && rows.length === 0;
+  const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
+  const isBlankString = typeof result === "string" && !result.trim();
 
-  useEffect(() => {
-    setChartType(defaultChart);
-  }, [defaultChart]);
+  useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
+
+  if (isNarrative) {
+    return <NarrativeResult result={result} />;
+  }
 
   return (
     <div className="ml-10 mt-1 mb-3 rounded-md border border-border bg-card p-3 space-y-3">
@@ -312,9 +579,7 @@ function InlineFinalResult({ result }: { result: any }) {
           {typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}
         </p>
       )}
-      {isPrimitiveValue && (
-        <p className="text-2xl font-semibold text-foreground font-mono">{String(result)}</p>
-      )}
+      {isPrimitiveValue && <p className="text-2xl font-semibold text-foreground font-mono">{String(result)}</p>}
 
       {isChartable && (
         <div>
@@ -332,13 +597,13 @@ function InlineFinalResult({ result }: { result: any }) {
                   <Pie data={chartRows.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
                     {chartRows.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                   </Pie>
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                 </PieChart>
               ) : chartType === "line" ? (
                 <LineChart data={chartRows.slice(0, 50)}>
                   <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                 </LineChart>
               ) : chartType === "area" ? (
@@ -351,14 +616,14 @@ function InlineFinalResult({ result }: { result: any }) {
                   </defs>
                   <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
                 </AreaChart>
               ) : (
                 <BarChart data={chartRows.slice(0, 20)}>
                   <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--foreground))" }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Bar dataKey={valueKey} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               )}
@@ -367,34 +632,31 @@ function InlineFinalResult({ result }: { result: any }) {
         </div>
       )}
 
-      {isArray && !isChartable && rows.length > 0 && (
+      {isArray && rows.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-xs">
             <thead className="bg-background-secondary">
-              <tr>
-                {Object.keys(rows[0] || {}).map((k) => (
-                  <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>
-                ))}
-              </tr>
+              <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
             </thead>
             <tbody>
               {rows.slice(0, 10).map((row: any, i: number) => (
                 <tr key={i} className="border-t border-border/50">
-                  {Object.values(row).map((v: any, j) => (
-                    <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>
-                  ))}
+                  {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
+          {rows.length > 10 && <p className="text-xs text-muted-foreground px-3 py-1.5 border-t border-border/50">...and {rows.length - 10} more rows</p>}
         </div>
       )}
 
-      {typeof result === "string" && (
-        <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>
+      {isBlankString && (
+        <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+          No answer returned from the model.
+        </div>
       )}
-
-      {!isArray && !isSingleValue && typeof result === "object" && result !== null && (
+      {!isBlankString && typeof result === "string" && <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>}
+      {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && (
         <pre className="bg-background-secondary rounded-md p-2 border border-border text-xs font-mono text-foreground overflow-auto max-h-52 scrollbar-thin">
           {JSON.stringify(result, null, 2)}
         </pre>
@@ -403,12 +665,8 @@ function InlineFinalResult({ result }: { result: any }) {
   );
 }
 
-// ─── Data Preview Panel ───────────────────────────────────────────────────────
-function DataPreviewPanel({
-  dataset,
-  sheet,
-  onClose,
-}: {
+// ─── DataPreviewPanel ─────────────────────────────────────────────────────────
+function DataPreviewPanel({ dataset, sheet, onClose }: {
   dataset: ReturnType<typeof useDatasetStore>["datasets"][0];
   sheet: string;
   onClose: () => void;
@@ -434,23 +692,14 @@ function DataPreviewPanel({
     if (!sheetData) return [];
     if (!search.trim()) return sheetData.rows;
     const q = search.toLowerCase();
-    return sheetData.rows.filter((row) =>
-      Object.values(row).some((v) => String(v).toLowerCase().includes(q))
-    );
+    return sheetData.rows.filter((row) => Object.values(row).some((v) => String(v).toLowerCase().includes(q)));
   }, [sheetData, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
-    <motion.div
-      className="absolute inset-0 z-50 bg-background flex flex-col"
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 16 }}
-      transition={{ duration: 0.18 }}
-    >
-      {/* Header */}
+    <motion.div className="absolute inset-0 z-50 bg-background flex flex-col" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }} transition={{ duration: 0.18 }}>
       <div className="flex items-center justify-between px-5 h-12 border-b border-border bg-background-secondary shrink-0">
         <div className="flex items-center gap-2">
           <Database size={14} className="text-primary" />
@@ -480,7 +729,6 @@ function DataPreviewPanel({
         </div>
       </div>
 
-      {/* Column type badges */}
       {sheetData && (
         <div className="flex gap-4 px-5 py-2 border-b border-border bg-card/40 overflow-x-auto shrink-0">
           {sheetData.columns.map((col: any) => (
@@ -492,7 +740,6 @@ function DataPreviewPanel({
         </div>
       )}
 
-      {/* Body */}
       {loadingData ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
@@ -512,9 +759,7 @@ function DataPreviewPanel({
                 <tr>
                   <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border">#</th>
                   {sheetData.columns.map((col: any) => (
-                    <th key={col.name} className="px-4 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-b border-border">
-                      {col.name}
-                    </th>
+                    <th key={col.name} className="px-4 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-b border-border">{col.name}</th>
                   ))}
                 </tr>
               </thead>
@@ -523,9 +768,7 @@ function DataPreviewPanel({
                   <tr key={i} className="hover:bg-card/50 transition-colors">
                     <td className="px-4 py-2 text-muted-foreground border-b border-border/40">{page * PAGE_SIZE + i + 1}</td>
                     {sheetData.columns.map((col: any) => (
-                      <td key={col.name} className="px-4 py-2 text-foreground max-w-[240px] truncate border-b border-border/40">
-                        {String(row[col.name] ?? "")}
-                      </td>
+                      <td key={col.name} className="px-4 py-2 text-foreground max-w-[240px] truncate border-b border-border/40">{String(row[col.name] ?? "")}</td>
                     ))}
                   </tr>
                 ))}
@@ -538,13 +781,9 @@ function DataPreviewPanel({
                 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()} rows
               </span>
               <div className="flex gap-1.5">
-                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">
-                  Previous
-                </button>
+                <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">Previous</button>
                 <span className="px-2 h-7 text-xs flex items-center text-muted-foreground">{page + 1} / {totalPages}</span>
-                <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">
-                  Next
-                </button>
+                <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">Next</button>
               </div>
             </div>
           )}
@@ -554,6 +793,75 @@ function DataPreviewPanel({
   );
 }
 
+// ─── Save Insight Dialog ──────────────────────────────────────────────────────
+function SaveInsightDialog({
+  open, onClose, query, result, datasetName,
+}: {
+  open: boolean; onClose: () => void; query: string; result: any; datasetName: string;
+}) {
+  const { addInsight } = useInsightsStore();
+  const [label, setLabel] = useState(query.slice(0, 60));
+  const [notes, setNotes] = useState("");
+  const [color, setColor] = useState<"blue" | "purple" | "green" | "amber" | "red" | "pink">("blue");
+  const [tags, setTags] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const COLOR_DOTS: Record<string, string> = {
+    blue: "bg-blue-400", purple: "bg-purple-400", green: "bg-green-400",
+    amber: "bg-amber-400", red: "bg-red-400", pink: "bg-pink-400",
+  };
+
+  const handleSave = async () => {
+    if (!label.trim()) { toast.error("Please add a label"); return; }
+    setSaving(true);
+    await addInsight({
+      query, datasetName, result,
+      label: label.trim(), notes, color,
+      tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+    });
+    toast.success("Saved to Insights");
+    onClose();
+    setSaving(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="bg-background-secondary border-border">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Bookmark size={16} className="text-primary" /> Save as Insight</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div>
+            <Label className="text-xs text-muted-foreground">Label *</Label>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} className="mt-1 bg-card border-border" placeholder="e.g. Total Revenue Q4" />
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Notes</Label>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 bg-card border-border min-h-[60px]" placeholder="Add context or observations..." />
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Color</Label>
+            <div className="flex gap-2 mt-1.5">
+              {(Object.keys(COLOR_DOTS) as typeof color[]).map((c) => (
+                <button key={c} onClick={() => setColor(c)} className={`w-7 h-7 rounded-full ${COLOR_DOTS[c]} border-2 transition-all ${color === c ? "border-foreground scale-110" : "border-transparent opacity-60"}`} />
+              ))}
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Tags (comma-separated)</Label>
+            <Input value={tags} onChange={(e) => setTags(e.target.value)} className="mt-1 bg-card border-border" placeholder="revenue, q4, important" />
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} className="border-border">Cancel</Button>
+          <Button onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Insight"}</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Main QueryPage ───────────────────────────────────────────────────────────
 export default function QueryPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -564,17 +872,29 @@ export default function QueryPage() {
   const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
   const [selectedSheet, setSelectedSheet] = useState("");
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<{ role: "user" | "agent"; content: string; steps?: AgentStep[] }[]>([]);
+  const [messages, setMessages] = useState<{
+    role: "user" | "agent";
+    content: string;
+    steps?: AgentStep[];
+    query?: string;
+  }[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [finalResult, setFinalResult] = useState<any>(null);
+  const [lastQuery, setLastQuery] = useState("");
   const [showResult, setShowResult] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showSaveInsight, setShowSaveInsight] = useState(false);
+
+  // Multi-turn conversation memory
+  const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Use getDataset so we get the in-memory parsed data (not just persisted metadata)
   const selectedDataset = getDataset(selectedDatasetId) ?? datasets.find((d) => d.id === selectedDatasetId);
 
   useEffect(() => {
@@ -584,6 +904,36 @@ export default function QueryPage() {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentSteps]);
   const currentFinalStep = getFinalStep(currentSteps);
 
+  // Smart suggestions based on dataset columns
+  const smartSuggestions = useMemo(() => {
+    const sheet = selectedDataset?.data?.sheets[selectedSheet];
+    if (sheet) return generateSmartSuggestions(sheet.columns);
+    return [
+      "What is the total revenue?",
+      "Show top 10 by sales",
+      "What are the unique categories?",
+      "Find rows where value > 1000",
+      "What is the average order value?",
+    ];
+  }, [selectedDataset, selectedSheet]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "?") { setShowShortcuts(true); }
+      if (e.ctrlKey && e.shiftKey && e.key === "C") { e.preventDefault(); handleClearContext(); }
+      if (e.ctrlKey && e.shiftKey && e.key === "B") { e.preventDefault(); if (finalResult !== null) setShowSaveInsight(true); }
+      if (e.ctrlKey && e.shiftKey && e.key === "T") { e.preventDefault(); setShowTemplates(true); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [finalResult]);
+
+  const handleClearContext = () => {
+    setConversationContext([]);
+    toast.success("Conversation context cleared");
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isRunning) return;
     if (!selectedDatasetId) { toast.error("Select a dataset first"); return; }
@@ -592,14 +942,14 @@ export default function QueryPage() {
 
     const question = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setMessages((prev) => [...prev, { role: "user", content: question, query: question }]);
     setIsRunning(true);
     setCurrentSteps([]);
     setFinalResult(null);
+    setLastQuery(question);
 
     let sheetData = selectedDataset?.data?.sheets[selectedSheet];
     if (!sheetData) {
-      // Data not in memory — try fetching from MongoDB (happens after re-login)
       toast.info("Loading dataset from storage…");
       const { loadDatasetData } = useDatasetStore.getState();
       const fetched = await loadDatasetData(selectedDatasetId);
@@ -614,7 +964,10 @@ export default function QueryPage() {
     const startTime = Date.now();
 
     try {
-      for await (const step of runAgent(question, sheetData, activeProvider, activeModel, apiKey, temperature, maxTokens, systemPrompt || undefined)) {
+      for await (const step of runAgent(
+        question, sheetData, activeProvider, activeModel, apiKey, temperature, maxTokens,
+        systemPrompt || undefined, conversationContext
+      )) {
         steps.push(step);
         setCurrentSteps([...steps]);
         if (step.isFinal) {
@@ -624,12 +977,19 @@ export default function QueryPage() {
       }
 
       const totalTokens = steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0);
-      setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps] }]);
+      const finalStep = getFinalStep(steps);
+
+      // Store in conversation context for multi-turn memory
+      if (finalStep) {
+        setConversationContext((prev) => [...prev, { question, answer: finalStep.result }]);
+      }
+
+      setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps], query: question }]);
       setCurrentSteps([]);
 
       addEntry({
         query: question,
-        datasetName: selectedDataset!.fileName,
+        datasetName: selectedDataset?.fileName || "Unknown dataset",
         provider: activeProvider,
         model: activeModel,
         turns: steps.length,
@@ -657,13 +1017,10 @@ export default function QueryPage() {
     <div className="flex h-[calc(100vh-56px)] relative">
       <AnimatePresence>
         {showPreview && selectedDataset && (
-          <DataPreviewPanel
-            dataset={selectedDataset}
-            sheet={selectedSheet}
-            onClose={() => setShowPreview(false)}
-          />
+          <DataPreviewPanel dataset={selectedDataset} sheet={selectedSheet} onClose={() => setShowPreview(false)} />
         )}
       </AnimatePresence>
+
       {/* Left: Context Panel */}
       <div className="w-[280px] border-r border-border bg-background-secondary flex flex-col shrink-0 overflow-auto hidden lg:flex">
         <div className="p-4 space-y-4">
@@ -682,9 +1039,7 @@ export default function QueryPage() {
               <Label className="text-xs text-muted-foreground">Sheet</Label>
               <div className="flex gap-1 mt-1.5 flex-wrap">
                 {selectedDataset.sheetNames.map((s) => (
-                  <button key={s} onClick={() => setSelectedSheet(s)} className={`text-xs px-2 py-1 rounded ${s === selectedSheet ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground bg-card"}`}>
-                    {s}
-                  </button>
+                  <button key={s} onClick={() => setSelectedSheet(s)} className={`text-xs px-2 py-1 rounded ${s === selectedSheet ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground bg-card"}`}>{s}</button>
                 ))}
               </div>
             </div>
@@ -698,17 +1053,25 @@ export default function QueryPage() {
           )}
 
           {selectedDataset && (
-            <button
-              onClick={() => setShowPreview(true)}
-              className="flex items-center gap-2 w-full text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-card/80 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all"
-            >
-              <Table2 size={12} />
-              Preview data
-              <Eye size={11} className="ml-auto" />
+            <button onClick={() => setShowPreview(true)} className="flex items-center gap-2 w-full text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-card/80 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+              <Table2 size={12} /> Preview data <Eye size={11} className="ml-auto" />
             </button>
           )}
 
           <Separator className="bg-border" />
+
+          {/* Conversation Context Indicator */}
+          {conversationContext.length > 0 && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-md bg-primary/5 border border-primary/20">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp size={12} className="text-primary" />
+                <span className="text-xs text-primary">{conversationContext.length} context turn{conversationContext.length !== 1 ? "s" : ""}</span>
+              </div>
+              <button onClick={handleClearContext} className="text-xs text-muted-foreground hover:text-destructive transition-colors">
+                <Trash2 size={11} />
+              </button>
+            </div>
+          )}
 
           <div>
             <Label className="text-xs text-muted-foreground">LLM Provider</Label>
@@ -755,7 +1118,7 @@ export default function QueryPage() {
             <Select value={String(maxTokens)} onValueChange={(v) => setMaxTokens(Number(v))}>
               <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
               <SelectContent className="bg-popover border-border">
-                {[256, 512, 1024, 2048].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
+                {[256, 512, 1024, 2048, 4096].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -768,6 +1131,16 @@ export default function QueryPage() {
               <Textarea placeholder="System prompt override..." value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
             </CollapsibleContent>
           </Collapsible>
+
+          {/* Quick tools */}
+          <div className="flex gap-1.5">
+            <button onClick={() => setShowTemplates(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+              <LayoutTemplate size={11} /> Templates
+            </button>
+            <button onClick={() => setShowShortcuts(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+              <Keyboard size={11} /> Shortcuts
+            </button>
+          </div>
         </div>
       </div>
 
@@ -777,16 +1150,20 @@ export default function QueryPage() {
           {messages.length === 0 && !isRunning && (
             <div className="flex flex-col items-center justify-center h-full gap-4">
               <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Search size={24} className="text-primary" />
+                <Sparkles size={24} className="text-primary" />
               </div>
-              <p className="text-muted-foreground text-sm">Ask a question about your data</p>
+              <p className="text-muted-foreground text-sm">Ask anything about your data</p>
               <div className="flex flex-wrap gap-2 justify-center max-w-lg">
-                {SUGGESTED_PROMPTS.map((p) => (
-                  <button key={p} onClick={() => { setInput(p); textareaRef.current?.focus(); }} className="text-xs px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+                {smartSuggestions.map((p) => (
+                  <button key={p} onClick={() => { setInput(p); textareaRef.current?.focus(); }}
+                    className="text-xs px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
                     {p}
                   </button>
                 ))}
               </div>
+              <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1.5 text-xs text-primary hover:underline mt-1">
+                <LayoutTemplate size={12} /> Browse template library
+              </button>
             </div>
           )}
 
@@ -813,6 +1190,31 @@ export default function QueryPage() {
                       <div className="flex gap-3 text-xs text-muted-foreground pl-10 pt-1">
                         <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
                         <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
+                        {finalStep && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setFinalResult(finalStep.result);
+                                setLastQuery(msg.query || "");
+                                setShowSaveInsight(true);
+                              }}
+                              className="flex items-center gap-1 text-primary hover:underline"
+                            >
+                              <BookmarkPlus size={10} /> Save insight
+                            </button>
+                            <button
+                              onClick={() => generatePDF({
+                                title: msg.query || "Query Result",
+                                query: msg.query || "",
+                                rows: Array.isArray(finalStep.result) ? finalStep.result : undefined,
+                                narrative: finalStep.result?.narrative || undefined,
+                              })}
+                              className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
+                            >
+                              <FileDown size={10} /> PDF report
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
                     {finalStep && <InlineFinalResult result={finalStep.result} />}
@@ -846,7 +1248,7 @@ export default function QueryPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask a question about your data..."
+              placeholder="Ask a question about your data... (Shift+Enter for new line)"
               className="bg-background-secondary border-border resize-none min-h-[44px] max-h-[120px]"
               rows={1}
             />
@@ -854,14 +1256,20 @@ export default function QueryPage() {
               <Send size={16} />
             </Button>
           </div>
-          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens</p>}
+          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
         </div>
       </div>
 
       {/* Right: Result Panel */}
       {finalResult !== null && showResult && (
         <div className="w-[320px] border-l border-border bg-background-secondary shrink-0 hidden xl:block">
-          <ResultPanel result={finalResult} onClose={() => setShowResult(false)} />
+          <ResultPanel
+            result={finalResult}
+            query={lastQuery}
+            onClose={() => setShowResult(false)}
+            onBookmark={() => setShowSaveInsight(true)}
+            datasetName={selectedDataset?.fileName || "Unknown dataset"}
+          />
         </div>
       )}
 
@@ -870,6 +1278,63 @@ export default function QueryPage() {
           <PanelRightOpen size={16} />
         </button>
       )}
+
+      {/* Templates Library Dialog */}
+      <Dialog open={showTemplates} onOpenChange={setShowTemplates}>
+        <DialogContent className="bg-background-secondary border-border max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><LayoutTemplate size={16} className="text-primary" /> Query Template Library</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto pr-1 space-y-5 mt-2">
+            {QUERY_TEMPLATES.map((cat) => (
+              <div key={cat.category}>
+                <h3 className="text-sm font-semibold text-foreground mb-2">{cat.category}</h3>
+                <div className="flex flex-wrap gap-2">
+                  {cat.templates.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => { setInput(t); setShowTemplates(false); textareaRef.current?.focus(); }}
+                      className="text-xs px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 hover:bg-primary/5 transition-all"
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Keyboard Shortcuts Dialog */}
+      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
+        <DialogContent className="bg-background-secondary border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Keyboard size={16} className="text-primary" /> Keyboard Shortcuts</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 mt-2">
+            {SHORTCUTS.map((s) => (
+              <div key={s.label} className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">{s.label}</span>
+                <div className="flex gap-1">
+                  {s.keys.map((k) => (
+                    <kbd key={k} className="text-xs bg-card border border-border rounded px-1.5 py-0.5 text-foreground font-mono">{k}</kbd>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Insight Dialog */}
+      <SaveInsightDialog
+        open={showSaveInsight}
+        onClose={() => setShowSaveInsight(false)}
+        query={lastQuery}
+        result={finalResult}
+        datasetName={selectedDataset?.fileName || ""}
+      />
     </div>
   );
 }

@@ -1,5 +1,7 @@
 const express = require("express");
 const { getDb } = require("../db");
+const { logAudit } = require("../middleware/auditLogger");
+const { createNotification } = require("./notifications");
 const { authMiddleware } = require("../middleware/auth");
 
 const router = express.Router();
@@ -62,6 +64,15 @@ router.post("/", async (req, res) => {
     });
 
     res.status(201).json({ success: true });
+    // Async side-effects: audit + notification (don't block response)
+    logAudit(req.userId, req.userEmail || "", "dataset.upload", { id, fileName, fileType, rowCounts }, "info");
+    createNotification(await getDb(), req.userId, {
+      type: "dataset_upload",
+      title: "Dataset uploaded",
+      message: `"${fileName}" is ready to query.`,
+      icon: "database",
+      link: "/app/datasets",
+    });
   } catch (err) {
     if (err.code === 10334 || err.message?.includes("document too large")) {
       return res.status(413).json({ error: "File too large to store (MongoDB 16 MB limit exceeded). Dataset metadata was saved but file must be re-uploaded each session." });
@@ -77,6 +88,7 @@ router.delete("/:id", async (req, res) => {
     const db = await getDb();
     await db.collection("datasets").deleteOne({ _id: req.params.id, userId: req.userId });
     res.json({ success: true });
+    logAudit(req.userId, req.userEmail || "", "dataset.delete", { id: req.params.id }, "warn");
   } catch (err) {
     console.error("delete dataset error:", err);
     res.status(500).json({ error: "Internal server error" });

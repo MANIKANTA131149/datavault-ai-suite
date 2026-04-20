@@ -14,6 +14,7 @@ function authMiddleware(req, res, next) {
     req.userId = payload.userId;
     req.userEmail = payload.email;
     req.userName = payload.name;
+    req.userRole = payload.role || "viewer";
     next();
   } catch {
     return res.status(401).json({ error: "Unauthorized — invalid token" });

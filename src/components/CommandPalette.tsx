@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Upload, FileText } from "lucide-react";
+import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Upload, FileText, Bookmark, Shield } from "lucide-react";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
+import { useAuthStore } from "@/stores/auth-store";
 
 interface CommandItem {
   id: string;
@@ -21,6 +22,10 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const { datasets } = useDatasetStore();
   const { entries } = useHistoryStore();
+  const { user } = useAuthStore();
+  const role = user?.role;
+  const adminUser = role === "admin";
+  const analystOrAdmin = role === "admin" || role === "analyst";
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -39,11 +44,13 @@ export function CommandPalette() {
   const items: CommandItem[] = [
     { id: "nav-dashboard", label: "Dashboard", icon: LayoutDashboard, action: () => navigate("/app/dashboard"), section: "Navigation" },
     { id: "nav-datasets", label: "Datasets", icon: Database, action: () => navigate("/app/datasets"), section: "Navigation" },
-    { id: "nav-query", label: "Query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Navigation" },
+    ...(analystOrAdmin ? [{ id: "nav-query", label: "Query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Navigation" }] : []),
     { id: "nav-history", label: "History", icon: Clock, action: () => navigate("/app/history"), section: "Navigation" },
+    { id: "nav-insights", label: "Insights", icon: Bookmark, action: () => navigate("/app/insights"), section: "Navigation" },
+    ...(adminUser ? [{ id: "nav-admin", label: "Admin Panel", icon: Shield, action: () => navigate("/app/admin"), section: "Navigation" }] : []),
     { id: "nav-settings", label: "Settings", icon: Settings, action: () => navigate("/app/settings"), section: "Navigation" },
     { id: "action-upload", label: "Upload file", icon: Upload, action: () => navigate("/app/datasets"), section: "Actions" },
-    { id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" },
+    ...(analystOrAdmin ? [{ id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" }] : []),
     ...datasets.map((d) => ({
       id: `ds-${d.id}`,
       label: d.fileName,
@@ -99,7 +106,7 @@ export function CommandPalette() {
               sections.map((section) => (
                 <div key={section}>
                   <p className="text-xs text-muted-foreground px-2 py-1.5 font-medium">{section}</p>
-                  {filtered.filter((i) => i.section === section).map((item, i) => {
+                  {filtered.filter((i) => i.section === section).map((item) => {
                     const globalIndex = filtered.indexOf(item);
                     return (
                       <button

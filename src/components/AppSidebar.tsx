@@ -1,24 +1,39 @@
 import { useState } from "react";
 import { NavLink as RouterNavLink, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Database, MessageSquare, Clock, Settings, ChevronLeft, ChevronRight, LogOut, User, CreditCard } from "lucide-react";
+import { LayoutDashboard, Database, MessageSquare, Clock, Settings, ChevronLeft, ChevronRight, LogOut, User, CreditCard, Bookmark, Shield } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
-  { to: "/app/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/app/datasets", icon: Database, label: "Datasets" },
-  { to: "/app/query", icon: MessageSquare, label: "Query" },
-  { to: "/app/history", icon: Clock, label: "History" },
-  { to: "/app/settings", icon: Settings, label: "Settings" },
-];
+const ROLE_BADGE_COLORS: Record<string, string> = {
+  admin: "bg-amber-500/10 text-amber-400",
+  analyst: "bg-blue-500/10 text-blue-400",
+  viewer: "bg-muted/60 text-muted-foreground",
+};
 
 export function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+
+  // Read role directly from user object so Zustand re-renders when role changes
+  const role = user?.role;
+  const adminUser = role === "admin";
+  const analystOrAdmin = role === "admin" || role === "analyst";
+
+  // Build nav items dynamically based on role
+  const NAV_ITEMS = [
+    { to: "/app/dashboard", icon: LayoutDashboard, label: "Dashboard", visible: true },
+    { to: "/app/datasets", icon: Database, label: "Datasets", visible: true },
+    { to: "/app/query", icon: MessageSquare, label: "Query", visible: analystOrAdmin },
+    { to: "/app/history", icon: Clock, label: "History", visible: true },
+    { to: "/app/insights", icon: Bookmark, label: "Insights", visible: true },
+    { to: "/app/admin", icon: Shield, label: "Admin", visible: adminUser },
+    { to: "/app/settings", icon: Settings, label: "Settings", visible: true },
+  ].filter((item) => item.visible);
 
   return (
     <aside
@@ -90,7 +105,12 @@ export function AppSidebar() {
               </div>
               {!collapsed && (
                 <div className="flex-1 text-left min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
+                    <Badge className={`${ROLE_BADGE_COLORS[user?.role || "viewer"]} border-0 text-[10px] px-1.5 py-0 capitalize`}>
+                      {user?.role || "viewer"}
+                    </Badge>
+                  </div>
                   <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
                 </div>
               )}
@@ -103,6 +123,14 @@ export function AppSidebar() {
             <DropdownMenuItem onClick={() => navigate("/app/settings")}>
               <CreditCard size={14} className="mr-2" /> Billing
             </DropdownMenuItem>
+            {adminUser && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate("/app/admin")}>
+                  <Shield size={14} className="mr-2" /> Admin Panel
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={async () => { await logout(); navigate("/auth"); }} className="text-destructive focus:text-destructive">
               <LogOut size={14} className="mr-2" /> Sign out

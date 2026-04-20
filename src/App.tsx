@@ -11,6 +11,8 @@ import DatasetsPage from "@/pages/DatasetsPage";
 import QueryPage from "@/pages/QueryPage";
 import HistoryPage from "@/pages/HistoryPage";
 import SettingsPage from "@/pages/SettingsPage";
+import InsightsPage from "@/pages/InsightsPage";
+import AdminPage from "@/pages/AdminPage";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +32,8 @@ const App = () => (
             <Route path="datasets" element={<DatasetsPage />} />
             <Route path="query" element={<QueryPage />} />
             <Route path="history" element={<HistoryPage />} />
+            <Route path="insights" element={<InsightsPage />} />
+            <Route path="admin" element={<AdminPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
