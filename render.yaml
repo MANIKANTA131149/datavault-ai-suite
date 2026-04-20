@@ -3,7 +3,7 @@ services:
     name: datavault-ai-suite
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm run render-build
     startCommand: npm run server
     healthCheckPath: /api/health
     envVars:

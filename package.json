@@ -3,11 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "vite",
     "server": "node server/index.js",
     "dev:full": "concurrently -n frontend,backend -c cyan,yellow \"npm run dev\" \"npm run server\"",
     "build": "vite build",
+    "render-build": "npm ci --include=dev && npm run build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
