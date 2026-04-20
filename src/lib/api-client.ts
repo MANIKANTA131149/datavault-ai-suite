@@ -3,9 +3,10 @@ function getBaseUrl() {
   if (configuredUrl) return configuredUrl.replace(/\/$/, "");
 
   const host = typeof window !== "undefined" ? window.location.hostname : "";
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const isLocalhost = host === "localhost" || host === "127.0.0.1";
 
-  return isLocalhost ? "http://localhost:3001/api" : "/api";
+  return isLocalhost ? "http://localhost:3001/api" : `${origin}/api`;
 }
 
 const BASE_URL = getBaseUrl();
