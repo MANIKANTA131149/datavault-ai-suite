@@ -1,8 +1,10 @@
 function getBaseUrl() {
   const configuredUrl = import.meta.env.VITE_API_URL;
-  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
+  if (!configuredUrl) {
+    throw new Error("VITE_API_URL is required. Set it to your backend URL, for example http://localhost:3001/api or https://datavault-ai-suite.onrender.com/api.");
+  }
 
-  return "https://datavault-ai-suite.onrender.com/api";
+  return configuredUrl.replace(/\/$/, "");
 }
 
 const BASE_URL = getBaseUrl();

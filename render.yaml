@@ -11,5 +11,7 @@ services:
         value: 20
       - key: MONGODB_URI
         sync: false
+      - key: VITE_API_URL
+        value: https://datavault-ai-suite.onrender.com/api
       - key: JWT_SECRET
         generateValue: true
