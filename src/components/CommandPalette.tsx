@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Upload, FileText, Bookmark, Shield } from "lucide-react";
+import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Upload, FileText, Bookmark, Shield, Key, X } from "lucide-react";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -51,6 +51,9 @@ export function CommandPalette() {
     { id: "nav-settings", label: "Settings", icon: Settings, action: () => navigate("/app/settings"), section: "Navigation" },
     { id: "action-upload", label: "Upload file", icon: Upload, action: () => navigate("/app/datasets"), section: "Actions" },
     ...(analystOrAdmin ? [{ id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" }] : []),
+    ...(datasets[0] && analystOrAdmin ? [{ id: "action-latest-dataset", label: "Open latest dataset in Query", description: datasets[0].fileName, icon: Database, action: () => navigate(`/app/query?dataset=${datasets[0].id}`), section: "Actions" }] : []),
+    { id: "action-providers", label: "Open provider settings", icon: Key, action: () => navigate("/app/settings"), section: "Actions" },
+    ...(query ? [{ id: "action-clear-command-search", label: "Clear command search", icon: X, action: () => setQuery(""), section: "Actions" }] : []),
     ...datasets.map((d) => ({
       id: `ds-${d.id}`,
       label: d.fileName,

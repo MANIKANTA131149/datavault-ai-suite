@@ -22,6 +22,7 @@ interface NotificationsState {
   markAllRead: () => Promise<void>;
   dismiss: (id: string) => Promise<void>;
   clearAll: () => Promise<void>;
+  addLocalNotification: (notification: Omit<Notification, "id" | "userId" | "read" | "createdAt">) => void;
 }
 
 export const useNotificationsStore = create<NotificationsState>()((set, get) => ({
@@ -89,4 +90,15 @@ export const useNotificationsStore = create<NotificationsState>()((set, get) => 
       console.error("clearAll:", err);
     }
   },
+
+  addLocalNotification: (notification) => set((state) => ({
+    notifications: [{
+      ...notification,
+      id: crypto.randomUUID(),
+      userId: "local",
+      read: false,
+      createdAt: new Date().toISOString(),
+    }, ...state.notifications],
+    unreadCount: state.unreadCount + 1,
+  })),
 }));

@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bookmark, Search, Trash2, Edit3, Tag, X, Calendar, Database, Copy, Filter, FileDown } from "lucide-react";
+import { Bookmark, Search, Trash2, Edit3, Tag, X, Calendar, Database, Copy, Filter, FileDown, Pin, Star } from "lucide-react";
 import { generatePDF } from "@/lib/pdf-report";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> = 
   pink:   { bg: "bg-pink-500/10",   text: "text-pink-400",   border: "border-pink-500/20" },
 };
 
-function InsightCard({ insight, onEdit, onDelete }: { insight: Insight; onEdit: () => void; onDelete: () => void }) {
+function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin }: { insight: Insight; onEdit: () => void; onDelete: () => void; pinned: boolean; onTogglePin: () => void }) {
   const colors = COLOR_MAP[insight.color] || COLOR_MAP.blue;
   const resultPreview = typeof insight.result === "string"
     ? insight.result.slice(0, 200)
@@ -41,6 +41,9 @@ function InsightCard({ insight, onEdit, onDelete }: { insight: Insight; onEdit: 
             </div>
           </div>
           <div className="flex shrink-0 gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={onTogglePin} className={`p-1.5 rounded hover:bg-primary/10 ${pinned ? "text-primary" : "text-muted-foreground hover:text-primary"}`} title="Pin">
+              <Pin size={12} fill={pinned ? "currentColor" : "none"} />
+            </button>
             <button onClick={onEdit} className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground" title="Edit">
               <Edit3 size={12} />
             </button>
@@ -98,6 +101,10 @@ export default function InsightsPage() {
   const { insights, updateInsight, removeInsight } = useInsightsStore();
   const [search, setSearch] = useState("");
   const [colorFilter, setColorFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState("all");
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("datavault-pinned-insights") || "[]"); } catch { return []; }
+  });
   const [editInsight, setEditInsight] = useState<Insight | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -111,9 +118,20 @@ export default function InsightsPage() {
     return insights.filter((i) => {
       if (search && !i.label.toLowerCase().includes(search.toLowerCase()) && !i.query.toLowerCase().includes(search.toLowerCase())) return false;
       if (colorFilter !== "all" && i.color !== colorFilter) return false;
+      if (tagFilter !== "all" && !i.tags.includes(tagFilter)) return false;
       return true;
+    }).sort((a, b) => Number(pinnedIds.includes(b.id)) - Number(pinnedIds.includes(a.id)));
+  }, [insights, search, colorFilter, tagFilter, pinnedIds]);
+
+  const allTags = useMemo(() => Array.from(new Set(insights.flatMap((insight) => insight.tags))).sort(), [insights]);
+
+  const togglePinned = (id: string) => {
+    setPinnedIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [id, ...prev];
+      localStorage.setItem("datavault-pinned-insights", JSON.stringify(next));
+      return next;
     });
-  }, [insights, search, colorFilter]);
+  };
 
   const openEdit = (insight: Insight) => {
     setEditInsight(insight);
@@ -165,6 +183,15 @@ export default function InsightsPage() {
             {Object.keys(COLOR_MAP).map((c) => <SelectItem key={c} value={c} className="capitalize">{c}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={tagFilter} onValueChange={setTagFilter}>
+          <SelectTrigger className="w-[140px] bg-background-secondary border-border">
+            <Tag size={12} className="mr-1" /><SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-popover border-border">
+            <SelectItem value="all">All tags</SelectItem>
+            {allTags.map((tag) => <SelectItem key={tag} value={tag}>{tag}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       {filtered.length === 0 ? (
@@ -181,6 +208,8 @@ export default function InsightsPage() {
               insight={insight}
               onEdit={() => openEdit(insight)}
               onDelete={() => setDeleteId(insight.id)}
+              pinned={pinnedIds.includes(insight.id)}
+              onTogglePin={() => togglePinned(insight.id)}
             />
           ))}
         </div>

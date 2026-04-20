@@ -11,6 +11,13 @@ export interface StoredDataset {
   rowCounts: Record<string, number>;
   columnCounts: Record<string, number>;
   uploadDate: string;
+  displayName?: string;
+  tags?: string[];
+  notes?: string;
+  archived?: boolean;
+  archivedAt?: string | null;
+  ownerEmail?: string;
+  createdBy?: string;
   data?: ParsedFile; // in-memory cache — loaded lazily from MongoDB when needed
 }
 
@@ -24,6 +31,9 @@ interface DatasetState {
   fetchDatasets: () => Promise<void>;
   addDataset: (file: ParsedFile) => Promise<string>;
   removeDataset: (id: string) => Promise<void>;
+  updateDatasetMeta: (id: string, patch: Partial<Pick<StoredDataset, "displayName" | "tags" | "notes" | "archived" | "archivedAt">>) => Promise<void>;
+  archiveDataset: (id: string, archived?: boolean) => Promise<void>;
+  duplicateDataset: (id: string) => Promise<string | null>;
   getDataset: (id: string) => StoredDataset | undefined;
   /** Lazily fetch full file content from MongoDB for a specific dataset */
   loadDatasetData: (id: string) => Promise<ParsedFile | null>;
@@ -96,6 +106,10 @@ export const useDatasetStore = create<DatasetState>()((set, get) => ({
       rowCounts,
       columnCounts,
       uploadDate: new Date().toISOString(),
+      displayName: "",
+      tags: [],
+      notes: "",
+      archived: false,
       data: file,
     };
 
@@ -113,6 +127,9 @@ export const useDatasetStore = create<DatasetState>()((set, get) => ({
         rowCounts,
         columnCounts,
         uploadDate: dataset.uploadDate,
+        displayName: dataset.displayName,
+        tags: dataset.tags,
+        notes: dataset.notes,
         fileData: file, // full parsed content — stored in MongoDB
       });
     } catch (err) {
@@ -135,6 +152,68 @@ export const useDatasetStore = create<DatasetState>()((set, get) => ({
   },
 
   // ─── Get with in-memory data — triggers lazy load if needed ────────────────
+  updateDatasetMeta: async (id, patch) => {
+    const previous = get().datasets;
+    set((state) => ({
+      datasets: state.datasets.map((ds) => ds.id === id ? { ...ds, ...patch } : ds),
+    }));
+    try {
+      const updated = await api.put<StoredDataset>(`/datasets/${id}`, patch);
+      set((state) => ({
+        datasets: state.datasets.map((ds) =>
+          ds.id === id ? { ...updated, data: dataCache.get(id) || ds.data } : ds
+        ),
+      }));
+    } catch (err) {
+      console.error("Failed to update dataset metadata:", err);
+      set({ datasets: previous });
+      throw err;
+    }
+  },
+
+  archiveDataset: async (id, archived = true) => {
+    await get().updateDatasetMeta(id, { archived, archivedAt: archived ? new Date().toISOString() : null });
+  },
+
+  duplicateDataset: async (id) => {
+    const original = get().datasets.find((ds) => ds.id === id);
+    if (!original) return null;
+    const newId = crypto.randomUUID();
+    const cached = dataCache.get(id);
+    if (cached) dataCache.set(newId, { ...cached, fileName: `Copy of ${cached.fileName}` });
+
+    const duplicate: StoredDataset = {
+      ...original,
+      id: newId,
+      fileName: `Copy of ${original.fileName}`,
+      displayName: `Copy of ${original.displayName || original.fileName}`,
+      uploadDate: new Date().toISOString(),
+      archived: false,
+      archivedAt: null,
+      data: cached ? { ...cached, fileName: `Copy of ${cached.fileName}` } : undefined,
+    };
+
+    set((state) => ({ datasets: [duplicate, ...state.datasets] }));
+    try {
+      const saved = await api.post<StoredDataset>(`/datasets/${id}/duplicate`, {
+        id: newId,
+        fileName: duplicate.fileName,
+        displayName: duplicate.displayName,
+      });
+      set((state) => ({
+        datasets: state.datasets.map((ds) =>
+          ds.id === newId ? { ...saved, data: dataCache.get(newId) || ds.data } : ds
+        ),
+      }));
+      return newId;
+    } catch (err) {
+      console.error("Failed to duplicate dataset:", err);
+      dataCache.delete(newId);
+      set((state) => ({ datasets: state.datasets.filter((ds) => ds.id !== newId) }));
+      throw err;
+    }
+  },
+
   getDataset: (id: string) => {
     const ds = get().datasets.find((d) => d.id === id);
     if (!ds) return undefined;

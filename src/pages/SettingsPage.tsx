@@ -12,11 +12,12 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useLLMStore, PROVIDER_LABELS, PROVIDER_MODELS } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore, type Theme, type CodeFont } from "@/stores/settings-store";
-import type { Provider } from "@/lib/llm-client";
+import { testProviderConnection, type Provider } from "@/lib/llm-client";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Trash2, Check, Shield, Palette, User, CreditCard, Cpu, Save, Eye, EyeOff, Key, Copy, Plus } from "lucide-react";
+import { Trash2, Check, Shield, Palette, User, CreditCard, Cpu, Save, Eye, EyeOff, Key, Copy, Plus, Search } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { ProviderLogo } from "@/components/ProviderLogo";
 
 export default function SettingsPage() {
   const { user, updateUserName } = useAuthStore();
@@ -29,6 +30,8 @@ export default function SettingsPage() {
   const [savingAppearance, setSavingAppearance] = useState(false);
   const [savingKeys, setSavingKeys] = useState(false);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [settingsSearch, setSettingsSearch] = useState("");
+  const [testingProvider, setTestingProvider] = useState<Provider | null>(null);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>(
     Object.fromEntries(
       (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""])
@@ -94,17 +97,34 @@ export default function SettingsPage() {
   const configuredCount = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(
     (p) => keyInputs[p]?.length > 0
   ).length;
+  const visibleProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((provider) => {
+    const q = settingsSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [provider, PROVIDER_LABELS[provider], providerConfigs[provider]?.model || ""].some((value) => value.toLowerCase().includes(q));
+  });
 
-  const handleCheckProvider = (provider: Provider) => {
-    if (provider === "ollama") {
-      toast.info("Ollama uses your local runtime configuration");
-      return;
-    }
-    if (!keyInputs[provider]) {
+  const keyLooksValid = (provider: Provider) => {
+    const key = keyInputs[provider] || "";
+    if (provider === "ollama") return true;
+    if (provider === "openai") return key.startsWith("sk-");
+    if (provider === "anthropic") return key.startsWith("sk-ant-");
+    return key.length > 8;
+  };
+
+  const handleCheckProvider = async (provider: Provider) => {
+    if (provider !== "ollama" && !keyInputs[provider]) {
       toast.error(`${PROVIDER_LABELS[provider]} API key is missing`);
       return;
     }
-    toast.success(`${PROVIDER_LABELS[provider]} key is present`);
+    setTestingProvider(provider);
+    try {
+      await testProviderConnection(provider, providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0], keyInputs[provider]);
+      toast.success(`${PROVIDER_LABELS[provider]} connection verified`);
+    } catch (err: any) {
+      toast.error(err.message || `${PROVIDER_LABELS[provider]} connection failed`);
+    } finally {
+      setTestingProvider(null);
+    }
   };
 
   const copyApiKey = async (provider: Provider) => {
@@ -118,6 +138,12 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Manage your account, appearance and API configuration</p>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={settingsSearch} onChange={(e) => setSettingsSearch(e.target.value)} placeholder="Search settings or providers..." className="pl-9 bg-background-secondary border-border" />
+        </div>
       </div>
 
       <Tabs defaultValue="profile">
@@ -195,22 +221,14 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {(Object.keys(PROVIDER_LABELS) as Provider[]).map((provider) => {
+          {visibleProviders.map((provider) => {
             const hasKey = !!keyInputs[provider];
             const visible = showKeys[provider];
             return (
               <Card key={provider} className="p-4 bg-background-secondary border-border">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold"
-                      style={{
-                        backgroundColor: `hsl(${provider.length * 37 % 360}, 70%, 50%, 0.12)`,
-                        color: `hsl(${provider.length * 37 % 360}, 70%, 55%)`,
-                      }}
-                    >
-                      {PROVIDER_LABELS[provider][0]}
-                    </div>
+                    <ProviderLogo provider={provider} />
                     <div>
                       <p className="text-sm font-medium text-foreground">{PROVIDER_LABELS[provider]}</p>
                       <p className="text-xs text-muted-foreground">
@@ -219,7 +237,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <Badge className={`border-0 text-xs ${hasKey ? "bg-success/10 text-success" : "bg-muted/50 text-muted-foreground"}`}>
-                    {hasKey ? "Connected" : "Not set"}
+                    {hasKey ? (keyLooksValid(provider) ? "Looks valid" : "Check format") : "Not set"}
                   </Badge>
                 </div>
                 <div className="mt-3 flex gap-2">
@@ -263,9 +281,10 @@ export default function SettingsPage() {
                     size="sm"
                     variant="outline"
                     className="border-border"
+                    disabled={testingProvider === provider}
                     onClick={() => handleCheckProvider(provider)}
                   >
-                    <Check size={13} />
+                    <Check size={13} className={testingProvider === provider ? "animate-pulse" : ""} />
                   </Button>
                   {keyInputs[provider] && (
                     <Button
@@ -339,6 +358,41 @@ export default function SettingsPage() {
         {/* ─── Appearance ──────────────────────────────────────────────────────── */}
         <TabsContent value="appearance" className="mt-6 space-y-4">
           <Card className="p-6 bg-background-secondary border-border space-y-5">
+            <div className="grid grid-cols-3 gap-3">
+              {(["dark", "light", "system"] as Theme[]).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setTheme(option)}
+                  className={`rounded-md border p-3 text-left capitalize ${theme === option ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}
+                >
+                  {option === "dark" && (
+                    <div className="mb-2 h-10 rounded border border-slate-700 bg-slate-950 p-1">
+                      <div className="h-2 w-8 rounded bg-slate-600" />
+                      <div className="mt-2 h-3 rounded bg-blue-500/70" />
+                    </div>
+                  )}
+                  {option === "light" && (
+                    <div className="mb-2 h-10 rounded border border-slate-200 bg-white p-1">
+                      <div className="h-2 w-8 rounded bg-slate-300" />
+                      <div className="mt-2 h-3 rounded bg-blue-500/70" />
+                    </div>
+                  )}
+                  {option === "system" && (
+                    <div className="mb-2 grid h-10 grid-cols-2 overflow-hidden rounded border border-border">
+                      <div className="bg-white p-1">
+                        <div className="h-2 w-5 rounded bg-slate-300" />
+                      </div>
+                      <div className="bg-slate-950 p-1">
+                        <div className="h-2 w-5 rounded bg-slate-600" />
+                      </div>
+                    </div>
+                  )}
+                  <span className="text-xs">{option}</span>
+                </button>
+              ))}
+            </div>
+            <Separator className="bg-border" />
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Theme</p>
@@ -429,7 +483,6 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
-
 
     </div>
   );

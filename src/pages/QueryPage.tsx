@@ -5,7 +5,7 @@ import {
   Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
-  MessageSquarePlus, Trash2, BarChart3, FileDown, Layout,
+  MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS } from "@/stores/llm-stor
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useInsightsStore } from "@/stores/insights-store";
+import { ProviderLogo } from "@/components/ProviderLogo";
 
 import { runAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
 import type { Provider } from "@/lib/llm-client";
@@ -32,7 +33,7 @@ import { generatePDF } from "@/lib/pdf-report";
 import html2canvas from "html2canvas";
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area,
-  XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer,
+  XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend as RechartsLegend, LabelList,
 } from "recharts";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -120,6 +121,17 @@ const SHORTCUTS = [
   { keys: ["Escape"], label: "Close panels" },
   { keys: ["?"], label: "Keyboard shortcuts" },
 ];
+
+const FAVORITE_PROMPTS_KEY = "datavault-favorite-prompts";
+type ResultDensity = "comfortable" | "compact";
+
+function readStoredList(key: string): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "[]");
+  } catch {
+    return [];
+  }
+}
 
 // ─── Smart Suggestion Generator ──────────────────────────────────────────────
 function generateSmartSuggestions(columns: ColumnInfo[]): string[] {
@@ -387,6 +399,20 @@ function ResultPanel({
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const [showExport, setShowExport] = useState(false);
   const chartRef = useRef<HTMLDivElement>(null);
+  const [resultSearch, setResultSearch] = useState("");
+  const [sortKey, setSortKey] = useState("");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [density, setDensity] = useState<ResultDensity>("comfortable");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [chartColor, setChartColor] = useState("hsl(var(--primary))");
+  const [chartTitle, setChartTitle] = useState("");
+  const [xAxisLabel, setXAxisLabel] = useState("");
+  const [yAxisLabel, setYAxisLabel] = useState("");
+  const [showLegend, setShowLegend] = useState(true);
+  const [showLabels, setShowLabels] = useState(false);
+  const [chartSort, setChartSort] = useState<"none" | "asc" | "desc">("none");
+  const [topN, setTopN] = useState(20);
+  const [chartNotes, setChartNotes] = useState("");
   const isEmptyArray = isArray && rows.length === 0;
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
   const isBlankString = typeof result === "string" && !result.trim();
@@ -394,6 +420,46 @@ function ResultPanel({
   const areaGradientId = useId().replace(/:/g, "");
 
   useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
+  useEffect(() => {
+    setChartTitle(query ? query.slice(0, 80) : "Chart");
+    setXAxisLabel(labelKey);
+    setYAxisLabel(valueKey);
+  }, [query, labelKey, valueKey]);
+
+  const visibleChartRows = useMemo(() => {
+    let next = [...chartRows];
+    if (chartSort !== "none" && valueKey) {
+      next.sort((a, b) => chartSort === "asc" ? Number(a[valueKey]) - Number(b[valueKey]) : Number(b[valueKey]) - Number(a[valueKey]));
+    }
+    return next.slice(0, topN);
+  }, [chartRows, chartSort, topN, valueKey]);
+
+  const displayedRows = useMemo(() => {
+    const q = resultSearch.trim().toLowerCase();
+    let next = rows.filter((row) => !q || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(q)));
+    if (sortKey) {
+      next = [...next].sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        const an = Number(av);
+        const bn = Number(bv);
+        const result = Number.isFinite(an) && Number.isFinite(bn)
+          ? an - bn
+          : String(av ?? "").localeCompare(String(bv ?? ""));
+        return sortDir === "asc" ? result : -result;
+      });
+    }
+    return next;
+  }, [rows, resultSearch, sortKey, sortDir]);
+
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDir((prev) => prev === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortKey(key);
+    setSortDir("asc");
+  };
 
   const downloadChartImage = async () => {
     if (!chartRef.current) return;
@@ -407,9 +473,12 @@ function ResultPanel({
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className={fullscreen ? "fixed inset-4 z-[60] rounded-lg border border-border bg-background-secondary shadow-2xl flex flex-col" : "h-full flex flex-col"}>
       <div className="flex items-center justify-between p-4 border-b border-border">
-        <h3 className="text-sm font-semibold text-foreground">Result</h3>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Result</h3>
+          {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
+        </div>
         <div className="flex gap-1">
 
           <button onClick={onBookmark} title="Save as Insight" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
@@ -417,6 +486,9 @@ function ResultPanel({
           </button>
           <button onClick={() => setShowExport(!showExport)} title="Export" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
             <Download size={14} />
+          </button>
+          <button onClick={() => setFullscreen((prev) => !prev)} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
+            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
             <PanelRightClose size={14} />
@@ -484,6 +556,109 @@ function ResultPanel({
 
         {isChartable && (
           <div>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex gap-1">
+                {(["bar", "line", "area", "pie"] as const).map((t) => (
+                  <button key={t} onClick={() => setChartType(t)} title={`${t} chart`} className={`text-xs px-2 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
+                    <BarChart3 size={12} />
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <Palette size={12} className="text-muted-foreground" />
+                {["hsl(var(--primary))", "hsl(160, 84%, 39%)", "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)"].map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label="Chart color"
+                    onClick={() => setChartColor(color)}
+                    className={`h-4 w-4 rounded-full border ${chartColor === color ? "border-foreground" : "border-border"}`}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <Input value={chartTitle} onChange={(e) => setChartTitle(e.target.value)} placeholder="Chart title" className="h-8 bg-card border-border text-xs col-span-2" />
+              <Input value={xAxisLabel} onChange={(e) => setXAxisLabel(e.target.value)} placeholder="X axis" className="h-8 bg-card border-border text-xs" />
+              <Input value={yAxisLabel} onChange={(e) => setYAxisLabel(e.target.value)} placeholder="Y axis" className="h-8 bg-card border-border text-xs" />
+              <Select value={chartSort} onValueChange={(v) => setChartSort(v as "none" | "asc" | "desc")}>
+                <SelectTrigger className="h-8 bg-card border-border text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  <SelectItem value="none">Original order</SelectItem>
+                  <SelectItem value="asc">Sort ascending</SelectItem>
+                  <SelectItem value="desc">Sort descending</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={String(topN)} onValueChange={(v) => setTopN(Number(v))}>
+                <SelectTrigger className="h-8 bg-card border-border text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {[5, 10, 20, 50].map((n) => <SelectItem key={n} value={String(n)}>Top {n}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLegend((prev) => !prev)}>
+                {showLegend ? "Legend on" : "Legend off"}
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLabels((prev) => !prev)}>
+                {showLabels ? "Labels on" : "Labels off"}
+              </Button>
+              <Textarea value={chartNotes} onChange={(e) => setChartNotes(e.target.value)} placeholder="Chart notes..." className="col-span-2 min-h-[56px] bg-card border-border text-xs" />
+              <Button variant="outline" size="sm" className="col-span-2 h-8 border-border text-xs" onClick={onBookmark}>
+                <BookmarkPlus size={12} className="mr-1" /> Save chart as insight
+              </Button>
+            </div>
+            <div ref={chartRef} className={fullscreen ? "h-[50vh] rounded-md bg-background-secondary/30 p-2" : "h-52 rounded-md bg-background-secondary/30 p-2"}>
+              <p className="mb-1 truncate text-center text-xs font-medium text-foreground">{chartTitle || "Chart"}</p>
+              <ResponsiveContainer width="100%" height="100%">
+                {chartType === "pie" ? (
+                  <PieChart>
+                    <Pie data={visibleChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={80} label={showLabels}>
+                      {visibleChartRows.map((_: any, i: number) => <Cell key={i} fill={i === 0 ? chartColor : CHART_COLORS[i % CHART_COLORS.length]} />)}
+                    </Pie>
+                    {showLegend && <RechartsLegend />}
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                  </PieChart>
+                ) : chartType === "line" ? (
+                  <LineChart data={visibleChartRows}>
+                    <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    {showLegend && <RechartsLegend />}
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Line type="monotone" dataKey={valueKey} stroke={chartColor} strokeWidth={2} dot={false} />
+                  </LineChart>
+                ) : chartType === "area" ? (
+                  <AreaChart data={visibleChartRows}>
+                    <defs>
+                      <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    {showLegend && <RechartsLegend />}
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
+                  </AreaChart>
+                ) : (
+                  <BarChart data={visibleChartRows}>
+                    <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                    {showLegend && <RechartsLegend />}
+                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Bar dataKey={valueKey} fill={chartColor} radius={[4, 4, 0, 0]}>
+                      {showLabels && <LabelList dataKey={valueKey} position="top" fill="hsl(var(--muted-foreground))" fontSize={10} />}
+                    </Bar>
+                  </BarChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+            {chartNotes && <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">{chartNotes}</p>}
+          </div>
+        )}
+
+        {false && isChartable && (
+          <div>
             <div className="flex gap-1 mb-3">
               {(["bar", "line", "area", "pie"] as const).map((t) => (
                 <button key={t} onClick={() => setChartType(t)} className={`text-xs px-2 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
@@ -534,25 +709,41 @@ function ResultPanel({
         )}
 
         {isArray && rows.length > 0 && (
-          <div className="overflow-x-auto rounded-md border border-border">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="Search result rows..." className="h-8 bg-card border-border pl-8 text-xs" />
+              </div>
+              <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setDensity((prev) => prev === "compact" ? "comfortable" : "compact")}>
+                <Rows3 size={12} className="mr-1" /> {density === "compact" ? "Compact" : "Roomy"}
+              </Button>
+            </div>
+            <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full text-xs">
               <thead className="bg-card">
                 <tr>
                   {Object.keys(rows[0] || {}).map((k) => (
-                    <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>
+                    <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">
+                      <button type="button" onClick={() => handleSort(k)} className="hover:text-foreground">
+                        {k}{sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                      </button>
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.slice(0, 20).map((row: any, i: number) => (
+                {displayedRows.slice(0, fullscreen ? 200 : 20).map((row: any, i: number) => (
                   <tr key={i} className="border-t border-border/50">
                     {Object.values(row).map((v: any, j) => (
-                      <td key={j} className="px-3 py-1.5 text-foreground max-w-[120px] truncate">{String(v ?? "")}</td>
+                      <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>{String(v ?? "")}</td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
+            {displayedRows.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching rows</p>}
+            </div>
           </div>
         )}
 
@@ -583,10 +774,10 @@ function ResultPanel({
           </Button>
           {isArray && rows.length > 0 && (
             <>
-              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => copyRows(rows)}>
+              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => copyRows(displayedRows)}>
                 <Table2 size={12} className="mr-1" /> Copy table
               </Button>
-              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { exportCSV(rows); toast.success("CSV downloaded"); }}>
+              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { exportCSV(displayedRows); toast.success("CSV downloaded"); }}>
                 <Download size={12} className="mr-1" /> CSV
               </Button>
             </>
@@ -920,7 +1111,7 @@ export default function QueryPage() {
   const navigate = useNavigate();
   const { datasets, getDataset } = useDatasetStore();
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
-  const { addEntry } = useHistoryStore();
+  const { addEntry, entries } = useHistoryStore();
 
   const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
   const [selectedSheet, setSelectedSheet] = useState("");
@@ -941,12 +1132,19 @@ export default function QueryPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSaveInsight, setShowSaveInsight] = useState(false);
+  const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
+  const [queryExpanded, setQueryExpanded] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [lastFailedQuery, setLastFailedQuery] = useState("");
+  const [apiWarning, setApiWarning] = useState("");
 
   // Multi-turn conversation memory
   const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cancelRequestedRef = useRef(false);
+  const queryStartRef = useRef(0);
 
   const selectedDataset = getDataset(selectedDatasetId) ?? datasets.find((d) => d.id === selectedDatasetId);
 
@@ -960,7 +1158,25 @@ export default function QueryPage() {
   }, [searchParams]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentSteps]);
+  useEffect(() => {
+    if (!isRunning) {
+      setElapsedMs(0);
+      return;
+    }
+    const timer = window.setInterval(() => setElapsedMs(Date.now() - queryStartRef.current), 500);
+    return () => window.clearInterval(timer);
+  }, [isRunning]);
   const currentFinalStep = getFinalStep(currentSteps);
+  const recentPrompts = useMemo(() => Array.from(new Set(entries.map((entry) => entry.query))).slice(0, 5), [entries]);
+
+  useEffect(() => {
+    localStorage.setItem(FAVORITE_PROMPTS_KEY, JSON.stringify(favoritePrompts));
+  }, [favoritePrompts]);
+
+  const toggleFavoritePrompt = (prompt: string) => {
+    if (!prompt.trim()) return;
+    setFavoritePrompts((prev) => prev.includes(prompt) ? prev.filter((item) => item !== prompt) : [prompt, ...prev].slice(0, 20));
+  };
 
   // Smart suggestions based on dataset columns
   const smartSuggestions = useMemo(() => {
@@ -992,14 +1208,23 @@ export default function QueryPage() {
     toast.success("Conversation context cleared");
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isRunning) return;
+  const handleSend = async (overrideQuestion?: string) => {
+    const question = (overrideQuestion ?? input).trim();
+    if (!question || isRunning) return;
     if (!selectedDatasetId) { toast.error("Select a dataset first"); return; }
     const apiKey = getApiKey(activeProvider);
-    if (!apiKey && activeProvider !== "ollama") { toast.error("Configure API key for " + PROVIDER_LABELS[activeProvider]); return; }
+    if (!apiKey && activeProvider !== "ollama") {
+      const message = `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
+      setApiWarning(message);
+      toast.error(message);
+      return;
+    }
 
-    const question = input.trim();
-    setInput("");
+    setInput(overrideQuestion ? input : "");
+    setApiWarning("");
+    setLastFailedQuery("");
+    cancelRequestedRef.current = false;
+    queryStartRef.current = Date.now();
     setMessages((prev) => [...prev, { role: "user", content: question, query: question }]);
     setIsRunning(true);
     setCurrentSteps([]);
@@ -1026,6 +1251,18 @@ export default function QueryPage() {
         question, sheetData, activeProvider, activeModel, apiKey, temperature, maxTokens,
         systemPrompt || undefined, conversationContext
       )) {
+        if (cancelRequestedRef.current) {
+          steps.push({
+            turn: steps.length + 1,
+            command: "Error",
+            args: {},
+            result: "Query stopped by user",
+            durationMs: Date.now() - startTime,
+            tokens: { input: 0, output: 0 },
+            isFinal: true,
+          });
+          break;
+        }
         steps.push(step);
         setCurrentSteps([...steps]);
         if (step.isFinal) {
@@ -1059,10 +1296,19 @@ export default function QueryPage() {
       });
     } catch (err: any) {
       toast.error(err.message);
+      setLastFailedQuery(question);
       setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const handleStopQuery = () => {
+    cancelRequestedRef.current = true;
+    setIsRunning(false);
+    setMessages((prev) => [...prev, { role: "agent", content: "Query stopped by user.", steps: [] }]);
+    setCurrentSteps([]);
+    toast.info("Query stopped");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1139,7 +1385,7 @@ export default function QueryPage() {
                 {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
                   <SelectItem key={p} value={p}>
                     <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: `hsl(${p.length * 37 % 360}, 70%, 50%)` }} />
+                      <ProviderLogo provider={p} size="sm" />
                       {PROVIDER_LABELS[p]}
                     </span>
                   </SelectItem>
@@ -1204,6 +1450,33 @@ export default function QueryPage() {
 
       {/* Center: Chat */}
       <div className="flex-1 flex flex-col min-w-0">
+        <div className="lg:hidden border-b border-border bg-background-secondary p-3 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
+              <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Dataset" /></SelectTrigger>
+              <SelectContent className="bg-popover border-border">
+                {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
+              <SelectTrigger className="bg-card border-border text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent className="bg-popover border-border">
+                {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    <span className="flex items-center gap-2"><ProviderLogo provider={p} size="sm" />{PROVIDER_LABELS[p]}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedDataset && selectedDataset.sheetNames.length > 1 && (
+            <div className="flex gap-1 overflow-x-auto">
+              {selectedDataset.sheetNames.map((s) => (
+                <button key={s} onClick={() => setSelectedSheet(s)} className={`shrink-0 rounded px-2 py-1 text-xs ${s === selectedSheet ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"}`}>{s}</button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="flex-1 overflow-auto p-4 space-y-4 scrollbar-thin">
           {messages.length === 0 && !isRunning && (
             <div className="flex flex-col items-center justify-center h-full gap-4">
@@ -1286,13 +1559,19 @@ export default function QueryPage() {
             <div className="space-y-1">
               {currentSteps.map((step, j) => <StepCard key={j} step={step} />)}
               {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
-              <div className="flex items-center gap-2 pl-10">
+              <div className="flex flex-wrap items-center gap-2 pl-10">
                 <div className="flex gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0s" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.4s" }} />
                 </div>
-                <span className="text-xs text-muted-foreground">Agent is thinking...</span>
+                <span className="text-xs text-muted-foreground">
+                  Agent is thinking... {Math.floor(elapsedMs / 1000)}s
+                  {elapsedMs > 30000 ? " - taking longer than usual" : ""}
+                </span>
+                <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
+                  <X size={12} className="mr-1" /> Stop
+                </Button>
               </div>
             </div>
           )}
@@ -1300,6 +1579,20 @@ export default function QueryPage() {
         </div>
 
         <div className="p-4 border-t border-border bg-background">
+          {apiWarning && (
+            <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <span>{apiWarning}</span>
+              <Button variant="outline" size="sm" className="h-7 border-warning/30 text-xs" onClick={() => navigate("/app/settings")}>Settings</Button>
+            </div>
+          )}
+          {lastFailedQuery && !isRunning && (
+            <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground">
+              <span>Last query failed.</span>
+              <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={() => handleSend(lastFailedQuery)}>
+                <RefreshCw size={12} className="mr-1" /> Retry
+              </Button>
+            </div>
+          )}
           <div className="flex gap-2 items-end max-w-3xl mx-auto">
             <div className="relative flex-1">
               <Textarea
@@ -1308,8 +1601,8 @@ export default function QueryPage() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask a question about your data... (Shift+Enter for new line)"
-                className="bg-background-secondary border-border resize-none min-h-[44px] max-h-[120px] pr-10"
-                rows={1}
+                className={`bg-background-secondary border-border resize-none min-h-[44px] ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
+                rows={queryExpanded ? 5 : 1}
               />
               {input && (
                 <button
@@ -1323,8 +1616,17 @@ export default function QueryPage() {
                 </button>
               )}
             </div>
-            <Button onClick={handleSend} disabled={isRunning || !input.trim()} size="icon" className="shrink-0 h-[44px] w-[44px]">
-              <Send size={16} />
+            <Button
+              variant="outline"
+              onClick={() => setQueryExpanded((prev) => !prev)}
+              size="icon"
+              title={queryExpanded ? "Collapse query box" : "Expand query box"}
+              className="shrink-0 h-[44px] w-[44px] border-border"
+            >
+              {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </Button>
+            <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="shrink-0 h-[44px] w-[44px]">
+              {isRunning ? <X size={16} /> : <Send size={16} />}
             </Button>
           </div>
           {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}

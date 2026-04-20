@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useLocation, Outlet, Navigate } from "react-router-dom";
+import { useLocation, Outlet, Navigate, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { AppSidebar } from "@/components/AppSidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useAuthStore } from "@/stores/auth-store";
@@ -11,6 +12,9 @@ import { useInsightsStore } from "@/stores/insights-store";
 
 import { useNotificationsStore } from "@/stores/notifications-store";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ProviderLogo } from "@/components/ProviderLogo";
+import { Clock, Database, MessageSquare, Settings, Upload } from "lucide-react";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/dashboard": "Dashboard",
@@ -25,6 +29,7 @@ const BREADCRUMBS: Record<string, string> = {
 export default function AppLayout() {
   const { user, hydrateRole } = useAuthStore();
   const location = useLocation();
+  const navigate = useNavigate();
   const { activeProvider, activeModel } = useLLMStore();
   const { fetchDatasets } = useDatasetStore();
   const { fetchHistory } = useHistoryStore();
@@ -61,8 +66,18 @@ export default function AppLayout() {
             <span className="text-foreground font-medium">{BREADCRUMBS[location.pathname] || "Page"}</span>
           </div>
           <div className="flex items-center gap-3">
+            {location.pathname === "/app/datasets" && (
+              <Button variant="outline" size="sm" className="hidden md:flex border-border" onClick={() => navigate("/app/datasets")}>
+                <Upload size={13} className="mr-2" /> Upload
+              </Button>
+            )}
+            {location.pathname !== "/app/query" && (
+              <Button variant="outline" size="sm" className="hidden md:flex border-border" onClick={() => navigate("/app/query")}>
+                <MessageSquare size={13} className="mr-2" /> Query
+              </Button>
+            )}
             <Badge variant="outline" className="border-border text-xs text-muted-foreground font-mono gap-1.5 cursor-default">
-              <span className="w-1.5 h-1.5 rounded-full bg-success inline-block" />
+              <ProviderLogo provider={activeProvider} size="sm" />
               {PROVIDER_LABELS[activeProvider]} · {activeModel}
             </Badge>
             <NotificationBell />
@@ -72,8 +87,31 @@ export default function AppLayout() {
           </div>
         </header>
         <main className="flex-1 overflow-auto">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.16 }}
+              className="min-h-full"
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </main>
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 grid grid-cols-4 border-t border-border bg-background">
+          {[
+            { label: "Data", icon: Database, path: "/app/datasets" },
+            { label: "Query", icon: MessageSquare, path: "/app/query" },
+            { label: "History", icon: Clock, path: "/app/history" },
+            { label: "Settings", icon: Settings, path: "/app/settings" },
+          ].map(({ label, icon: Icon, path }) => (
+            <button key={path} onClick={() => navigate(path)} className={`flex flex-col items-center gap-1 py-2 text-[10px] ${location.pathname === path ? "text-primary" : "text-muted-foreground"}`}>
+              <Icon size={16} />{label}
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
   );

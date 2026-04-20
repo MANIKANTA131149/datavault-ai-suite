@@ -46,7 +46,7 @@ router.get("/:id/data", async (req, res) => {
 // ─── Save dataset metadata + full file content ────────────────────────────────
 router.post("/", async (req, res) => {
   try {
-    const { id, fileName, fileSize, fileType, sheetNames, rowCounts, columnCounts, uploadDate, fileData } =
+    const { id, fileName, fileSize, fileType, sheetNames, rowCounts, columnCounts, uploadDate, fileData, displayName, tags, notes } =
       req.body;
     if (!id || !fileName) return res.status(400).json({ error: "id and fileName required" });
 
@@ -61,6 +61,13 @@ router.post("/", async (req, res) => {
       rowCounts,
       columnCounts,
       uploadDate,
+      displayName: displayName || "",
+      tags: Array.isArray(tags) ? tags : [],
+      notes: notes || "",
+      archived: false,
+      archivedAt: null,
+      ownerEmail: req.userEmail || "",
+      createdBy: req.userEmail || "",
       fileData: fileData ?? null, // full parsed sheet data — null if not provided
     });
 
@@ -84,6 +91,71 @@ router.post("/", async (req, res) => {
 });
 
 // ─── Delete one dataset ───────────────────────────────────────────────────────
+// Update dataset metadata without changing stored file data
+router.put("/:id", async (req, res) => {
+  try {
+    const allowed = ["displayName", "tags", "notes", "archived", "archivedAt"];
+    const update = {};
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(req.body, key)) update[key] = req.body[key];
+    }
+    if (Object.prototype.hasOwnProperty.call(update, "tags") && !Array.isArray(update.tags)) {
+      update.tags = [];
+    }
+    if (Object.prototype.hasOwnProperty.call(update, "archived")) {
+      update.archivedAt = update.archived ? (update.archivedAt || new Date().toISOString()) : null;
+    }
+
+    const db = await getDb();
+    const result = await db
+      .collection("datasets")
+      .updateOne({ _id: req.params.id, userId: req.userId }, { $set: update });
+    if (result.matchedCount === 0) return res.status(404).json({ error: "Dataset not found" });
+
+    const doc = await db
+      .collection("datasets")
+      .findOne({ _id: req.params.id, userId: req.userId }, { projection: { fileData: 0 } });
+    const { _id, ...rest } = doc;
+    res.json({ id: _id, ...rest });
+    logAudit(req.userId, req.userEmail || "", "dataset.update", { id: req.params.id, update }, "info");
+  } catch (err) {
+    console.error("update dataset error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Duplicate a dataset metadata entry and its stored file data
+router.post("/:id/duplicate", async (req, res) => {
+  try {
+    const db = await getDb();
+    const original = await db.collection("datasets").findOne({ _id: req.params.id, userId: req.userId });
+    if (!original) return res.status(404).json({ error: "Dataset not found" });
+
+    const newId = req.body.id;
+    if (!newId) return res.status(400).json({ error: "id required" });
+
+    const copy = {
+      ...original,
+      _id: newId,
+      fileName: req.body.fileName || `Copy of ${original.fileName}`,
+      displayName: req.body.displayName || `Copy of ${original.displayName || original.fileName}`,
+      uploadDate: new Date().toISOString(),
+      archived: false,
+      archivedAt: null,
+      ownerEmail: req.userEmail || original.ownerEmail || "",
+      createdBy: req.userEmail || original.createdBy || "",
+    };
+
+    await db.collection("datasets").insertOne(copy);
+    const { _id, fileData, ...rest } = copy;
+    res.status(201).json({ id: _id, ...rest });
+    logAudit(req.userId, req.userEmail || "", "dataset.duplicate", { sourceId: req.params.id, id: newId }, "info");
+  } catch (err) {
+    console.error("duplicate dataset error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const db = await getDb();

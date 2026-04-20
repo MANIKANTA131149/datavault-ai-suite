@@ -188,3 +188,15 @@ export async function callLLM(
   if (!endpoint) throw new Error(`Unknown provider: ${provider}`);
   return callOpenAICompatible(endpoint, apiKey, model, allMessages, temperature, maxTokens);
 }
+
+export async function testProviderConnection(provider: Provider, model: string, apiKey: string): Promise<LLMResponse> {
+  return callLLM(
+    provider,
+    model,
+    apiKey,
+    [{ role: "user", content: "Reply with the single word ok." }],
+    "You are a connection health check.",
+    0,
+    8
+  );
+}

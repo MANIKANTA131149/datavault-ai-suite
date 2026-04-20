@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Download, RotateCcw, ChevronDown, ChevronRight, Clock, Zap, MessageSquare, Copy, Star } from "lucide-react";
+import { Search, Filter, Download, RotateCcw, ChevronLeft, ChevronRight, MessageSquare, Copy, Star, GitCompare, CheckSquare, Square, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +83,10 @@ export default function HistoryPage() {
   const [dateFilter, setDateFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     try {
@@ -103,19 +107,30 @@ export default function HistoryPage() {
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
       if (providerFilter !== "all" && e.provider !== providerFilter) return false;
       if (datasetFilter !== "all" && e.datasetName !== datasetFilter) return false;
+      if (favoritesOnly && !favoriteIds.includes(e.id)) return false;
       if (!isWithinDateFilter(e.date, dateFilter)) return false;
       return true;
     });
-  }, [entries, search, statusFilter, providerFilter, datasetFilter, dateFilter]);
+  }, [entries, search, statusFilter, providerFilter, datasetFilter, dateFilter, favoritesOnly, favoriteIds]);
+
+  useEffect(() => {
+    setPage(1);
+    setExpandedId(null);
+  }, [search, statusFilter, providerFilter, datasetFilter, dateFilter, favoritesOnly, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageEntries = useMemo(() => filtered.slice(pageStart, pageStart + pageSize), [filtered, pageStart, pageSize]);
 
   const grouped = useMemo(() => {
-    return filtered.reduce<Record<string, HistoryEntry[]>>((acc, entry) => {
+    return pageEntries.reduce<Record<string, HistoryEntry[]>>((acc, entry) => {
       const group = getDateGroup(entry.date);
       acc[group] = acc[group] || [];
       acc[group].push(entry);
       return acc;
     }, {});
-  }, [filtered]);
+  }, [pageEntries]);
 
   const toggleFavorite = (id: string) => {
     setFavoriteIds((prev) => {
@@ -128,6 +143,24 @@ export default function HistoryPage() {
   const copyQuestion = async (query: string) => {
     await navigator.clipboard.writeText(query);
     toast.success("Question copied");
+  };
+
+  const copyEntry = async (entry: HistoryEntry) => {
+    await navigator.clipboard.writeText(JSON.stringify({
+      query: entry.query,
+      dataset: entry.datasetName,
+      provider: entry.provider,
+      model: entry.model,
+      status: entry.status,
+      durationMs: entry.durationMs,
+      tokens: entry.totalTokens,
+      date: entry.date,
+    }, null, 2));
+    toast.success("History entry copied");
+  };
+
+  const toggleCompare = (id: string) => {
+    setCompareIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id].slice(-2));
   };
 
   const replayQuery = (entry: HistoryEntry) => {
@@ -199,6 +232,74 @@ export default function HistoryPage() {
         </Select>
       </div>
 
+      {filtered.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-md border border-border bg-background-secondary px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            Showing {pageStart + 1}-{Math.min(pageStart + pageEntries.length, filtered.length)} of {filtered.length} quer{filtered.length === 1 ? "y" : "ies"}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
+              <SelectTrigger className="h-8 w-[110px] bg-card border-border text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border-border">
+                {[10, 25, 50, 100].map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 border-border"
+                disabled={safePage <= 1}
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+              >
+                <ChevronLeft size={13} />
+              </Button>
+              <span className="min-w-[80px] text-center text-xs text-muted-foreground">
+                Page {safePage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 border-border"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+              >
+                <ChevronRight size={13} />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {compareIds.length > 0 && (
+        <div className="rounded-md border border-border bg-background-secondary p-3">
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+            <GitCompare size={14} /> Compare queries
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {compareIds.map((id) => {
+              const entry = entries.find((item) => item.id === id);
+              if (!entry) return null;
+              return (
+                <div key={id} className="rounded-md border border-border bg-card p-3 text-xs">
+                  <p className="truncate font-medium text-foreground">{entry.query}</p>
+                  <p className="mt-1 text-muted-foreground">{entry.datasetName} · {PROVIDER_LABELS[entry.provider]}</p>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <Badge variant="outline" className="justify-center border-border">{entry.durationMs}ms</Badge>
+                    <Badge variant="outline" className="justify-center border-border">{entry.totalTokens.toLocaleString()} tokens</Badge>
+                    <Badge className={`justify-center border-0 ${entry.status === "success" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>{entry.status}</Badge>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div className="text-center py-16">
           <MessageSquare size={48} className="mx-auto text-muted-foreground/30 mb-4" />
@@ -254,12 +355,30 @@ export default function HistoryPage() {
                         </button>
                         <button
                           type="button"
+                          aria-label="Compare query"
+                          title="Compare query"
+                          onClick={(e) => { e.stopPropagation(); toggleCompare(entry.id); }}
+                          className={`p-1 rounded hover:bg-background-secondary ${compareIds.includes(entry.id) ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {compareIds.includes(entry.id) ? <CheckSquare size={13} /> : <Square size={13} />}
+                        </button>
+                        <button
+                          type="button"
                           aria-label="Copy question"
                           title="Copy question"
                           onClick={(e) => { e.stopPropagation(); copyQuestion(entry.query); }}
                           className="p-1 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
                         >
                           <Copy size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Copy entry"
+                          title="Copy full entry"
+                          onClick={(e) => { e.stopPropagation(); copyEntry(entry); }}
+                          className="p-1 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
+                        >
+                          <FileText size={13} />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); replayQuery(entry); }} className="text-xs text-primary hover:underline flex items-center gap-1">
                           <RotateCcw size={10} /> Replay

@@ -49,6 +49,7 @@ function TrendBadge({ current, previous }: { current: number; previous: number }
     return <span className="flex items-center gap-0.5 text-xs text-muted-foreground"><Minus size={10} />—</span>;
   }
   const up = current >= previous;
+
   return (
     <span className={`flex items-center gap-0.5 text-xs ${up ? "text-success" : "text-destructive"}`}>
       {up ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
@@ -146,7 +147,6 @@ export default function DashboardPage() {
   const configuredProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(
     (p) => !!providerConfigs[p]?.apiKey
   );
-
   const kpis = [
     {
       label: "Datasets",
@@ -210,6 +210,22 @@ export default function DashboardPage() {
       </div>
 
         <div className="space-y-6 animate-in fade-in duration-300">
+          {datasets.length === 0 && entries.length === 0 && (
+            <Card className="p-6 bg-background-secondary border-border">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-base font-semibold text-foreground">Start your workspace</h3>
+                  <p className="text-sm text-muted-foreground mt-1">Upload a dataset, configure a provider, then ask your first question.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => navigate("/app/datasets")}><Upload size={14} className="mr-2" /> Upload dataset</Button>
+                  <Button variant="outline" className="border-border" onClick={() => navigate("/app/settings")}><Shield size={14} className="mr-2" /> Configure provider</Button>
+                  <Button variant="outline" className="border-border" onClick={() => navigate("/app/query")}><MessageSquare size={14} className="mr-2" /> Ask query</Button>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* ─── KPI Cards ──────────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {kpis.map((kpi, i) => (
