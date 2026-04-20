@@ -2,11 +2,7 @@ function getBaseUrl() {
   const configuredUrl = import.meta.env.VITE_API_URL;
   if (configuredUrl) return configuredUrl.replace(/\/$/, "");
 
-  const host = typeof window !== "undefined" ? window.location.hostname : "";
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const isLocalhost = host === "localhost" || host === "127.0.0.1";
-
-  return isLocalhost ? "http://localhost:3001/api" : `${origin}/api`;
+  return "https://datavault-ai-suite.onrender.com/api";
 }
 
 const BASE_URL = getBaseUrl();
