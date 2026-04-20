@@ -1,5 +1,8 @@
+require("./loadEnv");
+
 const app = require("./app");
 const { getDb } = require("./db");
+const { startKeepAlive } = require("./keepAlive");
 
 const PORT = process.env.PORT || 3001;
 
@@ -9,6 +12,7 @@ getDb()
     app.listen(PORT, () => {
       console.log(`\n🚀 DataVault API server → http://localhost:${PORT}`);
       console.log("   Press Ctrl+C to stop\n");
+      startKeepAlive(PORT);
     });
   })
   .catch((err) => {

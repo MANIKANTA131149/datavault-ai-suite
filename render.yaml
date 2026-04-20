@@ -13,5 +13,9 @@ services:
         sync: false
       - key: VITE_API_URL
         value: https://datavault-ai-suite.onrender.com/api
+      - key: KEEP_ALIVE_ENABLED
+        value: true
+      - key: KEEP_ALIVE_URL
+        value: https://datavault-ai-suite.onrender.com/api/health
       - key: JWT_SECRET
         generateValue: true
