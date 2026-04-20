@@ -1,13 +1,6 @@
-function getBaseUrl() {
-  const configuredUrl = import.meta.env.VITE_API_URL;
-  if (!configuredUrl) {
-    throw new Error("VITE_API_URL is required. Set it to your backend URL, for example http://localhost:3001/api or https://datavault-ai-suite.onrender.com/api.");
-  }
+import { getApiBaseUrl } from "@/lib/api-base";
 
-  return configuredUrl.replace(/\/$/, "");
-}
-
-const BASE_URL = getBaseUrl();
+const BASE_URL = getApiBaseUrl();
 
 /** Pull the JWT from the persisted auth store in localStorage */
 function getToken(): string | null {

@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api-client";
+import { getApiBaseUrl } from "@/lib/api-base";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "sonner";
 
@@ -418,7 +419,7 @@ export default function AdminPage() {
               </SelectContent>
             </Select>
             <a
-              href={`${import.meta.env.VITE_API_URL || "http://localhost:3001/api"}/audit/export`}
+              href={`${getApiBaseUrl()}/audit/export`}
               download
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors border border-border rounded-md px-3 py-2"
             >

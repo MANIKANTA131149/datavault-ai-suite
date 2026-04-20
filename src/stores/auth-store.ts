@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { getApiBaseUrl } from "@/lib/api-base";
 
-const API = "http://localhost:3001/api";
+const API = getApiBaseUrl();
 
 export type UserRole = "admin" | "analyst" | "viewer";
 
