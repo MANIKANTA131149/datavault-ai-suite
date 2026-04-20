@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 
 const authRoutes = require("./routes/auth");
 const datasetRoutes = require("./routes/datasets");
@@ -52,6 +53,13 @@ app.get("/api/health", (_req, res) =>
 );
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
+const clientDistPath = path.join(__dirname, "..", "dist");
+app.use(express.static(clientDistPath));
+
+app.get(/^\/(?!api).*/, (_req, res) => {
+  res.sendFile(path.join(clientDistPath, "index.html"));
+});
+
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
 module.exports = app;
