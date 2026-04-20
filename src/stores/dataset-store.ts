@@ -5,6 +5,7 @@ import type { ParsedFile } from "@/lib/file-parser";
 export interface StoredDataset {
   id: string;
   fileName: string;
+  fileSize?: number;
   fileType: "csv" | "xlsx" | "xls";
   sheetNames: string[];
   rowCounts: Record<string, number>;
@@ -89,6 +90,7 @@ export const useDatasetStore = create<DatasetState>()((set, get) => ({
     const dataset: StoredDataset = {
       id,
       fileName: file.fileName,
+      fileSize: file.fileSize,
       fileType: file.fileType,
       sheetNames: Object.keys(file.sheets),
       rowCounts,
@@ -105,6 +107,7 @@ export const useDatasetStore = create<DatasetState>()((set, get) => ({
       await api.post("/datasets", {
         id,
         fileName: dataset.fileName,
+        fileSize: dataset.fileSize,
         fileType: dataset.fileType,
         sheetNames: dataset.sheetNames,
         rowCounts,

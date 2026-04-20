@@ -29,6 +29,7 @@ import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
 import { toast } from "sonner";
 import { generatePDF } from "@/lib/pdf-report";
+import html2canvas from "html2canvas";
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -273,6 +274,22 @@ function exportCSV(result: any, filename = "result.csv") {
   URL.revokeObjectURL(url);
 }
 
+function rowsToCSV(rows: Record<string, any>[]) {
+  if (rows.length === 0) return "";
+  const headers = Object.keys(rows[0]);
+  return [headers.join(","), ...rows.map((row) => headers.map((h) => JSON.stringify(row[h] ?? "")).join(","))].join("\n");
+}
+
+async function copyRows(rows: Record<string, any>[]) {
+  const csv = rowsToCSV(rows);
+  if (!csv) {
+    toast.info("No table rows to copy");
+    return;
+  }
+  await navigator.clipboard.writeText(csv);
+  toast.success("Table copied");
+}
+
 // ─── NarrativeResult Component ────────────────────────────────────────────────
 function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
   return (
@@ -324,7 +341,16 @@ function StepCard({ step }: { step: AgentStep }) {
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="mt-2 space-y-2 overflow-hidden">
             {Object.keys(step.args).length > 0 && (
               <div className="bg-card rounded-md p-3 border border-border">
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Arguments</p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-muted-foreground font-medium">Arguments</p>
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(JSON.stringify(step.args, null, 2)); toast.success("Query command copied"); }}
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                  >
+                    <Copy size={10} /> Copy command
+                  </button>
+                </div>
                 <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">{JSON.stringify(step.args, null, 2)}</pre>
               </div>
             )}
@@ -360,6 +386,7 @@ function ResultPanel({
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const [showExport, setShowExport] = useState(false);
+  const chartRef = useRef<HTMLDivElement>(null);
   const isEmptyArray = isArray && rows.length === 0;
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
   const isBlankString = typeof result === "string" && !result.trim();
@@ -367,6 +394,17 @@ function ResultPanel({
   const areaGradientId = useId().replace(/:/g, "");
 
   useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
+
+  const downloadChartImage = async () => {
+    if (!chartRef.current) return;
+    const canvas = await html2canvas(chartRef.current, { backgroundColor: null, scale: 2 });
+    const url = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "datavault-chart.png";
+    a.click();
+    toast.success("Chart image downloaded");
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -453,7 +491,7 @@ function ResultPanel({
                 </button>
               ))}
             </div>
-            <div className="h-52">
+            <div ref={chartRef} className="h-52 rounded-md bg-background-secondary/30 p-2">
               <ResponsiveContainer width="100%" height="100%">
                 {chartType === "pie" ? (
                   <PieChart>
@@ -543,6 +581,21 @@ function ResultPanel({
           <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { navigator.clipboard.writeText(JSON.stringify(result, null, 2)); toast.success("Copied"); }}>
             <Copy size={12} className="mr-1" /> Copy
           </Button>
+          {isArray && rows.length > 0 && (
+            <>
+              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => copyRows(rows)}>
+                <Table2 size={12} className="mr-1" /> Copy table
+              </Button>
+              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { exportCSV(rows); toast.success("CSV downloaded"); }}>
+                <Download size={12} className="mr-1" /> CSV
+              </Button>
+            </>
+          )}
+          {isChartable && (
+            <Button variant="outline" size="sm" className="border-border text-xs" onClick={downloadChartImage}>
+              <BarChart3 size={12} className="mr-1" /> Chart
+            </Button>
+          )}
         </div>
       </div>
 
@@ -901,6 +954,11 @@ export default function QueryPage() {
     if (selectedDataset && !selectedSheet) setSelectedSheet(selectedDataset.sheetNames[0]);
   }, [selectedDataset, selectedSheet]);
 
+  useEffect(() => {
+    const replayQuestion = searchParams.get("q");
+    if (replayQuestion) setInput(replayQuestion);
+  }, [searchParams]);
+
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentSteps]);
   const currentFinalStep = getFinalStep(currentSteps);
 
@@ -1008,7 +1066,7 @@ export default function QueryPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
   };
 
   const apiKeyForProvider = providerConfigs[activeProvider]?.apiKey || "";
@@ -1243,20 +1301,34 @@ export default function QueryPage() {
 
         <div className="p-4 border-t border-border bg-background">
           <div className="flex gap-2 items-end max-w-3xl mx-auto">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask a question about your data... (Shift+Enter for new line)"
-              className="bg-background-secondary border-border resize-none min-h-[44px] max-h-[120px]"
-              rows={1}
-            />
+            <div className="relative flex-1">
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask a question about your data... (Shift+Enter for new line)"
+                className="bg-background-secondary border-border resize-none min-h-[44px] max-h-[120px] pr-10"
+                rows={1}
+              />
+              {input && (
+                <button
+                  type="button"
+                  aria-label="Clear query"
+                  title="Clear query"
+                  onClick={() => { setInput(""); textareaRef.current?.focus(); }}
+                  className="absolute right-2 top-2 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
             <Button onClick={handleSend} disabled={isRunning || !input.trim()} size="icon" className="shrink-0 h-[44px] w-[44px]">
               <Send size={16} />
             </Button>
           </div>
           {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
+          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-0.5">{input.length.toLocaleString()} characters</p>}
         </div>
       </div>
 

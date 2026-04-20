@@ -1,10 +1,12 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info, Search, Copy, Grid3X3, List, ArrowUpDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,6 +17,23 @@ import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
+
+type DatasetSort = "newest" | "oldest" | "name" | "type" | "rows";
+type DatasetView = "grid" | "list";
+
+function formatBytes(bytes?: number) {
+  if (!bytes || bytes <= 0) return "Size unavailable";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function getDatasetTotals(ds: StoredDataset) {
+  return {
+    rows: Object.values(ds.rowCounts).reduce((a, b) => a + b, 0),
+    columns: Object.values(ds.columnCounts).reduce((a, b) => a + b, 0),
+  };
+}
 
 // ─── Column Intelligence Helpers ─────────────────────────────────────────────
 function detectColumnTag(col: ColumnInfo, totalRows: number): { tag: string; color: string; icon: React.ElementType } {
@@ -316,9 +335,13 @@ function DatasetDetailPanel({ dataset, onClose }: { dataset: StoredDataset; onCl
 }
 
 export default function DatasetsPage() {
-  const { datasets, addDataset } = useDatasetStore();
+  const { datasets, addDataset, removeDataset, loading } = useDatasetStore();
   const [parsing, setParsing] = useState(false);
   const [selectedDataset, setSelectedDataset] = useState<StoredDataset | null>(null);
+  const [datasetToDelete, setDatasetToDelete] = useState<StoredDataset | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState<DatasetSort>("newest");
+  const [viewMode, setViewMode] = useState<DatasetView>("grid");
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     for (const file of acceptedFiles) {
@@ -343,6 +366,41 @@ export default function DatasetsPage() {
   const fileTypeBadge = (type: string) => {
     const colors: Record<string, string> = { csv: "bg-success/10 text-success", xlsx: "bg-primary/10 text-primary", xls: "bg-primary/10 text-primary" };
     return <Badge className={`${colors[type] || "bg-muted text-muted-foreground"} border-0 text-xs uppercase`}>{type}</Badge>;
+  };
+
+  const visibleDatasets = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return datasets
+      .filter((ds) => {
+        if (!q) return true;
+        return [
+          ds.fileName,
+          ds.fileType,
+          ...ds.sheetNames,
+        ].some((value) => value.toLowerCase().includes(q));
+      })
+      .sort((a, b) => {
+        const aTotals = getDatasetTotals(a);
+        const bTotals = getDatasetTotals(b);
+        if (sortBy === "oldest") return new Date(a.uploadDate).getTime() - new Date(b.uploadDate).getTime();
+        if (sortBy === "name") return a.fileName.localeCompare(b.fileName);
+        if (sortBy === "type") return a.fileType.localeCompare(b.fileType) || a.fileName.localeCompare(b.fileName);
+        if (sortBy === "rows") return bTotals.rows - aTotals.rows;
+        return new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime();
+      });
+  }, [datasets, searchTerm, sortBy]);
+
+  const copyDatasetName = async (name: string) => {
+    await navigator.clipboard.writeText(name);
+    toast.success("Dataset name copied");
+  };
+
+  const confirmDeleteDataset = async () => {
+    if (!datasetToDelete) return;
+    await removeDataset(datasetToDelete.id);
+    if (selectedDataset?.id === datasetToDelete.id) setSelectedDataset(null);
+    toast.success(`${datasetToDelete.fileName} deleted`);
+    setDatasetToDelete(null);
   };
 
   return (
@@ -378,17 +436,140 @@ export default function DatasetsPage() {
         )}
       </div>
 
-      {datasets.length === 0 ? (
+      {datasets.length > 0 && (
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search datasets, sheets, or file types..."
+              className="pl-9 bg-background-secondary border-border"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={sortBy} onValueChange={(value) => setSortBy(value as DatasetSort)}>
+              <SelectTrigger className="w-[160px] bg-background-secondary border-border">
+                <ArrowUpDown size={13} className="mr-2" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border-border">
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+                <SelectItem value="name">Name A-Z</SelectItem>
+                <SelectItem value="type">File type</SelectItem>
+                <SelectItem value="rows">Most rows</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="flex rounded-md border border-border bg-background-secondary p-1">
+              <button
+                type="button"
+                aria-label="Grid view"
+                title="Grid view"
+                onClick={() => setViewMode("grid")}
+                className={`p-1.5 rounded ${viewMode === "grid" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <Grid3X3 size={14} />
+              </button>
+              <button
+                type="button"
+                aria-label="List view"
+                title="List view"
+                onClick={() => setViewMode("list")}
+                className={`p-1.5 rounded ${viewMode === "list" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <List size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading && datasets.length === 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Card key={index} className="p-4 bg-background-secondary border-border space-y-3">
+              <Skeleton className="h-5 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-full" />
+            </Card>
+          ))}
+        </div>
+      ) : datasets.length === 0 ? (
         <div className="text-center py-16">
           <FileSpreadsheet size={48} className="mx-auto text-muted-foreground/30 mb-4" />
           <p className="text-muted-foreground">No datasets uploaded yet</p>
           <p className="text-xs text-muted-foreground mt-1">Upload a CSV or Excel file to get started</p>
         </div>
+      ) : visibleDatasets.length === 0 ? (
+        <div className="text-center py-16">
+          <Search size={48} className="mx-auto text-muted-foreground/30 mb-4" />
+          <p className="text-muted-foreground">No matching datasets</p>
+          <p className="text-xs text-muted-foreground mt-1">Try a different name, sheet, or file type.</p>
+        </div>
+      ) : viewMode === "list" ? (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-background-secondary">
+              <tr>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Dataset</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Rows</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Columns</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Size</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Uploaded</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {visibleDatasets.map((ds) => {
+                const totals = getDatasetTotals(ds);
+                return (
+                  <tr key={ds.id} className="border-t border-border hover:bg-card/50 cursor-pointer" onClick={() => setSelectedDataset(ds)}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileSpreadsheet size={16} className="text-muted-foreground shrink-0" />
+                        <span className="font-medium text-foreground truncate">{ds.fileName}</span>
+                        {fileTypeBadge(ds.fileType)}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">{ds.sheetNames.length} sheet(s)</p>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{totals.rows.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{totals.columns.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{formatBytes(ds.fileSize)}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell">{new Date(ds.uploadDate).toLocaleDateString()}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          aria-label="Copy dataset name"
+                          title="Copy dataset name"
+                          onClick={(event) => { event.stopPropagation(); copyDatasetName(ds.fileName); }}
+                          className="p-1.5 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
+                        >
+                          <Copy size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Delete dataset"
+                          title="Delete dataset"
+                          onClick={(event) => { event.stopPropagation(); setDatasetToDelete(ds); }}
+                          className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                        <ChevronRight size={14} className="text-muted-foreground" />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {datasets.map((ds) => {
-            const totalRows = Object.values(ds.rowCounts).reduce((a, b) => a + b, 0);
-            const totalCols = Object.values(ds.columnCounts).reduce((a, b) => a + b, 0);
+          {visibleDatasets.map((ds) => {
+            const { rows: totalRows, columns: totalCols } = getDatasetTotals(ds);
             return (
               <motion.div key={ds.id} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
                 <Card
@@ -400,12 +581,35 @@ export default function DatasetsPage() {
                       <FileSpreadsheet size={18} className="text-muted-foreground shrink-0" />
                       <span className="text-sm font-medium text-foreground truncate">{ds.fileName}</span>
                     </div>
-                    {fileTypeBadge(ds.fileType)}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        aria-label="Copy dataset name"
+                        title="Copy dataset name"
+                        onClick={(event) => { event.stopPropagation(); copyDatasetName(ds.fileName); }}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-card text-muted-foreground hover:text-foreground transition-opacity"
+                      >
+                        <Copy size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Delete dataset"
+                        title="Delete dataset"
+                        onClick={(event) => { event.stopPropagation(); setDatasetToDelete(ds); }}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                      {fileTypeBadge(ds.fileType)}
+                    </div>
                   </div>
                   <div className="flex gap-4 text-xs text-muted-foreground mb-3">
                     <span>{totalRows.toLocaleString()} rows</span>
                     <span>{totalCols} columns</span>
                     <span>{ds.sheetNames.length} sheet(s)</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-3">
+                    {formatBytes(ds.fileSize)}
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">{new Date(ds.uploadDate).toLocaleDateString()}</span>
@@ -423,6 +627,23 @@ export default function DatasetsPage() {
       <AnimatePresence>
         {selectedDataset && <DatasetDetailPanel dataset={selectedDataset} onClose={() => setSelectedDataset(null)} />}
       </AnimatePresence>
+
+      <Dialog open={!!datasetToDelete} onOpenChange={(open) => { if (!open) setDatasetToDelete(null); }}>
+        <DialogContent className="bg-background-secondary border-border">
+          <DialogHeader>
+            <DialogTitle>Delete dataset</DialogTitle>
+            <DialogDescription>
+              This will permanently delete "{datasetToDelete?.fileName}" and all associated stored data.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDatasetToDelete(null)} className="border-border">Cancel</Button>
+            <Button variant="destructive" onClick={confirmDeleteDataset}>
+              <Trash2 size={14} className="mr-2" /> Delete file
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

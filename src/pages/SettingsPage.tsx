@@ -95,6 +95,24 @@ export default function SettingsPage() {
     (p) => keyInputs[p]?.length > 0
   ).length;
 
+  const handleCheckProvider = (provider: Provider) => {
+    if (provider === "ollama") {
+      toast.info("Ollama uses your local runtime configuration");
+      return;
+    }
+    if (!keyInputs[provider]) {
+      toast.error(`${PROVIDER_LABELS[provider]} API key is missing`);
+      return;
+    }
+    toast.success(`${PROVIDER_LABELS[provider]} key is present`);
+  };
+
+  const copyApiKey = async (provider: Provider) => {
+    if (!keyInputs[provider]) return;
+    await navigator.clipboard.writeText(keyInputs[provider]);
+    toast.success(`${PROVIDER_LABELS[provider]} key copied`);
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
@@ -159,10 +177,22 @@ export default function SettingsPage() {
               <p className="text-sm font-medium text-foreground">{configuredCount} of {Object.keys(PROVIDER_LABELS).length} providers configured</p>
               <p className="text-xs text-muted-foreground">Provider keys are used for running queries via DataVault UI</p>
             </div>
-            <Button onClick={handleSaveApiKeys} disabled={savingKeys} size="sm">
-              <Save size={13} className="mr-2" />
-              {savingKeys ? "Saving..." : "Save All Keys"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Select value={activeProvider} onValueChange={(value) => setActiveProvider(value as Provider)}>
+                <SelectTrigger className="w-[170px] bg-card border-border">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {(Object.keys(PROVIDER_LABELS) as Provider[]).map((provider) => (
+                    <SelectItem key={provider} value={provider}>{PROVIDER_LABELS[provider]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={handleSaveApiKeys} disabled={savingKeys} size="sm">
+                <Save size={13} className="mr-2" />
+                {savingKeys ? "Saving..." : "Save All Keys"}
+              </Button>
+            </div>
           </div>
 
           {(Object.keys(PROVIDER_LABELS) as Provider[]).map((provider) => {
@@ -203,17 +233,47 @@ export default function SettingsPage() {
                     />
                     <button
                       type="button"
+                      aria-label={visible ? "Hide API key" : "Show API key"}
+                      title={visible ? "Hide API key" : "Show API key"}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       onClick={() => setShowKeys((prev) => ({ ...prev, [provider]: !visible }))}
                     >
                       {visible ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-border"
+                    onClick={() => { setActiveProvider(provider); toast.success(`${PROVIDER_LABELS[provider]} selected as default`); }}
+                  >
+                    <Key size={13} />
+                  </Button>
+                  {keyInputs[provider] && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-border"
+                      onClick={() => copyApiKey(provider)}
+                    >
+                      <Copy size={13} />
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-border"
+                    onClick={() => handleCheckProvider(provider)}
+                  >
+                    <Check size={13} />
+                  </Button>
                   {keyInputs[provider] && (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="text-destructive hover:text-destructive"
+                      aria-label="Clear API key"
+                      title="Clear API key"
                       onClick={() => setKeyInputs((prev) => ({ ...prev, [provider]: "" }))}
                     >
                       <Trash2 size={13} />

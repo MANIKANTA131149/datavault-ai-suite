@@ -16,6 +16,7 @@ export interface SheetData {
 
 export interface ParsedFile {
   fileName: string;
+  fileSize?: number;
   fileType: "csv" | "xlsx" | "xls";
   sheets: Record<string, SheetData>;
 }
@@ -65,6 +66,7 @@ export function parseCSV(file: File): Promise<ParsedFile> {
         const rows = results.data as Record<string, any>[];
         resolve({
           fileName: file.name,
+          fileSize: file.size,
           fileType: "csv",
           sheets: {
             Sheet1: { columns: buildColumnInfo(rows), rows },
@@ -90,6 +92,7 @@ export function parseExcel(file: File): Promise<ParsedFile> {
         }
         resolve({
           fileName: file.name,
+          fileSize: file.size,
           fileType: file.name.endsWith(".xlsx") ? "xlsx" : "xls",
           sheets,
         });

@@ -82,6 +82,7 @@ export default function DashboardPage() {
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const lastUpdated = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   // ─── Core KPIs ─────────────────────────────────────────────────────────────
   const totalRows = datasets.reduce((s, d) => s + Object.values(d.rowCounts).reduce((a, b) => a + b, 0), 0);
@@ -196,9 +197,12 @@ export default function DashboardPage() {
           <p className="text-muted-foreground mt-1">
             {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · Workspace at a glance
           </p>
+          <p className="text-xs text-muted-foreground mt-1">Last updated {lastUpdated}</p>
         </div>
         <div className="flex items-center gap-2">
-
+          <Button onClick={() => toast.success("Dashboard refreshed")} variant="outline" size="sm" className="hidden sm:flex items-center gap-2 border-border">
+            <RefreshCw size={14} /> Refresh
+          </Button>
           <Button onClick={() => navigate("/app/query")} size="sm" className="hidden sm:flex items-center gap-2">
             <MessageSquare size={14} /> New Query
           </Button>

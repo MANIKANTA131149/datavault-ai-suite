@@ -28,9 +28,9 @@ function InsightCard({ insight, onEdit, onDelete }: { insight: Insight; onEdit: 
     : JSON.stringify(insight.result, null, 2)?.slice(0, 200);
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
-      <Card className={`p-5 bg-background-secondary border-border hover:${colors.border} transition-all group`}>
-        <div className="flex items-start justify-between mb-3">
+    <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="min-w-0">
+      <Card className={`min-w-0 overflow-hidden p-5 bg-background-secondary border-border hover:${colors.border} transition-all group`}>
+        <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2 min-w-0">
             <div className={`w-8 h-8 rounded-lg ${colors.bg} flex items-center justify-center shrink-0`}>
               <Bookmark size={14} className={colors.text} />
@@ -40,7 +40,7 @@ function InsightCard({ insight, onEdit, onDelete }: { insight: Insight; onEdit: 
               <p className="text-xs text-muted-foreground truncate">{insight.query}</p>
             </div>
           </div>
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex shrink-0 gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <button onClick={onEdit} className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground" title="Edit">
               <Edit3 size={12} />
             </button>
@@ -67,23 +67,26 @@ function InsightCard({ insight, onEdit, onDelete }: { insight: Insight; onEdit: 
           <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{insight.notes}</p>
         )}
 
-        <div className="bg-card rounded-md p-3 border border-border mb-3">
-          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap max-h-24 overflow-hidden">
+        <div className="min-w-0 overflow-hidden bg-card rounded-md p-3 border border-border mb-3">
+          <pre className="max-w-full max-h-24 overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs font-mono text-foreground">
             {resultPreview}{(resultPreview?.length ?? 0) >= 200 ? "…" : ""}
           </pre>
         </div>
 
-        <div className="flex items-center justify-between">
-          <div className="flex gap-1.5 flex-wrap">
+        <div className="flex items-center justify-between gap-3 min-w-0">
+          <div className="flex min-w-0 gap-1.5 flex-wrap">
             {insight.tags.map((tag) => (
               <Badge key={tag} variant="outline" className="border-border text-xs">
                 <Tag size={8} className="mr-1" />{tag}
               </Badge>
             ))}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><Database size={9} />{insight.datasetName}</span>
-            <span className="flex items-center gap-1"><Calendar size={9} />{new Date(insight.createdAt).toLocaleDateString()}</span>
+          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <span className="flex min-w-0 items-center gap-1">
+              <Database size={9} className="shrink-0" />
+              <span className="truncate">{insight.datasetName}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1"><Calendar size={9} />{new Date(insight.createdAt).toLocaleDateString()}</span>
           </div>
         </div>
       </Card>

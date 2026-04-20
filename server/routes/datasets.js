@@ -46,7 +46,7 @@ router.get("/:id/data", async (req, res) => {
 // ─── Save dataset metadata + full file content ────────────────────────────────
 router.post("/", async (req, res) => {
   try {
-    const { id, fileName, fileType, sheetNames, rowCounts, columnCounts, uploadDate, fileData } =
+    const { id, fileName, fileSize, fileType, sheetNames, rowCounts, columnCounts, uploadDate, fileData } =
       req.body;
     if (!id || !fileName) return res.status(400).json({ error: "id and fileName required" });
 
@@ -55,6 +55,7 @@ router.post("/", async (req, res) => {
       _id: id,
       userId: req.userId,
       fileName,
+      fileSize,
       fileType,
       sheetNames,
       rowCounts,
