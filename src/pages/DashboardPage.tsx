@@ -342,14 +342,6 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-success" />
-                    <span className="text-sm text-foreground">MongoDB Atlas</span>
-                  </div>
-                  <Badge className="bg-success/10 text-success border-0 text-xs">Connected</Badge>
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
                     <Shield size={14} className="text-primary" />
                     <span className="text-sm text-foreground">API Keys</span>
                   </div>
