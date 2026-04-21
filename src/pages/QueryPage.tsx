@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useMemo, useId, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { List } from "react-window";
 import {
   Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
@@ -53,6 +54,12 @@ const CHART_COLORS = [
   "hsl(217, 91%, 60%)", "hsl(263, 70%, 58%)", "hsl(160, 84%, 39%)",
   "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)",
 ];
+const DEFAULT_CHART_ROWS = 50;
+const CHART_RENDER_LIMIT = 1000;
+const RESULT_TABLE_ROW_HEIGHT: Record<ResultDensity, number> = {
+  compact: 30,
+  comfortable: 38,
+};
 
 // ─── Query Templates ──────────────────────────────────────────────────────────
 const QUERY_TEMPLATES = [
@@ -303,6 +310,117 @@ async function copyRows(rows: Record<string, any>[]) {
   toast.success("Table copied");
 }
 
+interface VirtualizedResultTableProps {
+  rows: Record<string, any>[];
+  headers: string[];
+  density: ResultDensity;
+  maxHeight?: number;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+  onSort?: (key: string) => void;
+}
+
+interface ResultRowProps {
+  rows: Record<string, any>[];
+  headers: string[];
+  gridTemplateColumns: string;
+  density: ResultDensity;
+}
+
+function ResultTableRow({
+  index,
+  style,
+  ariaAttributes,
+  rows,
+  headers,
+  gridTemplateColumns,
+  density,
+}: {
+  index: number;
+  style: CSSProperties;
+  ariaAttributes: Record<string, any>;
+} & ResultRowProps) {
+  const row = rows[index];
+  return (
+    <div
+      {...ariaAttributes}
+      style={{ ...style, display: "grid", gridTemplateColumns }}
+      className={`border-t border-border/50 ${index % 2 === 0 ? "bg-background-secondary/30" : "bg-card"}`}
+    >
+      {headers.map((header) => {
+        const value = String(row?.[header] ?? "");
+        return (
+          <div
+            key={header}
+            title={value}
+            className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} min-w-0 truncate text-xs text-foreground`}
+          >
+            {value}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function VirtualizedResultTable({
+  rows,
+  headers,
+  density,
+  maxHeight = 360,
+  sortKey,
+  sortDir = "asc",
+  onSort,
+}: VirtualizedResultTableProps) {
+  const rowHeight = RESULT_TABLE_ROW_HEIGHT[density];
+  const minColWidth = density === "compact" ? 116 : 140;
+  const minWidth = Math.max(420, headers.length * minColWidth);
+  const gridTemplateColumns = `repeat(${headers.length}, minmax(${minColWidth}px, 1fr))`;
+  const listHeight = Math.min(maxHeight, Math.max(rowHeight, rows.length * rowHeight));
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-card px-3 py-4 text-center text-xs text-muted-foreground">
+        No matching rows
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-md border border-border bg-card">
+      <div style={{ minWidth }}>
+        <div
+          className="grid border-b border-border bg-background-secondary text-xs font-medium text-muted-foreground"
+          style={{ gridTemplateColumns }}
+        >
+          {headers.map((header) => (
+            <button
+              key={header}
+              type="button"
+              disabled={!onSort}
+              onClick={() => onSort?.(header)}
+              className={`${density === "compact" ? "px-2 py-2" : "px-3 py-2.5"} min-w-0 truncate text-left hover:text-foreground disabled:hover:text-muted-foreground`}
+              title={header}
+            >
+              {header}{sortKey === header ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+            </button>
+          ))}
+        </div>
+        <List<ResultRowProps>
+          className="scrollbar-thin"
+          defaultHeight={listHeight}
+          overscanCount={8}
+          rowComponent={ResultTableRow}
+          rowCount={rows.length}
+          rowHeight={rowHeight}
+          rowProps={{ rows, headers, gridTemplateColumns, density }}
+          style={{ height: listHeight, width: "100%" }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── NarrativeResult Component ────────────────────────────────────────────────
 function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
   return (
@@ -412,7 +530,7 @@ function ResultPanel({
   const [showLegend, setShowLegend] = useState(true);
   const [showLabels, setShowLabels] = useState(false);
   const [chartSort, setChartSort] = useState<"none" | "asc" | "desc">("none");
-  const [topN, setTopN] = useState(20);
+  const [topN, setTopN] = useState(DEFAULT_CHART_ROWS);
   const [chartNotes, setChartNotes] = useState("");
   const { checkExport } = usePlanStore();
   const isEmptyArray = isArray && rows.length === 0;
@@ -428,13 +546,18 @@ function ResultPanel({
     setYAxisLabel(valueKey);
   }, [query, labelKey, valueKey]);
 
-  const visibleChartRows = useMemo(() => {
+  const sortedChartRows = useMemo(() => {
     let next = [...chartRows];
     if (chartSort !== "none" && valueKey) {
       next.sort((a, b) => chartSort === "asc" ? Number(a[valueKey]) - Number(b[valueKey]) : Number(b[valueKey]) - Number(a[valueKey]));
     }
-    return next.slice(0, topN);
-  }, [chartRows, chartSort, topN, valueKey]);
+    return next;
+  }, [chartRows, chartSort, valueKey]);
+  const visibleChartRows = useMemo(() => {
+    const selected = topN > 0 ? sortedChartRows.slice(0, topN) : sortedChartRows;
+    return selected.length > CHART_RENDER_LIMIT ? selected.slice(0, CHART_RENDER_LIMIT) : selected;
+  }, [sortedChartRows, topN]);
+  const chartRenderLimited = topN === 0 && sortedChartRows.length > CHART_RENDER_LIMIT;
 
   const displayedRows = useMemo(() => {
     const q = resultSearch.trim().toLowerCase();
@@ -530,7 +653,7 @@ function ResultPanel({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-4 space-y-4">
+      <div className="min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
         {isNarrative && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -605,7 +728,9 @@ function ResultPanel({
               <Select value={String(topN)} onValueChange={(v) => setTopN(Number(v))}>
                 <SelectTrigger className="h-8 bg-card border-border text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-popover border-border">
-                  {[5, 10, 20, 50].map((n) => <SelectItem key={n} value={String(n)}>Top {n}</SelectItem>)}
+                  <SelectItem value={String(DEFAULT_CHART_ROWS)}>Top {DEFAULT_CHART_ROWS}</SelectItem>
+                  <SelectItem value="0">All rows</SelectItem>
+                  {[5, 10, 20, 100, 250].map((n) => <SelectItem key={n} value={String(n)}>Top {n}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLegend((prev) => !prev)}>
@@ -619,6 +744,11 @@ function ResultPanel({
                 <BookmarkPlus size={12} className="mr-1" /> Save chart as insight
               </Button>
             </div>
+            {chartRenderLimited && (
+              <div className="mb-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                Chart preview is capped at {CHART_RENDER_LIMIT.toLocaleString()} points for performance. The table and exports still include all rows.
+              </div>
+            )}
             <div ref={chartRef} className={fullscreen ? "h-[50vh] rounded-md bg-background-secondary/30 p-2" : "h-52 rounded-md bg-background-secondary/30 p-2"}>
               <p className="mb-1 truncate text-center text-xs font-medium text-foreground">{chartTitle || "Chart"}</p>
               <ResponsiveContainer width="100%" height="100%">
@@ -731,7 +861,18 @@ function ResultPanel({
                 <Rows3 size={12} className="mr-1" /> {density === "compact" ? "Compact" : "Roomy"}
               </Button>
             </div>
-            <div className="overflow-x-auto rounded-md border border-border">
+            {displayedRows.length > 200 && (
+              <VirtualizedResultTable
+                rows={displayedRows}
+                headers={Object.keys(rows[0] || {})}
+                density={density}
+                maxHeight={fullscreen ? 560 : 360}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={handleSort}
+              />
+            )}
+            <div className={displayedRows.length > 200 ? "hidden" : "max-h-[50vh] overflow-auto rounded-md border border-border"}>
             <table className="w-full text-xs">
               <thead className="bg-card">
                 <tr>
@@ -745,7 +886,7 @@ function ResultPanel({
                 </tr>
               </thead>
               <tbody>
-                {displayedRows.slice(0, fullscreen ? 200 : 20).map((row: any, i: number) => (
+                {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => (
                   <tr key={i} className="border-t border-border/50">
                     {Object.values(row).map((v: any, j) => (
                       <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>{String(v ?? "")}</td>
@@ -780,23 +921,23 @@ function ResultPanel({
           </div>
         )}
 
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { navigator.clipboard.writeText(JSON.stringify(result, null, 2)); toast.success("Copied"); }}>
-            <Copy size={12} className="mr-1" /> Copy
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(96px,1fr))] gap-1 rounded-md border border-border bg-background-secondary/70 p-1">
+          <Button variant="ghost" size="sm" className="result-action-button h-8 min-w-0 justify-center gap-1.5 rounded border border-transparent px-1.5 text-xs" onClick={() => { navigator.clipboard.writeText(JSON.stringify(result, null, 2)); toast.success("Copied"); }}>
+            <Copy size={12} className="shrink-0" /> <span className="truncate">Copy</span>
           </Button>
           {isArray && rows.length > 0 && (
             <>
-              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => copyRows(displayedRows)}>
-                <Table2 size={12} className="mr-1" /> Copy table
+              <Button variant="ghost" size="sm" className="result-action-button h-8 min-w-0 justify-center gap-1.5 rounded border border-transparent px-1.5 text-xs" onClick={() => copyRows(displayedRows)}>
+                <Table2 size={12} className="shrink-0" /> <span className="truncate">Copy table</span>
               </Button>
-              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => runExport("csv", () => exportCSV(displayedRows), "CSV")}>
-                <Download size={12} className="mr-1" /> CSV
+              <Button variant="ghost" size="sm" className="result-action-button h-8 min-w-0 justify-center gap-1.5 rounded border border-transparent px-1.5 text-xs" onClick={() => runExport("csv", () => exportCSV(displayedRows), "CSV")}>
+                <Download size={12} className="shrink-0" /> <span className="truncate">CSV</span>
               </Button>
             </>
           )}
           {isChartable && (
-            <Button variant="outline" size="sm" className="border-border text-xs" onClick={downloadChartImage}>
-              <BarChart3 size={12} className="mr-1" /> Chart
+            <Button variant="ghost" size="sm" className="result-action-button h-8 min-w-0 justify-center gap-1.5 rounded border border-transparent px-1.5 text-xs" onClick={downloadChartImage}>
+              <BarChart3 size={12} className="shrink-0" /> <span className="truncate">Chart</span>
             </Button>
           )}
         </div>
@@ -819,6 +960,8 @@ function InlineFinalResult({ result }: { result: any }) {
   const isEmptyArray = isArray && rows.length === 0;
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
   const isBlankString = typeof result === "string" && !result.trim();
+  const inlineChartRows = useMemo(() => chartRows.slice(0, Math.min(DEFAULT_CHART_ROWS, CHART_RENDER_LIMIT)), [chartRows]);
+  const inlineChartLimited = chartRows.length > inlineChartRows.length;
 
   useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
 
@@ -850,20 +993,20 @@ function InlineFinalResult({ result }: { result: any }) {
             <ResponsiveContainer width="100%" height="100%">
               {chartType === "pie" ? (
                 <PieChart>
-                  <Pie data={chartRows.slice(0, 10)} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
-                    {chartRows.slice(0, 10).map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  <Pie data={inlineChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
+                    {inlineChartRows.map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                   </Pie>
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                 </PieChart>
               ) : chartType === "line" ? (
-                <LineChart data={chartRows.slice(0, 50)}>
+                <LineChart data={inlineChartRows}>
                   <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                 </LineChart>
               ) : chartType === "area" ? (
-                <AreaChart data={chartRows.slice(0, 50)}>
+                <AreaChart data={inlineChartRows}>
                   <defs>
                     <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
@@ -876,7 +1019,7 @@ function InlineFinalResult({ result }: { result: any }) {
                   <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
                 </AreaChart>
               ) : (
-                <BarChart data={chartRows.slice(0, 20)}>
+                <BarChart data={inlineChartRows}>
                   <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
@@ -885,25 +1028,39 @@ function InlineFinalResult({ result }: { result: any }) {
               )}
             </ResponsiveContainer>
           </div>
+          {inlineChartLimited && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Chart preview shows the first {inlineChartRows.length.toLocaleString()} points. Open the result panel for chart controls.
+            </p>
+          )}
         </div>
       )}
 
       {isArray && rows.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-border">
+        <>
+        {rows.length > 200 && (
+          <VirtualizedResultTable
+            rows={rows}
+            headers={Object.keys(rows[0] || {})}
+            density="compact"
+            maxHeight={320}
+          />
+        )}
+        <div className={rows.length > 200 ? "hidden" : "max-h-80 overflow-auto rounded-md border border-border"}>
           <table className="w-full text-xs">
             <thead className="bg-background-secondary">
               <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
             </thead>
             <tbody>
-              {rows.slice(0, 10).map((row: any, i: number) => (
+              {(rows.length > 200 ? [] : rows).map((row: any, i: number) => (
                 <tr key={i} className="border-t border-border/50">
                   {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
-          {rows.length > 10 && <p className="text-xs text-muted-foreground px-3 py-1.5 border-t border-border/50">...and {rows.length - 10} more rows</p>}
         </div>
+        </>
       )}
 
       {isBlankString && (

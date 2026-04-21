@@ -15,12 +15,22 @@ const BRAND_COLOR = "#6366f1"; // primary indigo
 const GRAY = "#64748b";
 const DARK = "#0f172a";
 const LIGHT_BG = "#f8fafc";
+const PAGE_MARGIN = 14;
+const FOOTER_SPACE = 18;
+const MAX_CELL_CHARS = 240;
 
 function formatDate() {
   return new Date().toLocaleString("en-US", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+function cleanCellValue(value: any): string {
+  if (value === null || value === undefined) return "";
+  const raw = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  return normalized.length > MAX_CELL_CHARS ? `${normalized.slice(0, MAX_CELL_CHARS - 1)}...` : normalized;
 }
 
 /**
@@ -38,10 +48,19 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
     rows = [],
   } = opts;
 
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const columnCount = rows[0] ? Object.keys(rows[0]).length : 0;
+  const orientation: "portrait" | "landscape" = columnCount > 4 ? "landscape" : "portrait";
+  const doc = new jsPDF({ orientation, unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   let y = 0;
+
+  const addPageIfNeeded = (heightNeeded: number) => {
+    if (y + heightNeeded > pageH - FOOTER_SPACE) {
+      doc.addPage();
+      y = 20;
+    }
+  };
 
   // ── Header banner ──────────────────────────────────────────────────────────
   doc.setFillColor(BRAND_COLOR);
@@ -66,8 +85,9 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
   doc.setTextColor(DARK);
   doc.setFontSize(18);
   doc.setFont("helvetica", "bold");
-  doc.text(title, 14, y);
-  y += 7;
+  const titleLines = doc.splitTextToSize(title, pageW - 28);
+  doc.text(titleLines, 14, y);
+  y += titleLines.length * 7;
 
   if (datasetName) {
     doc.setFontSize(9);
@@ -86,7 +106,10 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
   // ── Query box ─────────────────────────────────────────────────────────────
   if (query) {
     doc.setFillColor(LIGHT_BG);
-    doc.roundedRect(14, y, pageW - 28, 14, 2, 2, "F");
+    const wrapped = doc.splitTextToSize(query, pageW - 42);
+    const queryBoxH = Math.max(14, wrapped.length * 4 + 10);
+    addPageIfNeeded(queryBoxH + 4);
+    doc.roundedRect(14, y, pageW - 28, queryBoxH, 2, 2, "F");
     doc.setTextColor(GRAY);
     doc.setFontSize(8);
     doc.setFont("helvetica", "bold");
@@ -94,9 +117,8 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(DARK);
     doc.setFontSize(9);
-    const wrapped = doc.splitTextToSize(query, pageW - 42);
     doc.text(wrapped, 18, y + 10);
-    y += 14 + (Math.max(0, wrapped.length - 1) * 4) + 4;
+    y += queryBoxH + 4;
   }
 
   // ── Chart screenshot (if element exists) ───────────────────────────────────
@@ -140,42 +162,55 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
   // ── Data table ─────────────────────────────────────────────────────────────
   if (rows.length > 0) {
     const headers = Object.keys(rows[0]);
-    if (y + 20 > pageH - 20) { doc.addPage(); y = 20; }
+    const tableW = pageW - PAGE_MARGIN * 2;
+    const colW = tableW / headers.length;
+    const cellPadX = 1.6;
+    const cellPadY = 1.4;
+    const tableFontSize = headers.length > 8 ? 5.5 : headers.length > 5 ? 6.2 : 7.2;
+    const lineH = headers.length > 8 ? 2.7 : 3.2;
+    const maxTextW = Math.max(8, colW - cellPadX * 2);
 
-    // Table header
-    doc.setFillColor(BRAND_COLOR);
-    doc.rect(14, y, pageW - 28, 7, "F");
-    doc.setTextColor("#ffffff");
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    const colW = (pageW - 28) / headers.length;
-    headers.forEach((h, i) => {
-      doc.text(String(h).slice(0, 18), 16 + i * colW, y + 5);
-    });
-    y += 7;
+    const drawTableHeader = () => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(tableFontSize);
+      const headerLines = headers.map((header) => doc.splitTextToSize(String(header), maxTextW));
+      const headerH = Math.max(7, Math.max(...headerLines.map((lines) => lines.length)) * lineH + cellPadY * 2);
 
-    // Table rows
-    doc.setFont("helvetica", "normal");
-    const displayRows = rows.slice(0, 40);
-    displayRows.forEach((row, ri) => {
-      if (y + 6 > pageH - 20) { doc.addPage(); y = 20; }
-      doc.setFillColor(ri % 2 === 0 ? "#f8fafc" : "#ffffff");
-      doc.rect(14, y, pageW - 28, 6, "F");
-      doc.setTextColor(DARK);
-      headers.forEach((h, i) => {
-        const val = String(row[h] ?? "").slice(0, 20);
-        doc.text(val, 16 + i * colW, y + 4.5);
+      addPageIfNeeded(headerH + 4);
+      doc.setFillColor(BRAND_COLOR);
+      doc.rect(PAGE_MARGIN, y, tableW, headerH, "F");
+      doc.setTextColor("#ffffff");
+      headerLines.forEach((lines, i) => {
+        doc.text(lines, PAGE_MARGIN + i * colW + cellPadX, y + cellPadY + lineH);
       });
-      y += 6;
-    });
+      y += headerH;
+    };
 
-    if (rows.length > 40) {
-      y += 2;
-      doc.setTextColor(GRAY);
-      doc.setFontSize(8);
-      doc.text(`... and ${rows.length - 40} more rows`, 14, y);
-      y += 5;
-    }
+    drawTableHeader();
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(tableFontSize);
+    rows.forEach((row, ri) => {
+      const cellLines = headers.map((header) => doc.splitTextToSize(cleanCellValue(row[header]), maxTextW));
+      const rowH = Math.max(6, Math.max(...cellLines.map((lines) => lines.length || 1)) * lineH + cellPadY * 2);
+
+      if (y + rowH > pageH - FOOTER_SPACE) {
+        doc.addPage();
+        y = 20;
+        drawTableHeader();
+      }
+
+      doc.setFillColor(ri % 2 === 0 ? "#f8fafc" : "#ffffff");
+      doc.rect(PAGE_MARGIN, y, tableW, rowH, "F");
+      doc.setDrawColor("#e2e8f0");
+      doc.setLineWidth(0.1);
+      doc.line(PAGE_MARGIN, y + rowH, PAGE_MARGIN + tableW, y + rowH);
+      doc.setTextColor(DARK);
+      cellLines.forEach((lines, i) => {
+        doc.text(lines.length ? lines : [""], PAGE_MARGIN + i * colW + cellPadX, y + cellPadY + lineH);
+      });
+      y += rowH;
+    });
   }
 
   // ── Footer on every page ───────────────────────────────────────────────────

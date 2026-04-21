@@ -120,6 +120,14 @@
   }
 }
 
+@layer components {
+  .result-action-button:hover {
+    background-color: hsl(var(--primary) / 0.1) !important;
+    border-color: hsl(var(--primary) / 0.22) !important;
+    color: hsl(var(--foreground)) !important;
+  }
+}
+
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
