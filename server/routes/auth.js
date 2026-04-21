@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const { getDb } = require("../db");
 const { logAudit } = require("../middleware/auditLogger");
 const { authMiddleware, JWT_SECRET } = require("../middleware/auth");
+const { defaultPlanFields, ensureUserPlan, getPlanContext } = require("../lib/plans");
 
 const router = express.Router();
 
@@ -19,9 +20,7 @@ router.post("/signup", async (req, res) => {
     if (existing)
       return res.status(409).json({ error: "An account with that email already exists" });
 
-    // First user becomes admin automatically
-    const userCount = await db.collection("users").countDocuments();
-    const role = userCount === 0 ? "admin" : "viewer";
+    const role = "viewer";
 
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await db.collection("users").insertOne({
@@ -30,9 +29,19 @@ router.post("/signup", async (req, res) => {
       passwordHash,
       role,
       status: "active",
+      ...defaultPlanFields("signup"),
       createdAt: new Date().toISOString(),
       lastLogin: new Date().toISOString(),
     });
+    await db.collection("users").updateOne(
+      { _id: result.insertedId },
+      {
+        $set: {
+          organizationId: result.insertedId.toString(),
+          organizationOwnerId: result.insertedId.toString(),
+        },
+      }
+    );
 
     const token = jwt.sign(
       { userId: result.insertedId.toString(), email, name, role },
@@ -40,7 +49,20 @@ router.post("/signup", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.status(201).json({ token, user: { name, email, role } });
+    res.status(201).json({
+      token,
+      user: {
+        name,
+        email,
+        id: result.insertedId.toString(),
+        role,
+        planTier: "free",
+        planStatus: "active",
+        ownPlanTier: "free",
+        organizationId: result.insertedId.toString(),
+        organizationOwnerId: result.insertedId.toString(),
+      },
+    });
   } catch (err) {
     console.error("signup error:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -67,7 +89,9 @@ router.post("/signin", async (req, res) => {
     if (!valid)
       return res.status(401).json({ error: "Invalid email or password" });
 
-    const role = user.role || "viewer";
+    const hydratedUser = await ensureUserPlan(db, user._id.toString());
+    const planContext = await getPlanContext(db, user._id.toString());
+    const role = hydratedUser.role || "viewer";
 
     // Update last login
     await db.collection("users").updateOne(
@@ -81,7 +105,22 @@ router.post("/signin", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({ token, user: { name: user.name, email: user.email, role } });
+    res.json({
+      token,
+      user: {
+        name: hydratedUser.name,
+        email: hydratedUser.email,
+        id: hydratedUser._id.toString(),
+        role,
+        planTier: planContext.plan.tier,
+        planStatus: planContext.planOwner.planStatus || "active",
+        ownPlanTier: hydratedUser.planTier || "free",
+        organizationId: hydratedUser.organizationId,
+        organizationOwnerId: hydratedUser.organizationOwnerId,
+        planOwnerId: planContext.planOwner._id.toString(),
+        isPlanOwner: planContext.planOwner._id.toString() === hydratedUser._id.toString(),
+      },
+    });
     logAudit(user._id.toString(), user.email, "auth.login", { method: "password" }, "info");
   } catch (err) {
     console.error("signin error:", err);
@@ -117,11 +156,21 @@ router.get("/me", authMiddleware, async (req, res) => {
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    const hydratedUser = await ensureUserPlan(db, user._id.toString());
+    const planContext = await getPlanContext(db, user._id.toString());
     res.json({
-      name: user.name,
-      email: user.email,
-      role: user.role || "viewer",
-      status: user.status || "active",
+      name: hydratedUser.name,
+      email: hydratedUser.email,
+      id: hydratedUser._id.toString(),
+      role: hydratedUser.role || "viewer",
+      status: hydratedUser.status || "active",
+      planTier: planContext.plan.tier,
+      planStatus: planContext.planOwner.planStatus || "active",
+      ownPlanTier: hydratedUser.planTier || "free",
+      organizationId: hydratedUser.organizationId,
+      organizationOwnerId: hydratedUser.organizationOwnerId,
+      planOwnerId: planContext.planOwner._id.toString(),
+      isPlanOwner: planContext.planOwner._id.toString() === hydratedUser._id.toString(),
     });
   } catch (err) {
     console.error("get me error:", err);

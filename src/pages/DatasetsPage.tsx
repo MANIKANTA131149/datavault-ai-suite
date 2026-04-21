@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { useDropzone } from "react-dropzone";
+import { useDropzone, type FileRejection } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
 import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info, Search, Copy, Grid3X3, List, ArrowUpDown, Star, Pin, Pencil, StickyNote, Rows3, Columns3, SlidersHorizontal, CheckSquare, Square, RotateCcw } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -19,6 +19,8 @@ import type { ColumnInfo, ParsedFile } from "@/lib/file-parser";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useNotificationsStore } from "@/stores/notifications-store";
+import { usePlanStore } from "@/stores/plan-store";
+import { formatFileSizeLimit, type PlanDefinition } from "@/lib/plans";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
@@ -89,6 +91,10 @@ function formatBytes(bytes?: number) {
   const units = ["B", "KB", "MB", "GB"];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function getFileSizeLimitMessage(file: File, plan: PlanDefinition) {
+  return `${plan.name} plan allows dataset files up to ${formatFileSizeLimit(plan.fileSizeLimitBytes)}. "${file.name}" is ${formatBytes(file.size)}.`;
 }
 
 function getDatasetTotals(ds: StoredDataset) {
@@ -246,7 +252,7 @@ function ColumnIntelligenceTab({ sheet }: { sheet: { columns: ColumnInfo[]; rows
 
 function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: StoredDataset; onClose: () => void; displayName?: string }) {
   const [activeSheet, setActiveSheet] = useState(dataset.sheetNames[0]);
-  const { archiveDataset, loadDatasetData } = useDatasetStore();
+  const { removeDataset, loadDatasetData } = useDatasetStore();
   const navigate = useNavigate();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
@@ -464,12 +470,12 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="bg-background-secondary border-border">
           <DialogHeader>
-            <DialogTitle>Archive dataset</DialogTitle>
-            <DialogDescription>This will archive "{dataset.fileName}". You can undo it from the toast.</DialogDescription>
+            <DialogTitle>Delete dataset</DialogTitle>
+            <DialogDescription>This will permanently delete "{dataset.fileName}" and its stored data.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)} className="border-border">Cancel</Button>
-            <Button variant="destructive" onClick={async () => { await archiveDataset(dataset.id, true); setDeleteOpen(false); toast.success("Dataset archived", { action: { label: "Undo", onClick: () => archiveDataset(dataset.id, false) } }); onClose(); }}>Archive</Button>
+            <Button variant="destructive" onClick={async () => { await removeDataset(dataset.id); setDeleteOpen(false); toast.success("Dataset deleted"); onClose(); }}>Delete</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -478,9 +484,10 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
 }
 
 export default function DatasetsPage() {
-  const { datasets, addDataset, archiveDataset, duplicateDataset, updateDatasetMeta, loading } = useDatasetStore();
+  const { datasets, addDataset, removeDataset, duplicateDataset, updateDatasetMeta, loading } = useDatasetStore();
   const { entries } = useHistoryStore();
   const { addLocalNotification } = useNotificationsStore();
+  const { context: planContext, checkMetric, fetchPlan } = usePlanStore();
   const [parsing, setParsing] = useState(false);
   const [selectedDataset, setSelectedDataset] = useState<StoredDataset | null>(null);
   const [datasetToDelete, setDatasetToDelete] = useState<StoredDataset | null>(null);
@@ -506,6 +513,10 @@ export default function DatasetsPage() {
     localStorage.setItem(DATASET_FILTER_KEY, JSON.stringify({ searchTerm, sortBy, viewMode, density }));
   }, [searchTerm, sortBy, viewMode, density]);
 
+  useEffect(() => {
+    fetchPlan();
+  }, [fetchPlan]);
+
   const processUploadFile = useCallback(async (item: UploadQueueItem) => {
     const hasDuplicate = datasets.some((ds) => !ds.archived && ds.fileName.toLowerCase() === item.file.name.toLowerCase());
     if (hasDuplicate) {
@@ -514,21 +525,31 @@ export default function DatasetsPage() {
       return;
     }
 
-    setParsing(true);
-    setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "uploading", progress: 20, error: undefined } : q));
     try {
+      const activePlan = planContext?.plan || (await fetchPlan())?.plan;
+      if (activePlan?.fileSizeLimitBytes !== null && activePlan?.fileSizeLimitBytes !== undefined && item.file.size > activePlan.fileSizeLimitBytes) {
+        const message = getFileSizeLimitMessage(item.file, activePlan);
+        setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "failed", progress: 100, error: message } : q));
+        toast.error(message);
+        return;
+      }
+
+      setParsing(true);
+      setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "uploading", progress: 20, error: undefined } : q));
+      await checkMetric("datasets", 1);
       const parsed = await parseFile(item.file);
       setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, progress: 70 } : q));
       await addDataset(parsed);
+      fetchPlan();
       setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "done", progress: 100 } : q));
       toast.success(`${item.file.name} uploaded successfully`);
     } catch (err: any) {
       setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "failed", progress: 100, error: err.message || "Upload failed" } : q));
-      toast.error(`Failed to parse ${item.file.name}: ${err.message}`);
+      toast.error(err.message || `Failed to upload ${item.file.name}`);
     } finally {
       setParsing(false);
     }
-  }, [addDataset, datasets]);
+  }, [addDataset, checkMetric, datasets, fetchPlan, planContext]);
 
   const retryUpload = useCallback((item: UploadQueueItem) => {
     processUploadFile({ ...item, status: "queued", progress: 0, error: undefined });
@@ -557,9 +578,33 @@ export default function DatasetsPage() {
     }
   }, [datasets, processUploadFile]);
 
+  const onDropRejected = useCallback((fileRejections: FileRejection[]) => {
+    const activePlan = planContext?.plan;
+    const rejected = fileRejections.map(({ file, errors }) => {
+      const message = errors.some((error) => error.code === "file-too-large") && activePlan
+        ? getFileSizeLimitMessage(file, activePlan)
+        : errors.map((error) => error.message).join(", ") || "File rejected";
+      return {
+        id: crypto.randomUUID(),
+        file,
+        status: "failed" as UploadStatus,
+        progress: 100,
+        error: message,
+      };
+    });
+    if (rejected.length === 0) return;
+    setUploadQueue((prev) => [...rejected, ...prev].slice(0, 12));
+    toast.error(rejected[0].error || "One or more files were rejected.");
+  }, [planContext]);
+
+  const fileSizeLimit = planContext?.plan.fileSizeLimitBytes;
+  const fileSizeLimitLabel = planContext ? formatFileSizeLimit(fileSizeLimit) : "Checking plan limit...";
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: { "text/csv": [".csv"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"], "application/vnd.ms-excel": [".xls"] },
+    maxSize: planContext ? fileSizeLimit ?? undefined : undefined,
   });
 
   const fileTypeBadge = (type: string) => {
@@ -605,7 +650,9 @@ export default function DatasetsPage() {
 
   const handleDuplicateDataset = async (dataset: StoredDataset) => {
     try {
+      await checkMetric("datasets", 1);
       await duplicateDataset(dataset.id);
+      fetchPlan();
       toast.success(`${dataset.fileName} duplicated`);
     } catch (err: any) {
       toast.error(err.message || "Failed to duplicate dataset");
@@ -614,10 +661,16 @@ export default function DatasetsPage() {
 
   const confirmDeleteDataset = async () => {
     if (!datasetToDelete) return;
-    await archiveDataset(datasetToDelete.id, true);
+    await removeDataset(datasetToDelete.id);
     if (selectedDataset?.id === datasetToDelete.id) setSelectedDataset(null);
-    toast.success(`${datasetToDelete.fileName} archived`, { action: { label: "Undo", onClick: () => archiveDataset(datasetToDelete.id, false) } });
-    addLocalNotification({ type: "system", title: "Dataset archived", message: `${datasetToDelete.fileName} was archived.`, icon: "database", link: "/app/datasets" });
+    setSelectedIds((prev) => prev.filter((id) => id !== datasetToDelete.id));
+    setUiMeta((prev) => {
+      const next = { ...prev };
+      delete next[datasetToDelete.id];
+      return next;
+    });
+    toast.success(`${datasetToDelete.fileName} deleted`);
+    addLocalNotification({ type: "system", title: "Dataset deleted", message: `${datasetToDelete.fileName} was deleted.`, icon: "database", link: "/app/datasets" });
     setDatasetToDelete(null);
   };
 
@@ -627,11 +680,17 @@ export default function DatasetsPage() {
 
   const deleteSelectedDatasets = async () => {
     const deleting = [...selectedIds];
-    for (const id of deleting) await archiveDataset(id, true);
+    await Promise.all(deleting.map((id) => removeDataset(id)));
     setSelectedIds([]);
     setBulkDeleteOpen(false);
-    toast.success(`${deleting.length} dataset${deleting.length === 1 ? "" : "s"} archived`, { action: { label: "Undo", onClick: () => deleting.forEach((id) => archiveDataset(id, false)) } });
-    addLocalNotification({ type: "system", title: "Datasets archived", message: `${deleting.length} dataset${deleting.length === 1 ? "" : "s"} archived.`, icon: "database", link: "/app/datasets" });
+    setUiMeta((prev) => {
+      const next = { ...prev };
+      deleting.forEach((id) => delete next[id]);
+      return next;
+    });
+    if (selectedDataset && deleting.includes(selectedDataset.id)) setSelectedDataset(null);
+    toast.success(`${deleting.length} dataset${deleting.length === 1 ? "" : "s"} deleted`);
+    addLocalNotification({ type: "system", title: "Datasets deleted", message: `${deleting.length} dataset${deleting.length === 1 ? "" : "s"} deleted.`, icon: "database", link: "/app/datasets" });
   };
 
   const patchMeta = (id: string, patch: DatasetUiMeta) => {
@@ -685,7 +744,9 @@ export default function DatasetsPage() {
           <>
             <Upload size={32} className="mx-auto text-muted-foreground/50 mb-3" />
             <p className="text-sm text-foreground font-medium">Drop CSV or Excel files here, or click to browse</p>
-            <p className="text-xs text-muted-foreground mt-1">Supports .csv, .xlsx, .xls</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Supports .csv, .xlsx, .xls · {fileSizeLimitLabel}
+            </p>
             <div className="flex gap-2 justify-center mt-3">
               {["CSV", "XLSX", "XLS"].map((t) => (
                 <Badge key={t} variant="outline" className="border-border text-xs text-muted-foreground">{t}</Badge>
@@ -815,7 +876,7 @@ export default function DatasetsPage() {
                   <RotateCcw size={13} className="mr-1" /> Clear
                 </Button>
                 <Button variant="destructive" size="sm" className="h-8" onClick={() => setBulkDeleteOpen(true)}>
-                  <Trash2 size={13} className="mr-1" /> Archive selected
+                  <Trash2 size={13} className="mr-1" /> Delete selected
                 </Button>
               </>
             )}
@@ -1104,15 +1165,15 @@ export default function DatasetsPage() {
       <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
         <DialogContent className="bg-background-secondary border-border">
           <DialogHeader>
-            <DialogTitle>Archive selected datasets</DialogTitle>
+            <DialogTitle>Delete selected datasets</DialogTitle>
             <DialogDescription>
-              This will hide {selectedIds.length} selected dataset{selectedIds.length === 1 ? "" : "s"} from active views. You can undo from the toast.
+              This will permanently delete {selectedIds.length} selected dataset{selectedIds.length === 1 ? "" : "s"} and their stored data.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} className="border-border">Cancel</Button>
             <Button variant="destructive" onClick={deleteSelectedDatasets}>
-              <Trash2 size={14} className="mr-2" /> Archive selected
+              <Trash2 size={14} className="mr-2" /> Delete selected
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1121,9 +1182,9 @@ export default function DatasetsPage() {
       <Dialog open={!!datasetToDelete} onOpenChange={(open) => { if (!open) setDatasetToDelete(null); }}>
         <DialogContent className="bg-background-secondary border-border">
           <DialogHeader>
-            <DialogTitle>Archive dataset</DialogTitle>
+            <DialogTitle>Delete dataset</DialogTitle>
             <DialogDescription>
-              This will hide "{datasetToDelete?.fileName}" from active views. You can undo from the toast.
+              This will permanently delete "{datasetToDelete?.fileName}" and its stored data.
             </DialogDescription>
           </DialogHeader>
           {datasetToDelete && (
@@ -1137,7 +1198,7 @@ export default function DatasetsPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDatasetToDelete(null)} className="border-border">Cancel</Button>
             <Button variant="destructive" onClick={confirmDeleteDataset}>
-              <Trash2 size={14} className="mr-2" /> Archive file
+              <Trash2 size={14} className="mr-2" /> Delete file
             </Button>
           </DialogFooter>
         </DialogContent>

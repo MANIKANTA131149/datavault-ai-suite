@@ -18,11 +18,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useDatasetStore } from "@/stores/dataset-store";
+import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useInsightsStore } from "@/stores/insights-store";
+import { usePlanStore } from "@/stores/plan-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
 import { runAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
@@ -413,6 +414,7 @@ function ResultPanel({
   const [chartSort, setChartSort] = useState<"none" | "asc" | "desc">("none");
   const [topN, setTopN] = useState(20);
   const [chartNotes, setChartNotes] = useState("");
+  const { checkExport } = usePlanStore();
   const isEmptyArray = isArray && rows.length === 0;
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
   const isBlankString = typeof result === "string" && !result.trim();
@@ -472,6 +474,16 @@ function ResultPanel({
     toast.success("Chart image downloaded");
   };
 
+  const runExport = async (format: "csv" | "json" | "markdown" | "html", action: () => void, label: string) => {
+    try {
+      await checkExport(format);
+      action();
+      toast.success(`${label} downloaded`);
+    } catch (err: any) {
+      toast.error(err.message || `${label} export is not available on your plan`);
+    }
+  };
+
   return (
     <div className={fullscreen ? "fixed inset-4 z-[60] rounded-lg border border-border bg-background-secondary shadow-2xl flex flex-col" : "h-full flex flex-col"}>
       <div className="flex items-center justify-between p-4 border-b border-border">
@@ -501,17 +513,17 @@ function ResultPanel({
           <p className="text-xs text-muted-foreground font-medium">Export As</p>
           <div className="flex flex-wrap gap-1.5">
             {isArray && (
-              <button onClick={() => { exportCSV(result); toast.success("CSV downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+              <button onClick={() => runExport("csv", () => exportCSV(result), "CSV")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
                 <BarChart3 size={10} /> CSV
               </button>
             )}
-            <button onClick={() => { exportJSON(result); toast.success("JSON downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+            <button onClick={() => runExport("json", () => exportJSON(result), "JSON")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
               <FileJson size={10} /> JSON
             </button>
-            <button onClick={() => { exportMarkdown(result, query); toast.success("Markdown downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+            <button onClick={() => runExport("markdown", () => exportMarkdown(result, query), "Markdown")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
               <FileText size={10} /> Markdown
             </button>
-            <button onClick={() => { exportHTML(result, query); toast.success("HTML downloaded"); }} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
+            <button onClick={() => runExport("html", () => exportHTML(result, query), "HTML")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
               <Code2 size={10} /> HTML
             </button>
           </div>
@@ -777,7 +789,7 @@ function ResultPanel({
               <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => copyRows(displayedRows)}>
                 <Table2 size={12} className="mr-1" /> Copy table
               </Button>
-              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => { exportCSV(displayedRows); toast.success("CSV downloaded"); }}>
+              <Button variant="outline" size="sm" className="border-border text-xs" onClick={() => runExport("csv", () => exportCSV(displayedRows), "CSV")}>
                 <Download size={12} className="mr-1" /> CSV
               </Button>
             </>
@@ -911,7 +923,7 @@ function InlineFinalResult({ result }: { result: any }) {
 
 // ─── DataPreviewPanel ─────────────────────────────────────────────────────────
 function DataPreviewPanel({ dataset, sheet, onClose }: {
-  dataset: ReturnType<typeof useDatasetStore>["datasets"][0];
+  dataset: StoredDataset;
   sheet: string;
   onClose: () => void;
 }) {
@@ -1058,14 +1070,19 @@ function SaveInsightDialog({
   const handleSave = async () => {
     if (!label.trim()) { toast.error("Please add a label"); return; }
     setSaving(true);
-    await addInsight({
-      query, datasetName, result,
-      label: label.trim(), notes, color,
-      tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-    });
-    toast.success("Saved to Insights");
-    onClose();
-    setSaving(false);
+    try {
+      await addInsight({
+        query, datasetName, result,
+        label: label.trim(), notes, color,
+        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      toast.success("Saved to Insights");
+      onClose();
+    } catch (err: any) {
+      toast.error(err.message || "Insight limit reached for your plan");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1112,6 +1129,7 @@ export default function QueryPage() {
   const { datasets, getDataset } = useDatasetStore();
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
   const { addEntry, entries } = useHistoryStore();
+  const { checkMetric, checkExport, fetchPlan } = usePlanStore();
 
   const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
   const [selectedSheet, setSelectedSheet] = useState("");
@@ -1219,6 +1237,13 @@ export default function QueryPage() {
       toast.error(message);
       return;
     }
+    try {
+      await checkMetric("monthlyQueries", 1);
+      await checkMetric("monthlyTokens", maxTokens);
+    } catch (err: any) {
+      toast.error(err.message || "Query limit reached for your plan");
+      return;
+    }
 
     setInput(overrideQuestion ? input : "");
     setApiWarning("");
@@ -1282,18 +1307,24 @@ export default function QueryPage() {
       setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps], query: question }]);
       setCurrentSteps([]);
 
-      addEntry({
-        query: question,
-        datasetName: selectedDataset?.fileName || "Unknown dataset",
-        provider: activeProvider,
-        model: activeModel,
-        turns: steps.length,
-        totalTokens,
-        durationMs: Date.now() - startTime,
-        status: steps.some((s) => s.command === "Error") ? "error" : "success",
-        steps: [...steps],
-        finalResult: steps[steps.length - 1]?.result,
-      });
+      try {
+        await addEntry({
+          query: question,
+          datasetName: selectedDataset?.fileName || "Unknown dataset",
+          provider: activeProvider,
+          model: activeModel,
+          turns: steps.length,
+          totalTokens,
+          durationMs: Date.now() - startTime,
+          status: steps.some((s) => s.command === "Error") ? "error" : "success",
+          steps: [...steps],
+          finalResult: steps[steps.length - 1]?.result,
+        });
+      } catch (err: any) {
+        toast.error(err.message || "Query usage could not be saved for your plan");
+      } finally {
+        fetchPlan();
+      }
     } catch (err: any) {
       toast.error(err.message);
       setLastFailedQuery(question);
@@ -1313,6 +1344,20 @@ export default function QueryPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
+  };
+
+  const handlePdfReport = async (query: string, result: any) => {
+    try {
+      await checkExport("pdf");
+      generatePDF({
+        title: query || "Query Result",
+        query: query || "",
+        rows: Array.isArray(result) ? result : undefined,
+        narrative: result?.narrative || undefined,
+      });
+    } catch (err: any) {
+      toast.error(err.message || "PDF export is not available on your plan");
+    }
   };
 
   const apiKeyForProvider = providerConfigs[activeProvider]?.apiKey || "";
@@ -1534,12 +1579,7 @@ export default function QueryPage() {
                               <BookmarkPlus size={10} /> Save insight
                             </button>
                             <button
-                              onClick={() => generatePDF({
-                                title: msg.query || "Query Result",
-                                query: msg.query || "",
-                                rows: Array.isArray(finalStep.result) ? finalStep.result : undefined,
-                                narrative: finalStep.result?.narrative || undefined,
-                              })}
+                              onClick={() => handlePdfReport(msg.query || "", finalStep.result)}
                               className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
                             >
                               <FileDown size={10} /> PDF report

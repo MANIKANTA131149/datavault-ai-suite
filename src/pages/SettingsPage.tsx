@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,8 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useLLMStore, PROVIDER_LABELS, PROVIDER_MODELS } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore, type Theme, type CodeFont } from "@/stores/settings-store";
+import { usePlanStore } from "@/stores/plan-store";
+import { PLAN_DEFINITIONS, PLAN_TIERS, formatFileSizeLimit, formatPlanLimit, type PlanTier } from "@/lib/plans";
 import { testProviderConnection, type Provider } from "@/lib/llm-client";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
@@ -24,6 +26,7 @@ export default function SettingsPage() {
   const { providerConfigs, setProviderConfig, activeProvider, setActiveProvider } = useLLMStore();
   const { entries } = useHistoryStore();
   const { theme, compactMode, codeFont, setTheme, setCompactMode, setCodeFont, saveSettings, loading } = useSettingsStore();
+  const { context: planContext, fetchPlan } = usePlanStore();
 
   const [editName, setEditName] = useState(user?.name || "");
   const [savingProfile, setSavingProfile] = useState(false);
@@ -38,11 +41,36 @@ export default function SettingsPage() {
     )
   );
 
+  useEffect(() => {
+    setKeyInputs(
+      Object.fromEntries(
+        (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""])
+      )
+    );
+  }, [providerConfigs]);
+
 
   const totalTokens = entries.reduce((s, e) => s + e.totalTokens, 0);
   const successRate = entries.length
     ? Math.round((entries.filter((e) => e.status === "success").length / entries.length) * 100)
     : 0;
+  const currentPlan = planContext?.plan || PLAN_DEFINITIONS[user?.planTier || "free"];
+  const usage = planContext?.usage || {
+    monthlyQueries: entries.length,
+    monthlyTokens: totalTokens,
+    datasets: 0,
+    insights: 0,
+    members: 0,
+  };
+
+  useEffect(() => {
+    fetchPlan();
+  }, [fetchPlan]);
+
+  const usagePercent = (value: number, max: number | null) => {
+    if (max === null || max === undefined) return 0;
+    return Math.min((value / max) * 100, 100);
+  };
 
   const handleSaveProfile = async () => {
     if (!editName.trim()) { toast.error("Name cannot be empty"); return; }
@@ -447,40 +475,76 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between mb-5">
               <div>
                 <p className="text-sm font-medium text-foreground">Current Plan</p>
-                <p className="text-xs text-muted-foreground">Usage resets monthly</p>
+                <p className="text-xs text-muted-foreground">Usage resets monthly. Plans are managed manually by an administrator.</p>
               </div>
-              <Badge className="bg-primary/10 text-primary border-0">Free</Badge>
+              <Badge className="bg-primary/10 text-primary border-0">{currentPlan.name}</Badge>
             </div>
-            <div className="grid grid-cols-2 gap-4 mb-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
               {[
-                { label: "Queries run", value: entries.length, max: 100, unit: "" },
-                { label: "Tokens used", value: totalTokens, max: 100000, unit: "" },
+                { label: "Queries run", value: usage.monthlyQueries, max: currentPlan.monthlyQueries, unit: "" },
+                { label: "Tokens used", value: usage.monthlyTokens, max: currentPlan.monthlyTokens, unit: "" },
+                { label: "Datasets", value: usage.datasets, max: currentPlan.datasets, unit: "" },
+                { label: "Saved insights", value: usage.insights, max: currentPlan.insights, unit: "" },
+                { label: "Shared members", value: usage.members, max: currentPlan.members, unit: "" },
                 { label: "Success rate", value: successRate, max: 100, unit: "%" },
                 { label: "Providers set up", value: configuredCount, max: Object.keys(PROVIDER_LABELS).length, unit: "" },
               ].map(({ label, value, max, unit }) => (
                 <div key={label}>
                   <div className="flex justify-between text-xs mb-1.5">
                     <span className="text-muted-foreground">{label}</span>
-                    <span className="text-foreground font-mono">{value.toLocaleString()}{unit} / {max.toLocaleString()}{unit}</span>
+                    <span className="text-foreground font-mono">{value.toLocaleString()}{unit} / {formatPlanLimit(max)}{unit}</span>
                   </div>
-                  <Progress value={Math.min((value / max) * 100, 100)} className="h-1.5" />
+                  <Progress value={usagePercent(value, max)} className="h-1.5" />
                 </div>
               ))}
             </div>
           </Card>
 
-          <Card className="p-6 bg-background-secondary border-border border-primary/20">
-            <h3 className="text-sm font-semibold text-foreground mb-2">Upgrade to Pro</h3>
-            <p className="text-xs text-muted-foreground mb-4">Unlock unlimited queries, priority support, and advanced analytics.</p>
-            <ul className="space-y-2 mb-4">
-              {["Unlimited queries & tokens", "Priority API routing", "Advanced analytics dashboard", "Team collaboration", "Audit logs & history export"].map((f) => (
-                <li key={f} className="flex items-center gap-2 text-xs text-foreground">
-                  <Check size={12} className="text-success flex-shrink-0" /> {f}
-                </li>
-              ))}
-            </ul>
-            <Button onClick={() => toast.info("Billing integration coming soon")}>Upgrade — $29/mo</Button>
-          </Card>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {PLAN_TIERS.map((tier: PlanTier) => {
+              const plan = PLAN_DEFINITIONS[tier];
+              const active = plan.tier === currentPlan.tier;
+              return (
+                <Card key={plan.tier} className={`p-5 bg-background-secondary border-border ${active ? "border-primary/40" : ""}`}>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">{plan.name}</h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {plan.adminPage ? "Includes admin page access" : "Personal workspace plan"}
+                      </p>
+                    </div>
+                    {active ? (
+                      <Badge className="bg-primary/10 text-primary border-0">Current</Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-border text-muted-foreground">Managed</Badge>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs mb-4">
+                    <div className="rounded-md border border-border bg-card p-2">Queries: {formatPlanLimit(plan.monthlyQueries)}</div>
+                    <div className="rounded-md border border-border bg-card p-2">Tokens: {formatPlanLimit(plan.monthlyTokens)}</div>
+                    <div className="rounded-md border border-border bg-card p-2">Datasets: {formatPlanLimit(plan.datasets)}</div>
+                    <div className="rounded-md border border-border bg-card p-2">File size: {formatFileSizeLimit(plan.fileSizeLimitBytes)}</div>
+                    <div className="rounded-md border border-border bg-card p-2">Members: {formatPlanLimit(plan.members)}</div>
+                  </div>
+                  <ul className="space-y-2">
+                    {plan.features.map((feature) => (
+                      <li key={feature} className="flex items-center gap-2 text-xs text-foreground">
+                        <Check size={12} className="text-success flex-shrink-0" /> {feature}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    variant={active ? "default" : "outline"}
+                    className="mt-4 w-full border-border"
+                    disabled={active}
+                    onClick={() => toast.info("Plan changes are managed manually by an administrator")}
+                  >
+                    {active ? "Active plan" : "Contact admin"}
+                  </Button>
+                </Card>
+              );
+            })}
+          </div>
         </TabsContent>
       </Tabs>
 

@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const { getDb } = require("../db");
 const { logAudit } = require("../middleware/auditLogger");
 const { authMiddleware } = require("../middleware/auth");
+const { defaultPlanFields, getPlanContext, canUseMetric, getOrganizationMemberIds, isPlanOwner } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -11,15 +12,31 @@ router.use(authMiddleware);
 async function requireAdmin(req, res, next) {
   try {
     const db = await getDb();
-    const { ObjectId } = require("mongodb");
-    const user = await db.collection("users").findOne({ _id: new ObjectId(req.userId) });
-    if (!user || user.role !== "admin") {
-      return res.status(403).json({ error: "Admin access required" });
+    const context = await getPlanContext(db, req.userId);
+    const orgAdmin = context.user.role === "admin" || isPlanOwner(context.user, context.planOwner);
+    if (!context || !orgAdmin || !context.plan.adminPage) {
+      return res.status(403).json({
+        error: "Admin access requires owning a Standard, Professional, or Enterprise organization",
+        code: "PLAN_FEATURE_LOCKED",
+        feature: "adminPage",
+        planTier: context?.plan?.tier || "free",
+        planName: context?.plan?.name || "Free",
+      });
     }
-    req.userRole = "admin";
+    req.adminUser = context.user;
+    req.planContext = context;
     next();
   } catch (err) {
     console.error("requireAdmin error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+async function requirePaidAdmin(req, res, next) {
+  try {
+    await requireAdmin(req, res, next);
+  } catch (err) {
+    console.error("requirePaidAdmin error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 }
@@ -28,18 +45,21 @@ async function requireAdmin(req, res, next) {
 router.get("/users", requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
+    const planContext = req.planContext || await getPlanContext(db, req.userId);
     const users = await db
       .collection("users")
-      .find({}, { projection: { passwordHash: 0 } })
+      .find({ organizationId: req.adminUser.organizationId }, { projection: { passwordHash: 0 } })
       .sort({ createdAt: -1 })
       .toArray();
 
     // Get per-user stats
     const [datasetCounts, historyCounts] = await Promise.all([
       db.collection("datasets").aggregate([
+        { $match: { userId: { $in: users.map((u) => u._id.toString()) } } },
         { $group: { _id: "$userId", count: { $sum: 1 } } },
       ]).toArray(),
       db.collection("history").aggregate([
+        { $match: { userId: { $in: users.map((u) => u._id.toString()) } } },
         { $group: { _id: "$userId", count: { $sum: 1 } } },
       ]).toArray(),
     ]);
@@ -54,6 +74,12 @@ router.get("/users", requireAdmin, async (req, res) => {
         email: u.email,
         role: u.role || "viewer",
         status: u.status || "active",
+        planTier: u.planTier || "free",
+        planStatus: u.planStatus || "active",
+        planSource: u.planSource || "manual",
+        effectivePlanTier: planContext.plan.tier,
+        organizationId: u.organizationId,
+        organizationOwnerId: u.organizationOwnerId,
         createdAt: u.createdAt,
         lastLogin: u.lastLogin || null,
         datasetCount: dsMap[u._id.toString()] || 0,
@@ -67,7 +93,7 @@ router.get("/users", requireAdmin, async (req, res) => {
 });
 
 // ─── PUT /api/admin/users/:id/role — change user role (admin only) ──────────
-router.put("/users/:id/role", requireAdmin, async (req, res) => {
+router.put("/users/:id/role", requirePaidAdmin, async (req, res) => {
   try {
     const { role } = req.body;
     const validRoles = ["admin", "analyst", "viewer"];
@@ -77,18 +103,19 @@ router.put("/users/:id/role", requireAdmin, async (req, res) => {
 
     const db = await getDb();
     const { ObjectId } = require("mongodb");
+    const target = await db.collection("users").findOne({ _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId });
+    if (!target) return res.status(404).json({ error: "User not found in your organization" });
 
     // Prevent demoting the last admin
     if (role !== "admin") {
-      const adminCount = await db.collection("users").countDocuments({ role: "admin" });
-      const target = await db.collection("users").findOne({ _id: new ObjectId(req.params.id) });
+      const adminCount = await db.collection("users").countDocuments({ role: "admin", organizationId: req.adminUser.organizationId });
       if (target?.role === "admin" && adminCount <= 1) {
         return res.status(400).json({ error: "Cannot demote the last admin" });
       }
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(req.params.id) },
+      { _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId },
       { $set: { role } }
     );
 
@@ -101,7 +128,7 @@ router.put("/users/:id/role", requireAdmin, async (req, res) => {
 });
 
 // ─── PUT /api/admin/users/:id/status — suspend/activate user (admin only) ───
-router.put("/users/:id/status", requireAdmin, async (req, res) => {
+router.put("/users/:id/status", requirePaidAdmin, async (req, res) => {
   try {
     const { status } = req.body;
     if (!["active", "suspended"].includes(status)) {
@@ -110,6 +137,8 @@ router.put("/users/:id/status", requireAdmin, async (req, res) => {
 
     const db = await getDb();
     const { ObjectId } = require("mongodb");
+    const target = await db.collection("users").findOne({ _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId });
+    if (!target) return res.status(404).json({ error: "User not found in your organization" });
 
     // Prevent self-suspension
     if (req.params.id === req.userId) {
@@ -117,7 +146,7 @@ router.put("/users/:id/status", requireAdmin, async (req, res) => {
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(req.params.id) },
+      { _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId },
       { $set: { status } }
     );
 
@@ -130,7 +159,7 @@ router.put("/users/:id/status", requireAdmin, async (req, res) => {
 });
 
 // ─── POST /api/admin/users/invite — invite new user (admin only) ────────────
-router.post("/users/invite", requireAdmin, async (req, res) => {
+router.post("/users/invite", requirePaidAdmin, async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
     if (!name || !email || !password) {
@@ -141,6 +170,10 @@ router.post("/users/invite", requireAdmin, async (req, res) => {
     const assignRole = validRoles.includes(role) ? role : "viewer";
 
     const db = await getDb();
+    const planContext = await getPlanContext(db, req.userId);
+    const memberCheck = canUseMetric(planContext.plan, "members", planContext.usage.members, 1);
+    if (!memberCheck.allowed) return res.status(403).json(memberCheck.details);
+
     const existing = await db.collection("users").findOne({ email });
     if (existing) {
       return res.status(409).json({ error: "User with this email already exists" });
@@ -153,6 +186,10 @@ router.post("/users/invite", requireAdmin, async (req, res) => {
       passwordHash,
       role: assignRole,
       status: "active",
+      ...defaultPlanFields(req.userId),
+      organizationId: req.adminUser.organizationId,
+      organizationOwnerId: req.adminUser.organizationOwnerId,
+      invitedBy: req.userId,
       createdAt: new Date().toISOString(),
     });
 
@@ -165,7 +202,7 @@ router.post("/users/invite", requireAdmin, async (req, res) => {
 });
 
 // ─── DELETE /api/admin/users/:id — delete user (admin only) ─────────────────
-router.delete("/users/:id", requireAdmin, async (req, res) => {
+router.delete("/users/:id", requirePaidAdmin, async (req, res) => {
   try {
     const { ObjectId } = require("mongodb");
 
@@ -177,10 +214,12 @@ router.delete("/users/:id", requireAdmin, async (req, res) => {
     const db = await getDb();
     const id = new ObjectId(req.params.id);
     const userId = req.params.id;
+    const target = await db.collection("users").findOne({ _id: id, organizationId: req.adminUser.organizationId });
+    if (!target) return res.status(404).json({ error: "User not found in your organization" });
 
     // Delete user and all their data
     await Promise.all([
-      db.collection("users").deleteOne({ _id: id }),
+      db.collection("users").deleteOne({ _id: id, organizationId: req.adminUser.organizationId }),
       db.collection("datasets").deleteMany({ userId }),
       db.collection("history").deleteMany({ userId }),
       db.collection("settings").deleteMany({ userId }),
@@ -196,19 +235,25 @@ router.delete("/users/:id", requireAdmin, async (req, res) => {
 });
 
 // ─── GET /api/admin/stats — system-wide stats (admin only) ──────────────────
-router.get("/stats", requireAdmin, async (req, res) => {
+router.get("/stats", requirePaidAdmin, async (req, res) => {
   try {
     const db = await getDb();
+    const orgUserIds = await getOrganizationMemberIds(db, req.adminUser);
     const [userCount, datasetCount, queryCount, insightCount] = await Promise.all([
-      db.collection("users").countDocuments(),
-      db.collection("datasets").countDocuments(),
-      db.collection("history").countDocuments(),
-      db.collection("insights").countDocuments(),
+      db.collection("users").countDocuments({ organizationId: req.adminUser.organizationId }),
+      db.collection("datasets").countDocuments({ userId: { $in: orgUserIds } }),
+      db.collection("history").countDocuments({ userId: { $in: orgUserIds } }),
+      db.collection("insights").countDocuments({ userId: { $in: orgUserIds } }),
     ]);
 
     // Role distribution
     const roleDist = await db.collection("users").aggregate([
+      { $match: { organizationId: req.adminUser.organizationId } },
       { $group: { _id: { $ifNull: ["$role", "viewer"] }, count: { $sum: 1 } } },
+    ]).toArray();
+    const planDist = await db.collection("users").aggregate([
+      { $match: { organizationId: req.adminUser.organizationId } },
+      { $group: { _id: { $ifNull: ["$planTier", "free"] }, count: { $sum: 1 } } },
     ]).toArray();
 
     res.json({
@@ -217,6 +262,7 @@ router.get("/stats", requireAdmin, async (req, res) => {
       queryCount,
       insightCount,
       roleDistribution: Object.fromEntries(roleDist.map((r) => [r._id, r.count])),
+      planDistribution: Object.fromEntries(planDist.map((r) => [r._id, r.count])),
     });
   } catch (err) {
     console.error("admin stats error:", err);

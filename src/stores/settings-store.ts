@@ -50,6 +50,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ loading: true });
     try {
       const data = await api.get<Record<string, unknown>>("/settings");
+      const { useLLMStore } = await import("./llm-store");
+      const llm = useLLMStore.getState();
+      llm.replaceProviderConfigs({});
+
       if (data && Object.keys(data).length > 0) {
         const theme = (data.theme as Theme) || "dark";
         set({
@@ -59,17 +63,15 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         });
         applyThemeToDom(theme);
 
-        // Hydrate LLM store with API keys saved in MongoDB
+        // Hydrate LLM store only with this user's saved provider config.
         if (data.providerConfigs && typeof data.providerConfigs === "object") {
-          const { useLLMStore } = await import("./llm-store");
-          const llm = useLLMStore.getState();
+          const nextConfigs: Record<string, Record<string, string>> = {};
           for (const [provider, config] of Object.entries(
             data.providerConfigs as Record<string, Record<string, string>>
           )) {
-            if (config?.apiKey) {
-              llm.setProviderConfig(provider as Parameters<typeof llm.setProviderConfig>[0], config);
-            }
+            nextConfigs[provider] = config || {};
           }
+          llm.replaceProviderConfigs(nextConfigs as Parameters<typeof llm.replaceProviderConfigs>[0]);
         }
       }
     } catch (err) {

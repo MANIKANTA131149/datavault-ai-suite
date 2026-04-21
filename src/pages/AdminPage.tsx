@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
-import { Users, Shield, UserPlus, Search, MoreHorizontal, Trash2, Ban, CheckCircle, Crown, Eye, BarChart3, Database, MessageSquare, Activity, ClipboardList, FileDown, AlertTriangle, Filter } from "lucide-react";
+import { Users, Shield, UserPlus, Search, MoreHorizontal, Trash2, Ban, CheckCircle, Crown, Eye, BarChart3, Database, MessageSquare, Activity, ClipboardList, FileDown, AlertTriangle, Filter, CreditCard } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api-client";
 import { getApiBaseUrl } from "@/lib/api-base";
 import { useAuthStore } from "@/stores/auth-store";
+import { usePlanStore } from "@/stores/plan-store";
+import { PLAN_DEFINITIONS, PLAN_TIERS, canAccessAdmin, formatPlanLimit, type PlanTier } from "@/lib/plans";
 import { toast } from "sonner";
 
 
@@ -23,6 +25,12 @@ interface UserRecord {
   email: string;
   role: string;
   status: string;
+  planTier: PlanTier;
+  planStatus: string;
+  planSource: string;
+  effectivePlanTier: PlanTier;
+  organizationId: string;
+  organizationOwnerId: string;
   createdAt: string;
   lastLogin: string | null;
   datasetCount: number;
@@ -35,6 +43,7 @@ interface AdminStats {
   queryCount: number;
   insightCount: number;
   roleDistribution: Record<string, number>;
+  planDistribution: Record<string, number>;
 }
 
 interface AuditLog {
@@ -65,14 +74,23 @@ const ROLE_ICONS: Record<string, React.ElementType> = {
   viewer: Eye,
 };
 
+const PLAN_COLORS: Record<PlanTier, string> = {
+  free: "bg-muted/60 text-muted-foreground",
+  standard: "bg-blue-500/10 text-blue-400",
+  professional: "bg-purple-500/10 text-purple-400",
+  enterprise: "bg-green-500/10 text-green-400",
+};
+
 export default function AdminPage() {
   const { user: currentUser } = useAuthStore();
+  const { context: planContext, fetchPlan, checkExport } = usePlanStore();
   const [activeTab, setActiveTab] = useState("users");
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
+  const [planFilter, setPlanFilter] = useState("all");
 
   // Audit log state
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -82,6 +100,8 @@ export default function AdminPage() {
   const [auditPage, setAuditPage] = useState(1);
   const [auditTotal, setAuditTotal] = useState(0);
   const AUDIT_PAGE_SIZE = 25;
+  const fullAdminAccess = canAccessAdmin(currentUser?.planTier, currentUser?.isPlanOwner);
+  const currentPlan = PLAN_DEFINITIONS[currentUser?.planTier || "free"];
 
 
 
@@ -99,12 +119,18 @@ export default function AdminPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [usersData, statsData] = await Promise.all([
-        api.get<UserRecord[]>("/admin/users"),
-        api.get<AdminStats>("/admin/stats"),
-      ]);
+      const usersData = await api.get<UserRecord[]>("/admin/users");
       setUsers(usersData);
-      setStats(statsData);
+      if (fullAdminAccess) {
+        try {
+          const statsData = await api.get<AdminStats>("/admin/stats");
+          setStats(statsData);
+        } catch {
+          setStats(null);
+        }
+      } else {
+        setStats(null);
+      }
     } catch (err: any) {
       toast.error(err.message || "Failed to load admin data");
     } finally {
@@ -113,6 +139,7 @@ export default function AdminPage() {
   };
 
   const fetchAuditLogs = async (page = 1) => {
+    if (!fullAdminAccess) return;
     setAuditLoading(true);
     try {
       const params = new URLSearchParams({
@@ -132,7 +159,7 @@ export default function AdminPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchPlan(); fetchData(); }, []);
   useEffect(() => { if (activeTab === "audit") fetchAuditLogs(1); }, [activeTab, auditSearch, auditSeverity]);
   
 
@@ -141,9 +168,10 @@ export default function AdminPage() {
     return users.filter((u) => {
       if (search && !u.name.toLowerCase().includes(search.toLowerCase()) && !u.email.toLowerCase().includes(search.toLowerCase())) return false;
       if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      if (planFilter !== "all" && (u.effectivePlanTier || u.planTier) !== planFilter) return false;
       return true;
     });
-  }, [users, search, roleFilter]);
+  }, [users, search, roleFilter, planFilter]);
 
   const handleChangeRole = async (userId: string, role: string) => {
     try {
@@ -190,6 +218,31 @@ export default function AdminPage() {
     }
   };
 
+  const handleAuditExport = async () => {
+    try {
+      await checkExport("audit");
+      const raw = localStorage.getItem("datavault-auth");
+      const token = raw ? JSON.parse(raw)?.state?.token : null;
+      const res = await fetch(`${getApiBaseUrl()}/audit/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Audit export failed" }));
+        throw new Error(body.error || "Audit export failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-log-${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Audit log exported");
+    } catch (err: any) {
+      toast.error(err.message || "Audit export requires Enterprise plan");
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteUser) return;
     try {
@@ -220,12 +273,31 @@ export default function AdminPage() {
           <h1 className="text-xl font-semibold text-foreground flex items-center gap-2">
             <Shield size={20} className="text-primary" /> Admin Panel
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage users, roles, and system-wide settings</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {fullAdminAccess ? "Manage users, roles, plans, and system-wide settings" : "Manage manual plan assignments"}
+          </p>
         </div>
-        <Button onClick={() => setShowInvite(true)}>
+        <Button
+          onClick={() => fullAdminAccess ? setShowInvite(true) : toast.info("Invites require Standard, Professional, or Enterprise")}
+          disabled={!fullAdminAccess}
+        >
           <UserPlus size={14} className="mr-2" /> Invite User
         </Button>
       </div>
+
+      {!fullAdminAccess && (
+        <Card className="p-4 bg-background-secondary border-border">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="text-warning mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Limited admin access on {currentPlan.name}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Full Admin tabs, invites, audit logs, and user role controls require Standard, Professional, or Enterprise. You can still assign plans manually from this page.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Stats + Role Distribution */}
       {stats && (
@@ -257,9 +329,11 @@ export default function AdminPage() {
           <TabsTrigger value="users" className="flex items-center gap-1.5">
             <Users size={13} /> Users
           </TabsTrigger>
-          <TabsTrigger value="audit" className="flex items-center gap-1.5">
-            <ClipboardList size={13} /> Audit Log
-          </TabsTrigger>
+          {fullAdminAccess && (
+            <TabsTrigger value="audit" className="flex items-center gap-1.5">
+              <ClipboardList size={13} /> Audit Log
+            </TabsTrigger>
+          )}
 
         </TabsList>
 
@@ -268,8 +342,8 @@ export default function AdminPage() {
           {/* Role distribution */}
           {stats && (
             <Card className="p-4 bg-background-secondary border-border">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Role Distribution</h3>
-              <div className="flex gap-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Role & Workspace Plan</h3>
+              <div className="flex gap-4 flex-wrap">
                 {Object.entries(stats.roleDistribution).map(([role, count]) => {
                   const RoleIcon = ROLE_ICONS[role] || Eye;
                   return (
@@ -284,6 +358,17 @@ export default function AdminPage() {
                     </div>
                   );
                 })}
+                {planContext && (
+                  <div className="flex items-center gap-2">
+                    <div className={`w-7 h-7 rounded-lg ${PLAN_COLORS[planContext.plan.tier]} flex items-center justify-center`}>
+                      <CreditCard size={12} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{planContext.plan.name}</p>
+                      <p className="text-xs text-muted-foreground">Workspace plan for all members</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </Card>
           )}
@@ -303,7 +388,24 @@ export default function AdminPage() {
                 <SelectItem value="viewer">Viewer</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={planFilter} onValueChange={setPlanFilter}>
+              <SelectTrigger className="w-[150px] bg-background-secondary border-border"><SelectValue /></SelectTrigger>
+              <SelectContent className="bg-popover border-border">
+                <SelectItem value="all">All plans</SelectItem>
+                {PLAN_TIERS.map((tier) => (
+                  <SelectItem key={tier} value={tier}>{PLAN_DEFINITIONS[tier].name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
+
+          {planContext && fullAdminAccess && (
+            <Card className="p-3 bg-background-secondary border-border">
+              <p className="text-xs text-muted-foreground">
+                Member sharing on {planContext.plan.name}: {planContext.usage.members.toLocaleString()} / {formatPlanLimit(planContext.plan.members)}
+              </p>
+            </Card>
+          )}
 
           {/* Users Table */}
           <div className="rounded-lg border border-border overflow-hidden">
@@ -312,6 +414,7 @@ export default function AdminPage() {
                 <tr>
                   <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">User</th>
                   <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Role</th>
+                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Workspace Plan</th>
                   <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Status</th>
                   <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Datasets</th>
                   <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Queries</th>
@@ -343,6 +446,16 @@ export default function AdminPage() {
                           <RoleIcon size={10} />{u.role}
                         </Badge>
                       </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1">
+                          <Badge className={`${PLAN_COLORS[u.effectivePlanTier || u.planTier || "free"] || PLAN_COLORS.free} border-0 text-xs capitalize w-fit`}>
+                            {PLAN_DEFINITIONS[u.effectivePlanTier || u.planTier || "free"].name}
+                          </Badge>
+                          {u.planTier !== (u.effectivePlanTier || u.planTier) && (
+                            <span className="text-[10px] text-muted-foreground">Own : {u.planTier || "free"}</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         <Badge className={`border-0 text-xs ${u.status === "active" ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}>
                           {u.status}
@@ -354,38 +467,45 @@ export default function AdminPage() {
                         {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
                       </td>
                       <td className="px-4 py-3">
-                        {!isSelf && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground">
-                                <MoreHorizontal size={14} />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => handleChangeRole(u.id, "admin")}>
-                                <Crown size={12} className="mr-2 text-amber-400" /> Make Admin
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleChangeRole(u.id, "analyst")}>
-                                <BarChart3 size={12} className="mr-2 text-blue-400" /> Make Analyst
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleChangeRole(u.id, "viewer")}>
-                                <Eye size={12} className="mr-2" /> Make Viewer
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => handleToggleStatus(u.id, u.status)}>
-                                {u.status === "active" ? (
-                                  <><Ban size={12} className="mr-2 text-amber-400" /> Suspend</>
-                                ) : (
-                                  <><CheckCircle size={12} className="mr-2 text-green-400" /> Activate</>
-                                )}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => setDeleteUser(u)} className="text-destructive focus:text-destructive">
-                                <Trash2 size={12} className="mr-2" /> Delete User
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground">
+                              <MoreHorizontal size={14} />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            {fullAdminAccess && !isSelf && (
+                              <>
+                                <DropdownMenuItem onClick={() => handleChangeRole(u.id, "admin")}>
+                                  <Crown size={12} className="mr-2 text-amber-400" /> Make Admin
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleChangeRole(u.id, "analyst")}>
+                                  <BarChart3 size={12} className="mr-2 text-blue-400" /> Make Analyst
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleChangeRole(u.id, "viewer")}>
+                                  <Eye size={12} className="mr-2" /> Make Viewer
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                              </>
+                            )}
+                            {fullAdminAccess && !isSelf && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => handleToggleStatus(u.id, u.status)}>
+                                  {u.status === "active" ? (
+                                    <><Ban size={12} className="mr-2 text-amber-400" /> Suspend</>
+                                  ) : (
+                                    <><CheckCircle size={12} className="mr-2 text-green-400" /> Activate</>
+                                  )}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => setDeleteUser(u)} className="text-destructive focus:text-destructive">
+                                  <Trash2 size={12} className="mr-2" /> Delete User
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
                   );
@@ -418,13 +538,13 @@ export default function AdminPage() {
                 <SelectItem value="critical">Critical</SelectItem>
               </SelectContent>
             </Select>
-            <a
-              href={`${getApiBaseUrl()}/audit/export`}
-              download
+            <button
+              type="button"
+              onClick={handleAuditExport}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors border border-border rounded-md px-3 py-2"
             >
               <FileDown size={13} /> Export CSV
-            </a>
+            </button>
           </div>
 
           {auditLoading ? (

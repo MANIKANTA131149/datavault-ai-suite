@@ -27,9 +27,9 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
 };
 
 interface ProviderConfig {
-  apiKey: string;
-  model: string;
-  enabled: boolean;
+  apiKey?: string;
+  model?: string;
+  enabled?: boolean;
 }
 
 interface LLMState {
@@ -45,7 +45,19 @@ interface LLMState {
   setMaxTokens: (tokens: number) => void;
   setSystemPrompt: (prompt: string) => void;
   setProviderConfig: (provider: Provider, config: Partial<ProviderConfig>) => void;
+  replaceProviderConfigs: (configs: Partial<Record<Provider, ProviderConfig>>) => void;
+  clearProviderConfigs: () => void;
+  clearProviderApiKeys: () => void;
   getApiKey: (provider: Provider) => string;
+}
+
+function stripApiKeys(configs: Partial<Record<Provider, ProviderConfig>> = {}) {
+  return Object.fromEntries(
+    Object.entries(configs).map(([provider, config]) => {
+      const { apiKey: _apiKey, ...safeConfig } = config || {};
+      return [provider, safeConfig];
+    })
+  ) as Partial<Record<Provider, ProviderConfig>>;
 }
 
 export const useLLMStore = create<LLMState>()(
@@ -76,8 +88,32 @@ export const useLLMStore = create<LLMState>()(
             [provider]: { ...state.providerConfigs[provider], ...config } as ProviderConfig,
           },
         })),
+      replaceProviderConfigs: (providerConfigs) => set({ providerConfigs }),
+      clearProviderConfigs: () => set({ providerConfigs: {} }),
+      clearProviderApiKeys: () =>
+        set((state) => ({
+          providerConfigs: stripApiKeys(state.providerConfigs),
+        })),
       getApiKey: (provider) => get().providerConfigs[provider]?.apiKey || "",
     }),
-    { name: "datavault-llm" }
+    {
+      name: "datavault-llm",
+      version: 2,
+      partialize: (state) => ({
+        activeProvider: state.activeProvider,
+        activeModel: state.activeModel,
+        temperature: state.temperature,
+        maxTokens: state.maxTokens,
+        systemPrompt: state.systemPrompt,
+        providerConfigs: stripApiKeys(state.providerConfigs),
+      }),
+      migrate: (persistedState: any) => ({
+        ...persistedState,
+        providerConfigs: stripApiKeys(persistedState?.providerConfigs),
+      }),
+      onRehydrateStorage: () => (state) => {
+        state?.clearProviderApiKeys();
+      },
+    }
   )
 );

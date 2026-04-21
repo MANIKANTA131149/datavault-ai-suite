@@ -1,16 +1,25 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { getApiBaseUrl } from "@/lib/api-base";
+import type { PlanTier } from "@/lib/plans";
 
 const API = getApiBaseUrl();
 
 export type UserRole = "admin" | "analyst" | "viewer";
 
 interface User {
+  id: string;
   name: string;
   email: string;
   avatarInitials: string;
   role: UserRole;
+  planTier: PlanTier;
+  planStatus: string;
+  ownPlanTier: PlanTier;
+  organizationId: string;
+  organizationOwnerId: string;
+  planOwnerId: string;
+  isPlanOwner: boolean;
 }
 
 interface AuthState {
@@ -23,12 +32,14 @@ interface AuthState {
   setFirstLoginDone: () => void;
   updateUserName: (name: string) => void;
   updateUserRole: (role: UserRole) => void;
+  updateUserPlan: (planTier: PlanTier, planStatus?: string) => void;
   hydrateRole: () => Promise<void>;
   isAdmin: () => boolean;
   isAnalyst: () => boolean;
   canQuery: () => boolean;
   canUpload: () => boolean;
   canManageUsers: () => boolean;
+  canAccessAdmin: () => boolean;
 }
 
 function buildInitials(name: string): string {
@@ -64,8 +75,16 @@ export const useAuthStore = create<AuthState>()(
           user: {
             name: user.name,
             email: user.email,
+            id: user.id || "",
             avatarInitials: buildInitials(user.name),
             role: user.role || "viewer",
+            planTier: user.planTier || "free",
+            planStatus: user.planStatus || "active",
+            ownPlanTier: user.ownPlanTier || user.planTier || "free",
+            organizationId: user.organizationId || user.id || "",
+            organizationOwnerId: user.organizationOwnerId || user.id || "",
+            planOwnerId: user.planOwnerId || user.organizationOwnerId || user.id || "",
+            isPlanOwner: Boolean(user.isPlanOwner ?? true),
           },
           isFirstLogin: false,
         });
@@ -88,8 +107,16 @@ export const useAuthStore = create<AuthState>()(
           user: {
             name: user.name,
             email: user.email,
+            id: user.id || "",
             avatarInitials: buildInitials(user.name),
             role: user.role || "viewer",
+            planTier: user.planTier || "free",
+            planStatus: user.planStatus || "active",
+            ownPlanTier: user.ownPlanTier || user.planTier || "free",
+            organizationId: user.organizationId || user.id || "",
+            organizationOwnerId: user.organizationOwnerId || user.id || "",
+            planOwnerId: user.planOwnerId || user.organizationOwnerId || user.id || "",
+            isPlanOwner: Boolean(user.isPlanOwner ?? true),
           },
           isFirstLogin: true,
         });
@@ -111,6 +138,12 @@ export const useAuthStore = create<AuthState>()(
             // Ignore network errors on logout
           }
         }
+        try {
+          const { useLLMStore } = await import("./llm-store");
+          useLLMStore.getState().clearProviderConfigs();
+        } catch {
+          // Ignore store cleanup errors on logout
+        }
         set({ user: null, token: null, isFirstLogin: false });
       },
 
@@ -128,6 +161,12 @@ export const useAuthStore = create<AuthState>()(
         set({ user: { ...u, role } });
       },
 
+      updateUserPlan: (planTier: PlanTier, planStatus = "active") => {
+        const u = get().user;
+        if (!u) return;
+        set({ user: { ...u, planTier, planStatus } });
+      },
+
       // Fetch fresh role from server (handles role changes by admin)
       hydrateRole: async () => {
         const token = get().token;
@@ -140,7 +179,19 @@ export const useAuthStore = create<AuthState>()(
             const data = await res.json();
             const u = get().user;
             if (u && data.role) {
-              set({ user: { ...u, role: data.role } });
+              set({
+                user: {
+                  ...u,
+                  role: data.role,
+                  planTier: data.planTier || u.planTier || "free",
+                  planStatus: data.planStatus || u.planStatus || "active",
+                  ownPlanTier: data.ownPlanTier || u.ownPlanTier || data.planTier || "free",
+                  organizationId: data.organizationId || u.organizationId,
+                  organizationOwnerId: data.organizationOwnerId || u.organizationOwnerId,
+                  planOwnerId: data.planOwnerId || u.planOwnerId,
+                  isPlanOwner: Boolean(data.isPlanOwner ?? u.isPlanOwner),
+                },
+              });
             }
           }
         } catch {
@@ -160,6 +211,10 @@ export const useAuthStore = create<AuthState>()(
         return role === "admin" || role === "analyst";
       },
       canManageUsers: () => get().user?.role === "admin",
+      canAccessAdmin: () => {
+        const u = get().user;
+        return Boolean(u?.isPlanOwner && ["standard", "professional", "enterprise"].includes(u.planTier));
+      },
     }),
     {
       name: "datavault-auth",

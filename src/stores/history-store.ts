@@ -77,6 +77,8 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
       });
     } catch (err) {
       console.error("Failed to save history entry to MongoDB:", err);
+      set((state) => ({ entries: state.entries.filter((e) => e.id !== id) }));
+      throw err;
     }
   },
 

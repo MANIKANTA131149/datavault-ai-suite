@@ -3,9 +3,16 @@ const { getDb } = require("../db");
 const { logAudit } = require("../middleware/auditLogger");
 const { createNotification } = require("./notifications");
 const { authMiddleware } = require("../middleware/auth");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware); // all dataset routes require auth
+
+function formatFileSizeLimit(bytes) {
+  if (bytes === null || bytes === undefined) return "No size limit";
+  const mb = bytes / (1024 * 1024);
+  return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+}
 
 // ─── Get all dataset metadata for current user ────────────────────────────────
 router.get("/", async (req, res) => {
@@ -51,6 +58,22 @@ router.post("/", async (req, res) => {
     if (!id || !fileName) return res.status(400).json({ error: "id and fileName required" });
 
     const db = await getDb();
+    const planContext = await getPlanContext(db, req.userId);
+    const datasetCheck = canUseMetric(planContext.plan, "datasets", planContext.usage.datasets, 1);
+    if (!datasetCheck.allowed) return res.status(403).json(datasetCheck.details);
+    const fileSizeLimit = planContext.plan.fileSizeLimitBytes;
+    const numericFileSize = Number(fileSize) || 0;
+    if (fileSizeLimit !== null && fileSizeLimit !== undefined && numericFileSize > fileSizeLimit) {
+      return res.status(413).json({
+        error: `${planContext.plan.name} plan allows dataset files up to ${formatFileSizeLimit(fileSizeLimit)}. "${fileName}" is ${formatFileSizeLimit(numericFileSize)}.`,
+        code: "PLAN_FILE_SIZE_LIMIT_REACHED",
+        planTier: planContext.plan.tier,
+        planName: planContext.plan.name,
+        fileSize: numericFileSize,
+        limit: fileSizeLimit,
+      });
+    }
+
     await db.collection("datasets").insertOne({
       _id: id,
       userId: req.userId,
@@ -133,6 +156,10 @@ router.post("/:id/duplicate", async (req, res) => {
 
     const newId = req.body.id;
     if (!newId) return res.status(400).json({ error: "id required" });
+
+    const planContext = await getPlanContext(db, req.userId);
+    const datasetCheck = canUseMetric(planContext.plan, "datasets", planContext.usage.datasets, 1);
+    if (!datasetCheck.allowed) return res.status(403).json(datasetCheck.details);
 
     const copy = {
       ...original,

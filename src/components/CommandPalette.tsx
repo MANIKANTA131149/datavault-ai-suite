@@ -5,6 +5,7 @@ import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Uplo
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { canAccessAdmin } from "@/lib/plans";
 
 interface CommandItem {
   id: string;
@@ -23,9 +24,7 @@ export function CommandPalette() {
   const { datasets } = useDatasetStore();
   const { entries } = useHistoryStore();
   const { user } = useAuthStore();
-  const role = user?.role;
-  const adminUser = role === "admin";
-  const analystOrAdmin = role === "admin" || role === "analyst";
+  const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -44,14 +43,14 @@ export function CommandPalette() {
   const items: CommandItem[] = [
     { id: "nav-dashboard", label: "Dashboard", icon: LayoutDashboard, action: () => navigate("/app/dashboard"), section: "Navigation" },
     { id: "nav-datasets", label: "Datasets", icon: Database, action: () => navigate("/app/datasets"), section: "Navigation" },
-    ...(analystOrAdmin ? [{ id: "nav-query", label: "Query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Navigation" }] : []),
+    { id: "nav-query", label: "Query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Navigation" },
     { id: "nav-history", label: "History", icon: Clock, action: () => navigate("/app/history"), section: "Navigation" },
     { id: "nav-insights", label: "Insights", icon: Bookmark, action: () => navigate("/app/insights"), section: "Navigation" },
     ...(adminUser ? [{ id: "nav-admin", label: "Admin Panel", icon: Shield, action: () => navigate("/app/admin"), section: "Navigation" }] : []),
     { id: "nav-settings", label: "Settings", icon: Settings, action: () => navigate("/app/settings"), section: "Navigation" },
     { id: "action-upload", label: "Upload file", icon: Upload, action: () => navigate("/app/datasets"), section: "Actions" },
-    ...(analystOrAdmin ? [{ id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" }] : []),
-    ...(datasets[0] && analystOrAdmin ? [{ id: "action-latest-dataset", label: "Open latest dataset in Query", description: datasets[0].fileName, icon: Database, action: () => navigate(`/app/query?dataset=${datasets[0].id}`), section: "Actions" }] : []),
+    { id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" },
+    ...(datasets[0] ? [{ id: "action-latest-dataset", label: "Open latest dataset in Query", description: datasets[0].fileName, icon: Database, action: () => navigate(`/app/query?dataset=${datasets[0].id}`), section: "Actions" }] : []),
     { id: "action-providers", label: "Open provider settings", icon: Key, action: () => navigate("/app/settings"), section: "Actions" },
     ...(query ? [{ id: "action-clear-command-search", label: "Clear command search", icon: X, action: () => setQuery(""), section: "Actions" }] : []),
     ...datasets.map((d) => ({

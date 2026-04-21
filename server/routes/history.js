@@ -1,6 +1,7 @@
 const express = require("express");
 const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware); // all history routes require auth
@@ -32,6 +33,13 @@ router.post("/", async (req, res) => {
     if (!query) return res.status(400).json({ error: "query is required" });
 
     const db = await getDb();
+    const planContext = await getPlanContext(db, req.userId);
+    const queryCheck = canUseMetric(planContext.plan, "monthlyQueries", planContext.usage.monthlyQueries, 1);
+    if (!queryCheck.allowed) return res.status(403).json(queryCheck.details);
+
+    const tokenCheck = canUseMetric(planContext.plan, "monthlyTokens", planContext.usage.monthlyTokens, Number(totalTokens) || 0);
+    if (!tokenCheck.allowed) return res.status(403).json(tokenCheck.details);
+
     await db.collection("history").insertOne({
       id, // keep client-generated UUID for frontend keying
       userId: req.userId,

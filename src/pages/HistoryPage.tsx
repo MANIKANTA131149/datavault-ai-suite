@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useHistoryStore, type HistoryEntry } from "@/stores/history-store";
+import { usePlanStore } from "@/stores/plan-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { PROVIDER_LABELS } from "@/stores/llm-store";
 import { useNavigate } from "react-router-dom";
@@ -74,6 +75,7 @@ function ExpandedRow({ entry }: { entry: HistoryEntry }) {
 
 export default function HistoryPage() {
   const { entries } = useHistoryStore();
+  const { checkExport } = usePlanStore();
   const { datasets } = useDatasetStore();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
@@ -171,7 +173,13 @@ export default function HistoryPage() {
     navigate(`/app/query?${params.toString()}`);
   };
 
-  const exportCSV = () => {
+  const exportCSV = async () => {
+    try {
+      await checkExport("history");
+    } catch (err: any) {
+      toast.error(err.message || "History export requires Enterprise plan");
+      return;
+    }
     const headers = ["Query", "Dataset", "Provider", "Model", "Turns", "Tokens", "Duration (ms)", "Status", "Date"];
     const rows = entries.map((e) => [e.query, e.datasetName, e.provider, e.model, e.turns, e.totalTokens, e.durationMs, e.status, e.date]);
     const csv = [headers.join(","), ...rows.map((r) => r.map((v) => JSON.stringify(v)).join(","))].join("\n");

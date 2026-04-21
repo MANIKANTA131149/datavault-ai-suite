@@ -9,12 +9,12 @@ import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useInsightsStore } from "@/stores/insights-store";
+import { usePlanStore } from "@/stores/plan-store";
 
 import { useNotificationsStore } from "@/stores/notifications-store";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/ProviderLogo";
-import { Clock, Database, MessageSquare, Settings, Upload } from "lucide-react";
+import { Clock, Database, MessageSquare, Settings } from "lucide-react";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/dashboard": "Dashboard",
@@ -35,6 +35,7 @@ export default function AppLayout() {
   const { fetchHistory } = useHistoryStore();
   const { fetchSettings, applyTheme, theme } = useSettingsStore();
   const { fetchInsights } = useInsightsStore();
+  const { fetchPlan } = usePlanStore();
   const { fetchNotifications } = useNotificationsStore();
 
   // Load all user data from MongoDB on mount, and apply saved theme immediately
@@ -46,6 +47,7 @@ export default function AppLayout() {
       fetchSettings();
       fetchInsights();
       fetchNotifications();
+      fetchPlan();
       hydrateRole(); // Refresh role from server in case admin changed it
     } else {
       // Ensure default theme is applied even before settings load
@@ -66,16 +68,6 @@ export default function AppLayout() {
             <span className="text-foreground font-medium">{BREADCRUMBS[location.pathname] || "Page"}</span>
           </div>
           <div className="flex items-center gap-3">
-            {location.pathname === "/app/datasets" && (
-              <Button variant="outline" size="sm" className="hidden md:flex border-border" onClick={() => navigate("/app/datasets")}>
-                <Upload size={13} className="mr-2" /> Upload
-              </Button>
-            )}
-            {location.pathname !== "/app/query" && (
-              <Button variant="outline" size="sm" className="hidden md:flex border-border" onClick={() => navigate("/app/query")}>
-                <MessageSquare size={13} className="mr-2" /> Query
-              </Button>
-            )}
             <Badge variant="outline" className="border-border text-xs text-muted-foreground font-mono gap-1.5 cursor-default">
               <ProviderLogo provider={activeProvider} size="sm" />
               {PROVIDER_LABELS[activeProvider]} · {activeModel}

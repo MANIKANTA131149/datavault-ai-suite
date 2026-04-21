@@ -134,7 +134,9 @@ export const useDatasetStore = create<DatasetState>()((set, get) => ({
       });
     } catch (err) {
       console.error("Failed to save dataset to MongoDB:", err);
-      // Dataset still works in-memory for this session even if persistence failed
+      dataCache.delete(id);
+      set((state) => ({ datasets: state.datasets.filter((d) => d.id !== id) }));
+      throw err;
     }
 
     return id;

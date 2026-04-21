@@ -48,6 +48,8 @@ export const useInsightsStore = create<InsightsState>()((set, get) => ({
       await api.post("/insights", full);
     } catch (err) {
       console.error("Failed to save insight:", err);
+      set((state) => ({ insights: state.insights.filter((i) => i.id !== id) }));
+      throw err;
     }
   },
 

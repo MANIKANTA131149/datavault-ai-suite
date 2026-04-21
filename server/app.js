@@ -10,6 +10,7 @@ const insightsRoutes = require("./routes/insights");
 const adminRoutes = require("./routes/admin");
 const auditRoutes = require("./routes/audit");
 const notificationsRoutes = require("./routes/notifications");
+const planRoutes = require("./routes/plans");
 
 
 const app = express();
@@ -43,6 +44,7 @@ app.use("/api/datasets", datasetRoutes);
 app.use("/api/history", historyRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/insights", insightsRoutes);
+app.use("/api/plans", planRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/notifications", notificationsRoutes);

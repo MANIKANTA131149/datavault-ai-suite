@@ -1,6 +1,7 @@
 const express = require("express");
 const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -30,6 +31,10 @@ router.post("/", async (req, res) => {
     if (!query || !label) return res.status(400).json({ error: "query and label are required" });
 
     const db = await getDb();
+    const planContext = await getPlanContext(db, req.userId);
+    const insightCheck = canUseMetric(planContext.plan, "insights", planContext.usage.insights, 1);
+    if (!insightCheck.allowed) return res.status(403).json(insightCheck.details);
+
     await db.collection("insights").insertOne({
       id,
       userId: req.userId,

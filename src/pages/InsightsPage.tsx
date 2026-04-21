@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useInsightsStore, type Insight } from "@/stores/insights-store";
+import { usePlanStore } from "@/stores/plan-store";
 import { toast } from "sonner";
 
 const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> = {
@@ -21,7 +22,7 @@ const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> = 
   pink:   { bg: "bg-pink-500/10",   text: "text-pink-400",   border: "border-pink-500/20" },
 };
 
-function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin }: { insight: Insight; onEdit: () => void; onDelete: () => void; pinned: boolean; onTogglePin: () => void }) {
+function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportPdf }: { insight: Insight; onEdit: () => void; onDelete: () => void; pinned: boolean; onTogglePin: () => void; onExportPdf: () => void }) {
   const colors = COLOR_MAP[insight.color] || COLOR_MAP.blue;
   const resultPreview = typeof insight.result === "string"
     ? insight.result.slice(0, 200)
@@ -48,13 +49,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin }: { insig
               <Edit3 size={12} />
             </button>
             <button
-              onClick={() => generatePDF({
-                title: insight.label,
-                query: insight.query,
-                datasetName: insight.datasetName,
-                narrative: insight.notes || undefined,
-                rows: Array.isArray(insight.result) ? insight.result : undefined,
-              })}
+              onClick={onExportPdf}
               className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary"
               title="Download PDF report"
             >
@@ -99,6 +94,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin }: { insig
 
 export default function InsightsPage() {
   const { insights, updateInsight, removeInsight } = useInsightsStore();
+  const { checkExport } = usePlanStore();
   const [search, setSearch] = useState("");
   const [colorFilter, setColorFilter] = useState("all");
   const [tagFilter, setTagFilter] = useState("all");
@@ -160,6 +156,21 @@ export default function InsightsPage() {
     toast.success("Insight deleted");
   };
 
+  const handleExportPdf = async (insight: Insight) => {
+    try {
+      await checkExport("pdf");
+      generatePDF({
+        title: insight.label,
+        query: insight.query,
+        datasetName: insight.datasetName,
+        narrative: insight.notes || undefined,
+        rows: Array.isArray(insight.result) ? insight.result : undefined,
+      });
+    } catch (err: any) {
+      toast.error(err.message || "PDF export is not available on your plan");
+    }
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -210,6 +221,7 @@ export default function InsightsPage() {
               onDelete={() => setDeleteId(insight.id)}
               pinned={pinnedIds.includes(insight.id)}
               onTogglePin={() => togglePinned(insight.id)}
+              onExportPdf={() => handleExportPdf(insight)}
             />
           ))}
         </div>

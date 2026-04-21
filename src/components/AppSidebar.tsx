@@ -6,6 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { canAccessAdmin, getPlanDefinition } from "@/lib/plans";
 
 const ROLE_BADGE_COLORS: Record<string, string> = {
   admin: "bg-amber-500/10 text-amber-400",
@@ -20,15 +21,14 @@ export function AppSidebar() {
   const { user, logout } = useAuthStore();
 
   // Read role directly from user object so Zustand re-renders when role changes
-  const role = user?.role;
-  const adminUser = role === "admin";
-  const analystOrAdmin = role === "admin" || role === "analyst";
+  const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
+  const plan = getPlanDefinition(user?.planTier);
 
   // Build nav items dynamically based on role
   const NAV_ITEMS = [
     { to: "/app/dashboard", icon: LayoutDashboard, label: "Dashboard", visible: true },
     { to: "/app/datasets", icon: Database, label: "Datasets", visible: true },
-    { to: "/app/query", icon: MessageSquare, label: "Query", visible: analystOrAdmin },
+    { to: "/app/query", icon: MessageSquare, label: "Query", visible: true },
     { to: "/app/history", icon: Clock, label: "History", visible: true },
     { to: "/app/insights", icon: Bookmark, label: "Insights", visible: true },
     { to: "/app/admin", icon: Shield, label: "Admin", visible: adminUser },
@@ -109,6 +109,9 @@ export function AppSidebar() {
                     <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
                     <Badge className={`${ROLE_BADGE_COLORS[user?.role || "viewer"]} border-0 text-[10px] px-1.5 py-0 capitalize`}>
                       {user?.role || "viewer"}
+                    </Badge>
+                    <Badge className="bg-primary/10 text-primary border-0 text-[10px] px-1.5 py-0">
+                      {plan.name}
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
