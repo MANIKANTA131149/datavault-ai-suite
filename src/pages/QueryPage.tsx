@@ -1394,21 +1394,25 @@ export default function QueryPage() {
       toast.error(message);
       return;
     }
+
+    setIsRunning(true);
+    cancelRequestedRef.current = false;
+
     try {
       await checkMetric("monthlyQueries", 1);
       await checkMetric("monthlyTokens", maxTokens);
     } catch (err: any) {
       toast.error(err.message || "Query limit reached for your plan");
+      setIsRunning(false);
       return;
     }
+    if (cancelRequestedRef.current) return;
 
     setInput(overrideQuestion ? input : "");
     setApiWarning("");
     setLastFailedQuery("");
-    cancelRequestedRef.current = false;
     queryStartRef.current = Date.now();
     setMessages((prev) => [...prev, { role: "user", content: question, query: question }]);
-    setIsRunning(true);
     setCurrentSteps([]);
     setFinalResult(null);
     setLastQuery(question);
@@ -1420,6 +1424,7 @@ export default function QueryPage() {
       const fetched = await loadDatasetData(selectedDatasetId);
       sheetData = fetched?.sheets[selectedSheet];
     }
+    if (cancelRequestedRef.current) return;
     if (!sheetData) {
       toast.error("Dataset data unavailable. Please re-upload the file.");
       setIsRunning(false);
@@ -1797,8 +1802,9 @@ export default function QueryPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask a question about your data... (Shift+Enter for new line)"
-                className={`bg-background-secondary border-border resize-none min-h-[44px] ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
+                placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
+                disabled={isRunning}
+                className={`bg-background-secondary border-border resize-none min-h-[44px] disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
                 rows={queryExpanded ? 5 : 1}
               />
               {input && (
