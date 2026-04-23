@@ -20,7 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
-import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS } from "@/stores/llm-store";
+import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useInsightsStore } from "@/stores/insights-store";
@@ -1388,8 +1388,23 @@ export default function QueryPage() {
     if (!question || isRunning) return;
     if (!selectedDatasetId) { toast.error("Select a dataset first"); return; }
     const apiKey = getApiKey(activeProvider);
+    const activeProviderConfig = providerConfigs[activeProvider] || {};
+    const providerOptions = activeProvider === "bedrock"
+      ? {
+          secretAccessKey: activeProviderConfig.secretAccessKey || "",
+          region: activeProviderConfig.region || "us-east-1",
+        }
+      : {};
     if (!apiKey && activeProvider !== "ollama") {
-      const message = `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
+      const message = activeProvider === "bedrock"
+        ? "AWS Bedrock access key is missing. Add it in Settings or paste it in the left provider fields."
+        : `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
+      setApiWarning(message);
+      toast.error(message);
+      return;
+    }
+    if (activeProvider === "bedrock" && !activeProviderConfig.secretAccessKey) {
+      const message = "AWS Bedrock secret access key is missing. Add it in Settings or paste it in the left provider fields.";
       setApiWarning(message);
       toast.error(message);
       return;
@@ -1436,7 +1451,7 @@ export default function QueryPage() {
     try {
       for await (const step of runAgent(
         question, sheetData, activeProvider, activeModel, apiKey, temperature, maxTokens,
-        systemPrompt || undefined, conversationContext
+        systemPrompt || undefined, conversationContext, providerOptions
       )) {
         if (cancelRequestedRef.current) {
           steps.push({
@@ -1522,7 +1537,10 @@ export default function QueryPage() {
     }
   };
 
-  const apiKeyForProvider = providerConfigs[activeProvider]?.apiKey || "";
+  const activeProviderConfig = providerConfigs[activeProvider] || {};
+  const apiKeyForProvider = activeProviderConfig.apiKey || "";
+  const secretAccessKeyForProvider = activeProviderConfig.secretAccessKey || "";
+  const bedrockRegionForProvider = activeProviderConfig.region || "us-east-1";
 
   return (
     <div className="flex h-[calc(100vh-56px)] relative">
@@ -1601,19 +1619,73 @@ export default function QueryPage() {
             </Select>
           </div>
 
-          <div>
-            <Label className="text-xs text-muted-foreground">API Key</Label>
-            <Input type="password" placeholder="Enter API key" value={apiKeyForProvider} onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })} className="mt-1.5 bg-card border-border text-xs font-mono" />
-          </div>
+          {activeProvider === "bedrock" ? (
+            <>
+              <div>
+                <Label className="text-xs text-muted-foreground">Access Key ID</Label>
+                <Input
+                  type="password"
+                  placeholder="Enter AWS access key ID"
+                  value={apiKeyForProvider}
+                  onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })}
+                  className="mt-1.5 bg-card border-border text-xs font-mono"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Secret Access Key</Label>
+                <Input
+                  type="password"
+                  placeholder="Enter AWS secret access key"
+                  value={secretAccessKeyForProvider}
+                  onChange={(e) => setProviderConfig(activeProvider, { secretAccessKey: e.target.value })}
+                  className="mt-1.5 bg-card border-border text-xs font-mono"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Region</Label>
+                <Input
+                  placeholder="us-east-1"
+                  value={bedrockRegionForProvider}
+                  onChange={(e) => setProviderConfig(activeProvider, { region: e.target.value })}
+                  className="mt-1.5 bg-card border-border text-xs font-mono"
+                />
+              </div>
+            </>
+          ) : (
+            <div>
+              <Label className="text-xs text-muted-foreground">API Key</Label>
+              <Input type="password" placeholder="Enter API key" value={apiKeyForProvider} onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })} className="mt-1.5 bg-card border-border text-xs font-mono" />
+            </div>
+          )}
 
           <div>
             <Label className="text-xs text-muted-foreground">Model</Label>
-            <Select value={activeModel} onValueChange={setActiveModel}>
-              <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                {PROVIDER_MODELS[activeProvider]?.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            {activeProvider === "bedrock" ? (
+              <Input
+                value={activeModel}
+                onChange={(e) => {
+                  setActiveModel(e.target.value);
+                  setProviderConfig(activeProvider, { model: e.target.value });
+                }}
+                placeholder="Enter Bedrock model ID"
+                className="mt-1.5 bg-card border-border text-xs font-mono"
+              />
+            ) : (
+              <Select value={activeModel} onValueChange={setActiveModel}>
+                <SelectTrigger className="mt-1.5 bg-card border-border min-w-0 [&>span]:truncate">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
+                  {PROVIDER_MODELS[activeProvider]?.map((m) => (
+                    <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
+                      <span className="min-w-0 whitespace-normal break-words leading-snug">
+                        {getModelDisplayName(m)}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div>
@@ -1718,7 +1790,7 @@ export default function QueryPage() {
                 ) : (
                   <div className="space-y-1">
                     {msg.steps && msg.steps.length > 0 ? (
-                      msg.steps.map((step, j) => <StepCard key={j} step={step} />)
+                      finalStep ? <StepCard step={finalStep} /> : null
                     ) : (
                       <div className="bg-destructive/10 rounded-lg px-4 py-2.5 border border-destructive/20">
                         <p className="text-sm text-destructive">{msg.content}</p>
@@ -1759,7 +1831,7 @@ export default function QueryPage() {
 
           {isRunning && (
             <div className="space-y-1">
-              {currentSteps.map((step, j) => <StepCard key={j} step={step} />)}
+              {currentFinalStep && <StepCard step={currentFinalStep} />}
               {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
               <div className="flex flex-wrap items-center gap-2 pl-10">
                 <div className="flex gap-1">

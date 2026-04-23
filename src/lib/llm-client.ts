@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from "@/lib/api-base";
+
 export interface LLMResponse {
   content: string;
   inputTokens: number;
@@ -6,14 +8,53 @@ export interface LLMResponse {
 
 export type Provider =
   | "groq" | "openai" | "anthropic" | "bedrock"
-  | "azure" | "cohere" | "mistral" | "together" | "ollama";
+  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface";
+
+export interface LLMProviderOptions {
+  secretAccessKey?: string;
+  region?: string;
+}
 
 const PROVIDER_ENDPOINTS: Record<string, string> = {
   groq: "https://api.groq.com/openai/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
   mistral: "https://api.mistral.ai/v1/chat/completions",
   together: "https://api.together.xyz/v1/chat/completions",
+  huggingface: `${getApiBaseUrl()}/llm/huggingface/chat`,
 };
+
+async function callBedrock(
+  accessKeyId: string,
+  secretAccessKey: string,
+  region: string,
+  model: string,
+  messages: { role: string; content: string }[],
+  temperature: number,
+  maxTokens: number
+): Promise<LLMResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/llm/bedrock/chat`, {
+    method: "POST",
+    headers: {
+      "X-AWS-Access-Key-Id": accessKeyId,
+      "X-AWS-Secret-Access-Key": secretAccessKey,
+      "X-AWS-Region": region,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`AWS Bedrock error (${res.status}): ${text}`);
+  }
+
+  const data = await res.json();
+  return {
+    content: data.choices?.[0]?.message?.content || "",
+    inputTokens: data.usage?.prompt_tokens || 0,
+    outputTokens: data.usage?.completion_tokens || 0,
+  };
+}
 
 async function callOpenAICompatible(
   endpoint: string,
@@ -23,10 +64,11 @@ async function callOpenAICompatible(
   temperature: number,
   maxTokens: number
 ): Promise<LLMResponse> {
+  const isLocalHuggingFaceProxy = endpoint.endsWith("/llm/huggingface/chat");
   const res = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      ...(isLocalHuggingFaceProxy ? { "X-Provider-Api-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false }),
@@ -34,7 +76,10 @@ async function callOpenAICompatible(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API error (${res.status}): ${text}`);
+    const providerHint = isLocalHuggingFaceProxy
+      ? "Hugging Face router error. Make sure the backend was restarted and the model uses the full router ID, for example zai-org/GLM-5.1:together."
+      : "Provider API error.";
+    throw new Error(`${providerHint} (${res.status}): ${text}`);
   }
 
   const data = await res.json();
@@ -160,12 +205,23 @@ export async function callLLM(
   messages: { role: string; content: string }[],
   systemPrompt: string,
   temperature = 0.1,
-  maxTokens = 1024
+  maxTokens = 1024,
+  providerOptions: LLMProviderOptions = {}
 ): Promise<LLMResponse> {
   const allMessages = [{ role: "system", content: systemPrompt }, ...messages];
 
   if (provider === "bedrock") {
-    throw new Error("AWS Bedrock requires AWS SDK configuration. Please use another provider.");
+    if (!apiKey) throw new Error("AWS Bedrock access key is missing.");
+    if (!providerOptions.secretAccessKey) throw new Error("AWS Bedrock secret access key is missing.");
+    return callBedrock(
+      apiKey,
+      providerOptions.secretAccessKey,
+      providerOptions.region || "us-east-1",
+      model,
+      allMessages,
+      temperature,
+      maxTokens
+    );
   }
 
   if (provider === "azure") {
@@ -189,7 +245,12 @@ export async function callLLM(
   return callOpenAICompatible(endpoint, apiKey, model, allMessages, temperature, maxTokens);
 }
 
-export async function testProviderConnection(provider: Provider, model: string, apiKey: string): Promise<LLMResponse> {
+export async function testProviderConnection(
+  provider: Provider,
+  model: string,
+  apiKey: string,
+  providerOptions: LLMProviderOptions = {}
+): Promise<LLMResponse> {
   return callLLM(
     provider,
     model,
@@ -197,6 +258,7 @@ export async function testProviderConnection(provider: Provider, model: string, 
     [{ role: "user", content: "Reply with the single word ok." }],
     "You are a connection health check.",
     0,
-    8
+    8,
+    providerOptions
   );
 }

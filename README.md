@@ -113,8 +113,26 @@ Base URL (local): `http://localhost:3001/api`
 - Mistral
 - Together AI
 - Ollama
+- Hugging Face
 
 Provider/model selection and API keys are managed in the app Settings.
+
+### Getting API Keys
+
+**Hugging Face:**
+1. Go to [Hugging Face](https://huggingface.co)
+2. Create an account or sign in
+3. Navigate to Settings → Access Tokens ([huggingface.co/settings/tokens](https://huggingface.co/settings/tokens))
+4. Create a new token with "read" or "write" permissions for Inference API
+5. Copy the token and paste it in Settings → LLM Providers → Hugging Face
+
+**Available Hugging Face Models via Inference API:**
+- `Qwen/Qwen2.5-Coder-32B-Instruct` - Powerful coding model
+- `meta-llama/Llama-2-70b-chat-hf` - Meta's Llama 2 70B
+- `mistralai/Mistral-7B-Instruct-v0.2` - Mistral 7B
+- `zai-org/GLM-4.5` - GLM reasoning model
+
+**Note:** Hugging Face Inference API supports all OpenAI-compatible chat models. You can add any model ID from the Hugging Face Model Hub as a custom model option.
 
 ## Notes and Limits
 

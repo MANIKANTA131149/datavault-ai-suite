@@ -1,4 +1,4 @@
-import { callLLM, type Provider, type LLMResponse } from "./llm-client";
+import { callLLM, type Provider, type LLMProviderOptions, type LLMResponse } from "./llm-client";
 import type { SheetData } from "./file-parser";
 
 export interface AgentStep {
@@ -25,16 +25,16 @@ const SYSTEM_PROMPT = `You are an enterprise-grade data analysis agent. Your ONL
 COMMAND REFERENCE (output exactly one of these)
 ═══════════════════════════════════════════════════════
 
-1. Direct answer from metadata (no data scan needed):
+1. Direct answer, clarification, or final interpretation after an intermediate result:
    {"command":"Answer","args":{"value": <string|number|array>}}
 
-2. Single query that returns the final answer:
+2. Single local operation that fully returns the final answer:
    {"command":"ExecuteFinalQuery","args":{"operation":"<op>","params":{...}}}
 
-3. Intermediate query (ONLY when you need a result to form the next query):
+3. Intermediate query when the question needs analysis of an operation result:
    {"command":"QuerySheet","args":{"operation":"<op>","params":{...}}}
 
-4. Fetch schema (ONLY if column list is missing from context):
+4. Fetch schema before writing a query:
    {"command":"GetColumns"}
    {"command":"GetSheetDescription"}
 
@@ -44,10 +44,12 @@ OPERATIONS & PARAMS (for ExecuteFinalQuery / QuerySheet)
 
 filter        {"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}
 sort          {"column":"col","order":"asc|desc","limit":N}
-groupby       {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|mean|min|max"}
+remove_nulls  {"column":"col"} or {} to remove all null rows
+groupby       {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"desc|asc","filter":{optional},"transformColumn":{optional},"transformFunction":{optional},"removeOutliers":{optional},"removeNulls":{true|false}}
 aggregate     {"column":"col","function":"sum|count|mean|min|max|median|std|variance"}
 select        {"columns":["col1","col2"],"limit":N}
 head          {"n":N}
+transform_column {"column":"col","function":"extract_number|to_lower|to_upper|trim","skipNulls":true}
 unique        {"column":"col"}
 count         {}
 percentile    {"column":"col","percentiles":[25,50,75]}
@@ -55,8 +57,10 @@ correlation   {"column1":"col1","column2":"col2"}
 topN_groupby  {"groupColumn":"col","rankColumn":"col2","n":3,"order":"desc|asc"}
 date_trunc    {"dateColumn":"col","period":"day|week|month|quarter|year","aggColumn":"col2","aggFunction":"count|sum|mean"}
 outlier_detect{"column":"col","method":"zscore|iqr","threshold":2}
+filter_outliers {"column":"col","method":"zscore|iqr","threshold":1.5}
 multi_filter  {"filters":[{"column":"col","operator":"==","value":X}],"logic":"AND|OR"}
 pivot         {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
+pipeline      {"operations":[{"operation":"filter","params":{...}},{"operation":"transform_column","params":{...}},...]}
 
 ═══════════════════════════════════════════════════════
 INTENT → OPERATION MAPPING (memorize this)
@@ -66,18 +70,24 @@ COUNTING / HOW MANY
   "how many rows"            → count {}
   "how many X"               → filter on X, then use count result; OR groupby+count
   "how many distinct/unique" → unique {column}
+  "distinct/unique/diverse X by Y" → groupby {groupColumn:Y, aggColumn:X, aggFunction:"count_distinct"}
   "total count of"           → count {}
 
 AGGREGATION / MATH
-  "total / sum of"           → aggregate {function:"sum"}
-  "average / mean / avg"     → aggregate {function:"mean"}
-  "maximum / highest / most" → aggregate {function:"max"} OR sort {order:"desc",limit:1}
-  "minimum / lowest / least" → aggregate {function:"min"} OR sort {order:"asc",limit:1}
+  "total / sum of"           → aggregate {function:"sum"} ONLY when asking for one overall metric value
+  "average / mean / avg"     → aggregate {function:"mean"} ONLY when asking for one overall metric value
+  "maximum / highest / most" → aggregate {function:"max"} OR sort {order:"desc",limit:1} ONLY for one row/value, not a category comparison
+  "minimum / lowest / least" → aggregate {function:"min"} OR sort {order:"asc",limit:1} ONLY for one row/value, not a category comparison
   "median"                   → aggregate {function:"median"}
   "std / standard deviation" → aggregate {function:"std"}
   "variance"                 → aggregate {function:"variance"}
 
 RANKING / TOP / BOTTOM
+  "which X has highest/lowest average Y" → groupby {groupColumn:X, aggColumn:Y, aggFunction:"mean", limit:1}
+  "which X has highest/lowest total Y"   → groupby {groupColumn:X, aggColumn:Y, aggFunction:"sum", limit:1}
+  "which X has most diverse Y"           → groupby {groupColumn:X, aggColumn:Y, aggFunction:"count_distinct", limit:1}
+  "which X gives highest performance"    → groupby by X, aggregate the performance metric, usually mean, limit:1
+  "which type/category/manufacturer/fuel has/gives most/common/best/highest Y" → groupby, NOT aggregate
   "top N / best N"           → sort {order:"desc", limit:N}
   "bottom N / worst N"       → sort {order:"asc",  limit:N}
   "top N per group/category" → topN_groupby
@@ -119,6 +129,16 @@ SCHEMA / METADATA (Answer directly — no data scan)
   "show me the data / preview" → head {n:10}
   "sample rows"              → head {n:5}
 
+DATA CLEANING / PREPROCESSING (Critical for messy data)
+  "extract numbers from text" → use transformColumn:"col", transformFunction:"extract_number" in filter/groupby
+  "remove outliers before avg/mean" → use removeOutliers:{method:"iqr",threshold:1.5} in groupby/aggregate
+  "filter for specific type AND calculate mean" → use filter:{} + transformColumn + removeOutliers all in groupby
+  "duration/minutes embedded in text" → ALWAYS use transformFunction:"extract_number" on the duration column
+  "average per category but only movies" → groupby with filter:{column:"type",operator:"==",value:"Movie"}
+  "mean of text-formatted numbers" → groupby with transformFunction:"extract_number"
+  "remove empty/null values" → removeNulls:true (DEFAULT in groupby) OR use remove_nulls operation explicitly
+  "clean data before calculation" → groupby automatically removes nulls, transforms, and cleans NaN values
+
 ═══════════════════════════════════════════════════════
 COLUMN MATCHING RULES (critical for accuracy)
 ═══════════════════════════════════════════════════════
@@ -145,16 +165,22 @@ VALUE INFERENCE RULES
 DECISION TREE (follow in order)
 ═══════════════════════════════════════════════════════
 
-Step 1: Is the question about schema/metadata only?
+Step 1: Do you need column names, column types, or sample values before writing a query?
+  YES → GetColumns first.
+
+Step 2: Is the question about schema/metadata only?
   YES → Answer command with value derived from column list.
 
-Step 2: Does the question need ONE operation to produce the final answer?
+Step 3: Is the user request ambiguous, underspecified, or missing the target column/metric?
+  YES → Answer with one concise clarification question. Do not guess.
+
+Step 4: Does the question need ONE supported operation to produce the final answer?
   YES → ExecuteFinalQuery with the right operation.
 
-Step 3: Does the question require knowing an intermediate result first?
-  YES → QuerySheet (intermediate), then on next turn ExecuteFinalQuery.
+Step 5: Does the question require aggregation first and then interpretation, comparison, ranking, ratio, percentage, change, or explanation?
+  YES → QuerySheet first. On the next turn, use Answer to interpret the returned result, or ExecuteFinalQuery only if another full-data operation is truly needed.
 
-Step 4: Is column info missing entirely?
+Step 6: Is sheet info missing entirely?
   YES → GetColumns, then proceed.
 
 ═══════════════════════════════════════════════════════
@@ -218,23 +244,65 @@ A: {"command":"ExecuteFinalQuery","args":{"operation":"sort","params":{"column":
 Q: "Count orders by status"
 A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"status","aggColumn":"status","aggFunction":"count"}}}
 
+Q: "Which region has the highest total sales?"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"region","aggColumn":"sales","aggFunction":"sum","limit":1}}}
+
+Q: "Which manufacturer has the highest average torque?"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"manufacturer","aggColumn":"torque_output","aggFunction":"mean","limit":1}}}
+
+Q: "Which fuel type gives the highest performance?"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"fuel_type","aggColumn":"power_output_hp","aggFunction":"mean","limit":1}}}
+
+Q: "Which engine configuration is most common?"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"engine_configuration","aggColumn":"engine_configuration","aggFunction":"count","limit":1}}}
+
+Q: "Which manufacturer has the most diverse engine types?"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"manufacturer","aggColumn":"engine_type","aggFunction":"count_distinct","limit":1}}}
+
+Q: "Which rating category has the longest average movie duration?"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"rating","aggColumn":"duration","aggFunction":"mean","filter":{"column":"type","operator":"==","value":"Movie"},"transformColumn":"duration","transformFunction":"extract_number","removeOutliers":{"method":"iqr","threshold":1.5}}}}
+
+Q: "Which category contributes the largest share of revenue?"
+A: {"command":"QuerySheet","args":{"operation":"groupby","params":{"groupColumn":"category","aggColumn":"revenue","aggFunction":"sum"}}}
+
+Q: "Filter movies, extract duration numbers, remove outliers, then average duration by country"
+A: {"command":"ExecuteFinalQuery","args":{"operation":"pipeline","params":{"operations":[{"operation":"filter","params":{"column":"type","operator":"==","value":"Movie"}},{"operation":"transform_column","params":{"column":"duration","function":"extract_number"}},{"operation":"filter_outliers","params":{"column":"duration","method":"iqr","threshold":1.5}},{"operation":"groupby","params":{"groupColumn":"country","aggColumn":"duration","aggFunction":"mean"}}]}}}
+
+Q: "Show sales"
+A: {"command":"Answer","args":{"value":"Do you want total sales, sales by a category, or sales over time?"}}
+
 ═══════════════════════════════════════════════════════
 STRICT RULES — NEVER VIOLATE
 ═══════════════════════════════════════════════════════
 
 ✅ Output ONLY valid JSON — no prose, no markdown, no explanation
 ✅ Use EXACT column names from the schema
-✅ Prefer ExecuteFinalQuery on turn 1 for any data question
-✅ Prefer Answer on turn 1 for any metadata/schema question
+✅ Call GetColumns before QuerySheet or ExecuteFinalQuery if the current turn has not already shown the schema
+✅ Use ExecuteFinalQuery when one supported operation fully answers the question
+✅ Use QuerySheet when the answer requires interpreting an intermediate result
+✅ Use Answer for metadata, clarification questions, and final interpretation after QuerySheet
+✅ If the user asks "which/what/who <category> has/gives highest/lowest/best/most <metric>", use groupby with limit:1
+✅ If the user asks for "most diverse", "most unique", or "most distinct" values within a category, use groupby with aggFunction:"count_distinct"
+✅ If the user says "manufacturer", the groupColumn must be the manufacturer/make/brand column, not Title, name, or id
+✅ Use aggregate only for overall dataset metrics like "what is the average torque", never for comparing categories
 ✅ Use multi_filter when multiple conditions are mentioned
 ✅ Use date_trunc for any time-based trend question
+✅ When grouping by a category AND averaging a numeric column, ALWAYS check if the numeric column needs transformation (e.g., "90 min" → extract_number)
+✅ When a question mentions "average/mean" AND the column contains text (like duration with "min"), add transformColumn + transformFunction to groupby
+✅ When a question implies filtering (e.g., "movies only", "for 2020+"), use the filter parameter in groupby, NOT a separate filter operation
+✅ When calculating mean/average, ALWAYS consider adding removeOutliers to avoid extreme values distorting results
+✅ Null values are AUTOMATICALLY REMOVED from BOTH groupColumn AND aggColumn before aggregation (removeNulls=true by default)
+✅ Results will NOT include a "null" category — all rows with null grouping values are excluded
+✅ If the numeric column has NaN/invalid values, null removal + transformation will ensure accurate results with no 0 averages
+✅ Use remove_nulls operation to explicitly clean data before other operations if needed
 ✅ Use topN_groupby for "top N per group/category" questions
 ✅ Use outlier_detect for "anomaly/outlier/unusual values"
 ✅ Use correlation for "relationship between two numeric columns"
 ❌ NEVER output text outside of JSON
 ❌ NEVER invent column names not in the schema
-❌ NEVER use QuerySheet when ExecuteFinalQuery will suffice
-❌ NEVER call GetColumns if schema is already provided`;
+❌ Do not use ExecuteFinalQuery for ambiguous requests that need clarification
+❌ Do not use QuerySheet when a single ExecuteFinalQuery operation fully answers the question
+❌ Do not skip schema inspection before writing a query`;
 
 
 // ─── Intent Normalizer ─────────────────────────────────────────────────────────
@@ -317,6 +385,11 @@ function buildColumnHints(question: string, columns: SheetData["columns"]): stri
     status: /status|state|stage|phase|condition/i,
     id: /id|key|identifier|code|number/i,
     region: /region|area|zone|territory|location|city|country|state/i,
+    manufacturer: /manufacturer|make|maker|brand|company|vendor|oem/i,
+    fuel: /fuel|gas|diesel|petrol|electric|hybrid|energy/i,
+    engine: /engine|motor|configuration|cylinder/i,
+    diversity: /diverse|diversity|variety|distinct|unique/i,
+    performance: /performance|power|horsepower|hp|torque|acceleration|speed|output/i,
     age: /age|years|duration|tenure/i,
     score: /score|rating|rank|grade|mark|point/i,
   };
@@ -341,6 +414,8 @@ function classifyIntent(question: string): string {
   const q = question.toLowerCase();
 
   const intents: Array<[RegExp, string]> = [
+    [/\b(which|what|who)\b.+\b(diverse|diversity|variety|distinct|unique)\b/i, "INTENT: grouped diversity ranking → use groupby with aggFunction count_distinct; groupColumn is the entity/category being compared, aggColumn is the thing whose diversity is counted; use limit:1 for most/least"],
+    [/\b(which|what|who)\b.+\b(maximum|max|highest|largest|most|top|best|minimum|min|lowest|smallest|least|bottom|worst|common)\b/i, "INTENT: category comparison/ranking → if a category/type/entity is mentioned, use groupby with the category as groupColumn and limit:1; do not use aggregate unless asking for one overall dataset value"],
     [/\boutlier|anomal|unusual|abnormal\b/i, "INTENT: outlier detection → use outlier_detect operation"],
     [/\bcorrelat|relationship between|related to\b/i, "INTENT: correlation analysis → use correlation operation"],
     [/\bpercent|percentile|quartile\b/i, "INTENT: percentile/distribution → use percentile operation"],
@@ -371,6 +446,103 @@ function classifyIntent(question: string): string {
 
 // ─── Execute Operations ─────────────────────────────────────────────────────────
 // ALL ORIGINAL FUNCTIONS PRESERVED — DO NOT MODIFY
+function normalizeColumnName(name: string) {
+  return name.toLowerCase().replace(/[_\-\s]+/g, " ").trim();
+}
+
+function columnHasNumericText(column: SheetData["columns"][number]) {
+  return column.dtype === "string" && column.sampleValues.some((value) => /\d/.test(String(value)));
+}
+
+function findColumnByPattern(columns: SheetData["columns"], pattern: RegExp) {
+  return columns.find((column) => pattern.test(normalizeColumnName(column.name)));
+}
+
+function findMentionedColumnByName(question: string, columns: SheetData["columns"]) {
+  const q = question.toLowerCase();
+  return columns.find((column) => {
+    const normalized = normalizeColumnName(column.name);
+    if (q.includes(normalized)) return true;
+    return normalized.split(/\s+/).some((word) => word.length > 2 && new RegExp(`\\b${word}\\b`, "i").test(q));
+  });
+}
+
+function buildGroupedRankingFallback(
+  question: string,
+  columns: SheetData["columns"]
+): { command: string; args: Record<string, any> } | null {
+  const q = question.toLowerCase();
+  const isGroupedRanking =
+    /\b(which|what|who)\b/.test(q) &&
+    /\b(highest|maximum|max|largest|top|best|lowest|minimum|min|smallest|bottom|worst|most|common)\b/.test(q);
+
+  if (!isGroupedRanking) return null;
+
+  const groupColumn =
+    /\bmanufacturer|make|maker|brand|company|vendor|oem\b/.test(q)
+      ? findColumnByPattern(columns, /manufacturer|make|maker|brand|company|vendor|oem/)
+      : /\bfuel\b/.test(q)
+        ? findColumnByPattern(columns, /fuel/)
+        : /\bengine\b/.test(q)
+          ? findColumnByPattern(columns, /engine.*(configuration|type)|configuration|engine/)
+          : undefined;
+
+  const metricColumn =
+    /\btorque\b/.test(q)
+      ? findColumnByPattern(columns, /torque/)
+      : /\bhorsepower|power|hp|performance\b/.test(q)
+        ? findColumnByPattern(columns, /horsepower|power|hp|performance|output/)
+        : findMentionedColumnByName(q, columns.filter((column) => column.dtype === "number" || columnHasNumericText(column)));
+
+  if (!groupColumn || !metricColumn) return null;
+
+  const aggFunction =
+    /\baverage|mean|avg\b/.test(q) ? "mean" :
+      /\btotal|sum\b/.test(q) ? "sum" :
+        /\bcommon|count\b/.test(q) ? "count" :
+          "mean";
+
+  const params: Record<string, any> = {
+    groupColumn: groupColumn.name,
+    aggColumn: metricColumn.name,
+    aggFunction,
+    limit: 1,
+    order: /\blowest|minimum|min|smallest|bottom|worst\b/.test(q) ? "asc" : "desc",
+  };
+
+  if (aggFunction !== "count" && columnHasNumericText(metricColumn)) {
+    params.transformColumn = metricColumn.name;
+    params.transformFunction = "extract_number";
+  }
+
+  return { command: "ExecuteFinalQuery", args: { operation: "groupby", params } };
+}
+
+function repairCommandForQuestion(
+  parsed: { command: string; args?: Record<string, any> },
+  question: string,
+  columns: SheetData["columns"]
+) {
+  const args = parsed.args || {};
+  if ((parsed.command !== "QuerySheet" && parsed.command !== "ExecuteFinalQuery") || args.operation !== "groupby") {
+    return parsed;
+  }
+
+  const fallback = buildGroupedRankingFallback(question, columns);
+  if (!fallback) return parsed;
+
+  const params = args.params || {};
+  const groupColumn = String(params.groupColumn || "");
+  const groupLooksWrong =
+    /\bmanufacturer|make|maker|brand|company|vendor|oem\b/i.test(question) &&
+    !/manufacturer|make|maker|brand|company|vendor|oem/i.test(normalizeColumnName(groupColumn));
+  const missingColumns =
+    !columns.some((column) => column.name === params.groupColumn) ||
+    !columns.some((column) => column.name === params.aggColumn);
+
+  return groupLooksWrong || missingColumns ? fallback : parsed;
+}
+
 function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
   switch (operation) {
     case "filter": {
@@ -404,25 +576,95 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       return limit ? sorted.slice(0, limit) : sorted;
     }
     case "groupby": {
-      const { groupColumn, aggColumn, aggFunction } = params;
-      const groups: Record<string, number[]> = {};
-      for (const row of data) {
+      const { groupColumn, aggColumn, aggFunction, filter: filterParam, transformColumn, transformFunction, removeOutliers, removeNulls = true, limit, order = "desc" } = params;
+      const aggregateKey = String(aggFunction || "count");
+      
+      // Step 1: Remove null values from BOTH groupColumn and aggColumn if requested (enabled by default)
+      let filtered = data;
+      if (removeNulls) {
+        filtered = data.filter((row) => {
+          // Remove rows where groupColumn is null/empty
+          const groupVal = row[groupColumn];
+          if (groupVal == null || groupVal === "") return false;
+          
+          // Remove rows where aggColumn is null/empty/NaN
+          if (aggColumn) {
+            const aggVal = row[aggColumn];
+            if (aggVal == null || aggVal === "") return false;
+            if (typeof aggVal === "number" && isNaN(aggVal)) return false;
+          }
+          
+          return true;
+        });
+      }
+      
+      // Step 2: Apply filter if provided
+      if (filterParam) {
+        filtered = executeOperation(filtered, "filter", filterParam);
+      }
+      
+      // Step 3: Transform column if needed (e.g., extract numbers from "90 min")
+      if (transformColumn && transformFunction) {
+        filtered = executeOperation(filtered, "transform_column", { column: transformColumn, function: transformFunction });
+      }
+      
+      // Step 4: Remove NaN values created by transformation
+      filtered = filtered.filter((row) => {
+        if (!aggColumn) return true;
+        const val = row[aggColumn];
+        return val != null && val !== "" && (aggregateKey === "count" || !(typeof val === "number" && isNaN(val)));
+      });
+      
+      // Step 5: Remove outliers if requested
+      if (removeOutliers && aggColumn) {
+        filtered = executeOperation(filtered, "filter_outliers", {
+          column: aggColumn,
+          method: removeOutliers.method || "iqr",
+          threshold: removeOutliers.threshold || 1.5
+        });
+      }
+      
+      // Step 6: Group and aggregate
+      const groups: Record<string, any[]> = {};
+      for (const row of filtered) {
         const key = String(row[groupColumn] ?? "null");
         if (!groups[key]) groups[key] = [];
-        if (aggColumn) groups[key].push(Number(row[aggColumn]) || 0);
-      }
-      return Object.entries(groups).map(([key, vals]) => {
-        let agg: number;
-        switch (aggFunction) {
-          case "sum": agg = vals.reduce((s, v) => s + v, 0); break;
-          case "count": agg = vals.length; break;
-          case "mean": agg = vals.reduce((s, v) => s + v, 0) / vals.length; break;
-          case "min": agg = Math.min(...vals); break;
-          case "max": agg = Math.max(...vals); break;
-          default: agg = vals.length;
+        if (aggregateKey === "count") {
+          groups[key].push(1);
+        } else if ((aggregateKey === "count_distinct" || aggregateKey === "distinct_count") && aggColumn) {
+          groups[key].push(row[aggColumn]);
+        } else if (aggColumn) {
+          const val = Number(row[aggColumn]);
+          if (!isNaN(val)) groups[key].push(val);
         }
-        return { [groupColumn]: key, [aggFunction || "count"]: agg };
+      }
+      
+      const result: Array<Record<string, string | number>> = Object.entries(groups).map(([key, vals]) => {
+        let agg: number;
+        if (vals.length === 0) agg = 0;
+        else {
+          switch (aggregateKey) {
+            case "sum": agg = vals.reduce((s, v) => s + Number(v), 0); break;
+            case "count": agg = vals.length; break;
+            case "count_distinct":
+            case "distinct_count":
+              agg = new Set(vals.filter((v) => v != null && v !== "").map((v) => String(v))).size;
+              break;
+            case "mean": agg = vals.reduce((s, v) => s + Number(v), 0) / vals.length; break;
+            case "min": agg = Math.min(...vals.map(Number)); break;
+            case "max": agg = Math.max(...vals.map(Number)); break;
+            default: agg = vals.length;
+          }
+        }
+        return { [groupColumn]: key, [aggregateKey]: agg };
       });
+      
+      // Sort by aggregate descending by default
+      const sorted = result.sort((a, b) => {
+        const diff = Number(b[aggregateKey] ?? 0) - Number(a[aggregateKey] ?? 0);
+        return order === "asc" ? -diff : diff;
+      });
+      return limit ? sorted.slice(0, Number(limit)) : sorted;
     }
     case "aggregate": {
       const { column, function: fn } = params;
@@ -461,6 +703,46 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
     case "head":
       return data.slice(0, params.n || 10);
+    case "remove_nulls": {
+      const { column } = params;
+      if (column) {
+        // Remove rows where specific column is null/empty/NaN
+        return data.filter((row) => {
+          const val = row[column];
+          if (val == null || val === "") return false;
+          if (typeof val === "number" && isNaN(val)) return false;
+          return true;
+        });
+      }
+      // Remove rows with any null values
+      return data.filter((row) =>
+        Object.values(row).every((v) => v != null && v !== "" && !(typeof v === "number" && isNaN(v)))
+      );
+    }
+    case "transform_column": {
+      const { column, function: func, skipNulls = true } = params;
+      return data.map((row) => {
+        const newRow = { ...row };
+        const val = row[column];
+        
+        // Skip null/empty values if requested
+        if (skipNulls && (val == null || val === "")) {
+          return newRow;
+        }
+        
+        if (func === "extract_number") {
+          const match = String(val).match(/(\d+(?:\.\d+)?)/);
+          newRow[column] = match ? Number(match[1]) : NaN;
+        } else if (func === "to_lower") {
+          newRow[column] = String(val).toLowerCase();
+        } else if (func === "to_upper") {
+          newRow[column] = String(val).toUpperCase();
+        } else if (func === "trim") {
+          newRow[column] = String(val).trim();
+        }
+        return newRow;
+      });
+    }
     case "unique": {
       const vals = [...new Set(data.map((r) => r[params.column]))];
       return vals.map((v) => ({ [params.column]: v }));
@@ -588,6 +870,29 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       return nums.filter((d) => Math.abs((d.value - mean) / std) > threshold).map((d) => d.row);
     }
 
+    case "filter_outliers": {
+      const { column, method = "zscore", threshold = 1.5 } = params;
+      const nums = data.map((r, i) => ({ index: i, value: Number(r[column]), row: r }))
+        .filter((d) => !isNaN(d.value));
+      if (nums.length < 3) return data; // Not enough data, return all
+
+      if (method === "iqr") {
+        const sorted = nums.map((d) => d.value).sort((a, b) => a - b);
+        const q1Idx = Math.floor(sorted.length * 0.25);
+        const q3Idx = Math.floor(sorted.length * 0.75);
+        const q1 = sorted[q1Idx], q3 = sorted[q3Idx];
+        const iqr = q3 - q1;
+        const lower = q1 - threshold * iqr;
+        const upper = q3 + threshold * iqr;
+        return nums.filter((d) => d.value >= lower && d.value <= upper).map((d) => d.row);
+      }
+
+      const mean = nums.reduce((s, d) => s + d.value, 0) / nums.length;
+      const std = Math.sqrt(nums.reduce((s, d) => s + (d.value - mean) ** 2, 0) / nums.length);
+      if (std === 0) return data;
+      return nums.filter((d) => Math.abs((d.value - mean) / std) <= threshold).map((d) => d.row);
+    }
+
     case "multi_filter": {
       const { filters = [], logic = "AND" } = params;
       return data.filter((row) => {
@@ -645,6 +950,15 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       });
     }
 
+    case "pipeline": {
+      const { operations } = params;
+      let currentData = data;
+      for (const op of operations) {
+        currentData = executeOperation(currentData, op.operation, op.params || {});
+      }
+      return currentData;
+    }
+
     default:
       return { error: `Unknown operation: ${operation}` };
   }
@@ -652,6 +966,39 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
 // ─── JSON Parser with Recovery ─────────────────────────────────────────────────
 // More robust than original — handles partial JSON, extra text, common LLM mistakes
+function extractFirstJsonObject(text: string) {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (char === "{") depth++;
+    if (char === "}") depth--;
+    if (depth === 0) return text.slice(start, i + 1);
+  }
+
+  return null;
+}
+
 function parseCommand(text: string): { command: string; args?: Record<string, any> } | null {
   if (!text || typeof text !== "string") return null;
 
@@ -661,18 +1008,18 @@ function parseCommand(text: string): { command: string; args?: Record<string, an
     .replace(/```/g, "")
     .trim();
 
-  // Try to extract the outermost JSON object
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
+  // Extract the first complete object so trailing model noise like ]}} does not poison parsing.
+  const jsonText = extractFirstJsonObject(cleaned);
+  if (!jsonText) return null;
 
   try {
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonText);
     // Validate it has at least a command field
     if (typeof parsed.command === "string") return parsed;
   } catch {
     // Attempt to fix common JSON errors: trailing commas, single quotes
     try {
-      const fixedJson = jsonMatch[0]
+      const fixedJson = jsonText
         .replace(/,\s*([}\]])/g, "$1")         // Remove trailing commas
         .replace(/'/g, '"')                      // Replace single quotes
         .replace(/(\w+):/g, '"$1":')            // Quote unquoted keys (simple heuristic)
@@ -693,6 +1040,14 @@ function buildFallbackCommand(
   columns: SheetData["columns"]
 ): { command: string; args: Record<string, any> } | null {
   const q = question.toLowerCase();
+  const findMentionedColumn = (candidates: SheetData["columns"]) =>
+    candidates.find((c) => {
+      const normalizedName = c.name.toLowerCase().replace(/[_-]+/g, " ");
+      if (q.includes(normalizedName)) return true;
+      return normalizedName
+        .split(/\s+/)
+        .some((word) => word.length > 2 && new RegExp(`\\b${word}\\b`, "i").test(q));
+    });
 
   // Schema questions
   if (/how many columns/.test(q)) {
@@ -708,25 +1063,39 @@ function buildFallbackCommand(
   }
 
   // Preview
-  if (/preview|show me|first (\d+) rows?|sample/.test(q)) {
+  if (/preview|sample|first (\d+) rows?|show (me )?(the )?(data|rows|records)|display (the )?(data|rows|records)/.test(q)) {
     const nMatch = q.match(/first (\d+)/);
     return { command: "ExecuteFinalQuery", args: { operation: "head", params: { n: nMatch ? parseInt(nMatch[1]) : 10 } } };
   }
 
+  const groupedRanking = buildGroupedRankingFallback(question, columns);
+  if (groupedRanking) return groupedRanking;
+
   // Find numeric columns for aggregation
-  const numericCols = columns.filter((c) => c.dtype === "number" || c.dtype === "float" || c.dtype === "integer");
+  const numericDtypes = new Set<string>(["number", "float", "integer"]);
+  const numericCols = columns.filter((c) => numericDtypes.has(c.dtype));
+  const numericCol = findMentionedColumn(numericCols) || (numericCols.length === 1 ? numericCols[0] : undefined);
+  const needsNumericClarification = (fnLabel: string) => ({
+    command: "Answer",
+    args: { value: `Which numeric column should I use for the ${fnLabel}?` },
+  });
+
   if (numericCols.length > 0) {
     if (/total|sum/.test(q)) {
-      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCols[0].name, function: "sum" } } };
+      if (!numericCol) return needsNumericClarification("total");
+      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCol.name, function: "sum" } } };
     }
     if (/average|mean|avg/.test(q)) {
-      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCols[0].name, function: "mean" } } };
+      if (!numericCol) return needsNumericClarification("average");
+      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCol.name, function: "mean" } } };
     }
     if (/max|highest|most/.test(q)) {
-      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCols[0].name, function: "max" } } };
+      if (!numericCol) return needsNumericClarification("maximum");
+      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCol.name, function: "max" } } };
     }
     if (/min|lowest|least/.test(q)) {
-      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCols[0].name, function: "min" } } };
+      if (!numericCol) return needsNumericClarification("minimum");
+      return { command: "ExecuteFinalQuery", args: { operation: "aggregate", params: { column: numericCol.name, function: "min" } } };
     }
   }
 
@@ -758,7 +1127,8 @@ export async function* runAgent(
   temperature: number,
   maxTokens: number,
   systemPromptOverride?: string,
-  conversationHistory?: ConversationContext[]
+  conversationHistory?: ConversationContext[],
+  providerOptions: LLMProviderOptions = {}
 ): AsyncGenerator<AgentStep> {
   const messages: { role: string; content: string }[] = [];
   const prompt = systemPromptOverride || SYSTEM_PROMPT;
@@ -768,8 +1138,7 @@ export async function* runAgent(
   // ── Pre-process question for better LLM comprehension ──
   const normalizedQuestion = normalizeQuestion(question, sheetData.columns);
   const intentHint = classifyIntent(normalizedQuestion);
-  const columnHint = buildColumnHints(normalizedQuestion, sheetData.columns);
-  const columnSummary = buildColumnSummary(sheetData);
+  const columnHints = buildColumnHints(normalizedQuestion, sheetData.columns);
 
   // ── Conversational history context ──
   let contextBlock = "";
@@ -784,15 +1153,16 @@ export async function* runAgent(
   // ── Build the enriched first user message ──
   const firstMessage = [
     `Dataset: ${sheetData.rows.length} rows × ${sheetData.columns.length} columns`,
-    `\nSchema (use EXACT column names as shown):\n${columnSummary}`,
+    `\nThe schema is available through GetColumns. Call GetColumns before writing QuerySheet or ExecuteFinalQuery.`,
     contextBlock,
     `\nQuestion: "${normalizedQuestion}"`,
     intentHint,
-    columnHint,
+    columnHints,
     `\n\nRespond with a single JSON command only. No prose. No explanation.`,
   ].filter(Boolean).join("");
 
   messages.push({ role: "user", content: firstMessage });
+  let schemaInspected = false;
 
   while (turn < maxTurns) {
     turn++;
@@ -800,7 +1170,7 @@ export async function* runAgent(
 
     let llmResponse: LLMResponse;
     try {
-      llmResponse = await callLLM(provider, model, apiKey, messages, prompt, temperature, maxTokens);
+      llmResponse = await callLLM(provider, model, apiKey, messages, prompt, temperature, maxTokens, providerOptions);
     } catch (err: any) {
       yield {
         turn,
@@ -816,9 +1186,17 @@ export async function* runAgent(
 
     // ── Parse LLM response with robust recovery ──
     let parsed = parseCommand(llmResponse.content);
+    if (parsed) {
+      parsed = repairCommandForQuestion(parsed, normalizedQuestion, sheetData.columns);
+    }
 
-    // ── Fallback: if LLM failed JSON on turn 1, use rule-based fallback ──
-    if (!parsed && turn === 1) {
+    // ── If the model fails before schema inspection, keep the tool loop honest ──
+    if (!parsed && !schemaInspected) {
+      parsed = { command: "GetColumns", args: {} };
+    }
+
+    // ── Fallback: if LLM failed JSON after schema is available, use rule-based fallback ──
+    if (!parsed) {
       const fallback = buildFallbackCommand(normalizedQuestion, sheetData.columns);
       if (fallback) {
         parsed = fallback;
@@ -829,9 +1207,9 @@ export async function* runAgent(
     if (!parsed) {
       yield {
         turn,
-        command: "FinalAnswer",
+        command: "Error",
         args: {},
-        result: llmResponse.content,
+        result: "The model returned a malformed command and the agent could not repair it.",
         tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
         durationMs: Date.now() - startTime,
         isFinal: true,
@@ -839,7 +1217,13 @@ export async function* runAgent(
       return;
     }
 
-    const { command, args = {} } = parsed;
+    let { command, args = {} } = parsed;
+    let assistantCommandContent = llmResponse.content;
+    if ((command === "QuerySheet" || command === "ExecuteFinalQuery") && !schemaInspected) {
+      command = "GetColumns";
+      args = {};
+      assistantCommandContent = JSON.stringify({ command, args });
+    }
     let result: any;
     const defaultRawResult = llmResponse.content;
     const rawArgs = args as Record<string, any>;
@@ -879,6 +1263,7 @@ export async function* runAgent(
           unique: c.uniqueCount,
           samples: c.sampleValues,
         }));
+        schemaInspected = true;
         break;
       case "QuerySheet":
       case "ExecuteFinalQuery":
@@ -903,11 +1288,11 @@ export async function* runAgent(
 
     if (isFinal) return;
 
-    messages.push({ role: "assistant", content: llmResponse.content });
+    messages.push({ role: "assistant", content: assistantCommandContent });
     messages.push({
       role: "user",
       content: [
-        `Result of your query: ${JSON.stringify(result).slice(0, 2000)}${JSON.stringify(result).length > 2000 ? "... (truncated)" : ""}`,
+        `${command === "GetColumns" ? "Schema returned" : "Result of your query"}: ${JSON.stringify(result).slice(0, 2000)}${JSON.stringify(result).length > 2000 ? "... (truncated)" : ""}`,
         `\nNow issue ExecuteFinalQuery or Answer to complete answering: "${normalizedQuestion}"`,
         `\nDo NOT issue more intermediate steps unless strictly necessary.`,
         `\nRespond with a single JSON command only.`,

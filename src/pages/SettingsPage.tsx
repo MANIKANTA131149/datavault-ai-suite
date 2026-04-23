@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuthStore } from "@/stores/auth-store";
-import { useLLMStore, PROVIDER_LABELS, PROVIDER_MODELS } from "@/stores/llm-store";
+import { useLLMStore, PROVIDER_LABELS, PROVIDER_MODELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore, type Theme, type CodeFont } from "@/stores/settings-store";
 import { usePlanStore } from "@/stores/plan-store";
@@ -40,11 +40,31 @@ export default function SettingsPage() {
       (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""])
     )
   );
+  const [secretInputs, setSecretInputs] = useState<Record<string, string>>(
+    Object.fromEntries(
+      (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.secretAccessKey || ""])
+    )
+  );
+  const [regionInputs, setRegionInputs] = useState<Record<string, string>>(
+    Object.fromEntries(
+      (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.region || "us-east-1"])
+    )
+  );
 
   useEffect(() => {
     setKeyInputs(
       Object.fromEntries(
         (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""])
+      )
+    );
+    setSecretInputs(
+      Object.fromEntries(
+        (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.secretAccessKey || ""])
+      )
+    );
+    setRegionInputs(
+      Object.fromEntries(
+        (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.region || "us-east-1"])
       )
     );
   }, [providerConfigs]);
@@ -104,13 +124,26 @@ export default function SettingsPage() {
       // Commit all key inputs to LLM store first
       (Object.keys(PROVIDER_LABELS) as Provider[]).forEach((provider) => {
         const key = keyInputs[provider];
-        if (key !== undefined) setProviderConfig(provider, { apiKey: key });
+        if (key !== undefined) {
+          setProviderConfig(provider, {
+            apiKey: key,
+            ...(provider === "bedrock"
+              ? { secretAccessKey: secretInputs[provider] || "", region: regionInputs[provider] || "us-east-1" }
+              : {}),
+          });
+        }
       });
       // Then persist to MongoDB
       const updatedConfigs = Object.fromEntries(
         (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [
           p,
-          { ...providerConfigs[p], apiKey: keyInputs[p] || "" },
+          {
+            ...providerConfigs[p],
+            apiKey: keyInputs[p] || "",
+            ...(p === "bedrock"
+              ? { secretAccessKey: secretInputs[p] || "", region: regionInputs[p] || "us-east-1" }
+              : {}),
+          },
         ])
       );
       await saveSettings(updatedConfigs);
@@ -122,9 +155,12 @@ export default function SettingsPage() {
     }
   };
 
-  const configuredCount = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(
-    (p) => keyInputs[p]?.length > 0
-  ).length;
+  const isProviderConfigured = (provider: Provider) => {
+    if (provider === "bedrock") return !!keyInputs[provider] && !!secretInputs[provider];
+    return !!keyInputs[provider];
+  };
+
+  const configuredCount = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(isProviderConfigured).length;
   const visibleProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((provider) => {
     const q = settingsSearch.trim().toLowerCase();
     if (!q) return true;
@@ -134,19 +170,41 @@ export default function SettingsPage() {
   const keyLooksValid = (provider: Provider) => {
     const key = keyInputs[provider] || "";
     if (provider === "ollama") return true;
+    if (provider === "bedrock") return key.length >= 16 && !!secretInputs[provider];
     if (provider === "openai") return key.startsWith("sk-");
     if (provider === "anthropic") return key.startsWith("sk-ant-");
     return key.length > 8;
   };
 
   const handleCheckProvider = async (provider: Provider) => {
+    if (provider === "bedrock") {
+      if (!keyInputs[provider]) {
+        toast.error("AWS Bedrock access key is missing");
+        return;
+      }
+      if (!secretInputs[provider]) {
+        toast.error("AWS Bedrock secret access key is missing");
+        return;
+      }
+      if (!(providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0])) {
+        toast.error("AWS Bedrock model name is missing");
+        return;
+      }
+    }
     if (provider !== "ollama" && !keyInputs[provider]) {
       toast.error(`${PROVIDER_LABELS[provider]} API key is missing`);
       return;
     }
     setTestingProvider(provider);
     try {
-      await testProviderConnection(provider, providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0], keyInputs[provider]);
+      await testProviderConnection(
+        provider,
+        providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0],
+        keyInputs[provider],
+        provider === "bedrock"
+          ? { secretAccessKey: secretInputs[provider], region: regionInputs[provider] || "us-east-1" }
+          : {}
+      );
       toast.success(`${PROVIDER_LABELS[provider]} connection verified`);
     } catch (err: any) {
       toast.error(err.message || `${PROVIDER_LABELS[provider]} connection failed`);
@@ -250,8 +308,9 @@ export default function SettingsPage() {
           </div>
 
           {visibleProviders.map((provider) => {
-            const hasKey = !!keyInputs[provider];
+            const hasKey = isProviderConfigured(provider);
             const visible = showKeys[provider];
+            const secretVisible = showKeys[`${provider}-secret`];
             return (
               <Card key={provider} className="p-4 bg-background-secondary border-border">
                 <div className="flex items-center justify-between">
@@ -268,25 +327,73 @@ export default function SettingsPage() {
                     {hasKey ? (keyLooksValid(provider) ? "Looks valid" : "Check format") : "Not set"}
                   </Badge>
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <div className="relative flex-1">
-                    <Input
-                      type={visible ? "text" : "password"}
-                      placeholder={`Enter ${PROVIDER_LABELS[provider]} API key`}
-                      value={keyInputs[provider]}
-                      onChange={(e) => setKeyInputs((prev) => ({ ...prev, [provider]: e.target.value }))}
-                      className="bg-card border-border text-xs font-mono pr-9"
-                    />
-                    <button
-                      type="button"
-                      aria-label={visible ? "Hide API key" : "Show API key"}
-                      title={visible ? "Hide API key" : "Show API key"}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowKeys((prev) => ({ ...prev, [provider]: !visible }))}
-                    >
-                      {visible ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </button>
-                  </div>
+                <div className="mt-3 space-y-2">
+                  {provider === "bedrock" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <div className="relative">
+                        <Input
+                          type={visible ? "text" : "password"}
+                          placeholder="Access key ID"
+                          value={keyInputs[provider]}
+                          onChange={(e) => setKeyInputs((prev) => ({ ...prev, [provider]: e.target.value }))}
+                          className="bg-card border-border text-xs font-mono pr-9"
+                        />
+                        <button
+                          type="button"
+                          aria-label={visible ? "Hide access key" : "Show access key"}
+                          title={visible ? "Hide access key" : "Show access key"}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShowKeys((prev) => ({ ...prev, [provider]: !visible }))}
+                        >
+                          {visible ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Input
+                          type={secretVisible ? "text" : "password"}
+                          placeholder="Secret access key"
+                          value={secretInputs[provider]}
+                          onChange={(e) => setSecretInputs((prev) => ({ ...prev, [provider]: e.target.value }))}
+                          className="bg-card border-border text-xs font-mono pr-9"
+                        />
+                        <button
+                          type="button"
+                          aria-label={secretVisible ? "Hide secret access key" : "Show secret access key"}
+                          title={secretVisible ? "Hide secret access key" : "Show secret access key"}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShowKeys((prev) => ({ ...prev, [`${provider}-secret`]: !secretVisible }))}
+                        >
+                          {secretVisible ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      </div>
+                      <Input
+                        placeholder="Region, e.g. us-east-1"
+                        value={regionInputs[provider] || "us-east-1"}
+                        onChange={(e) => setRegionInputs((prev) => ({ ...prev, [provider]: e.target.value }))}
+                        className="bg-card border-border text-xs font-mono"
+                      />
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Input
+                        type={visible ? "text" : "password"}
+                        placeholder={`Enter ${PROVIDER_LABELS[provider]} API key`}
+                        value={keyInputs[provider]}
+                        onChange={(e) => setKeyInputs((prev) => ({ ...prev, [provider]: e.target.value }))}
+                        className="bg-card border-border text-xs font-mono pr-9"
+                      />
+                      <button
+                        type="button"
+                        aria-label={visible ? "Hide API key" : "Show API key"}
+                        title={visible ? "Hide API key" : "Show API key"}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowKeys((prev) => ({ ...prev, [provider]: !visible }))}
+                      >
+                        {visible ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -321,11 +428,15 @@ export default function SettingsPage() {
                       className="text-destructive hover:text-destructive"
                       aria-label="Clear API key"
                       title="Clear API key"
-                      onClick={() => setKeyInputs((prev) => ({ ...prev, [provider]: "" }))}
+                      onClick={() => {
+                        setKeyInputs((prev) => ({ ...prev, [provider]: "" }));
+                        setSecretInputs((prev) => ({ ...prev, [provider]: "" }));
+                      }}
                     >
                       <Trash2 size={13} />
                     </Button>
                   )}
+                  </div>
                 </div>
               </Card>
             );
@@ -365,19 +476,32 @@ export default function SettingsPage() {
                     onCheckedChange={(v) => setProviderConfig(provider, { enabled: v })}
                   />
                 </div>
-                <Select
-                  value={providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0]}
-                  onValueChange={(v) => setProviderConfig(provider, { model: v })}
-                >
-                  <SelectTrigger className="bg-card border-border text-xs">
-                    <SelectValue placeholder="Default model" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover border-border">
-                    {PROVIDER_MODELS[provider].map((m) => (
-                      <SelectItem key={m} value={m}>{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {provider === "bedrock" ? (
+                  <Input
+                    value={providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0]}
+                    onChange={(e) => setProviderConfig(provider, { model: e.target.value })}
+                    placeholder="Enter Bedrock model ID"
+                    className="bg-card border-border text-xs font-mono"
+                  />
+                ) : (
+                  <Select
+                    value={providerConfigs[provider]?.model || PROVIDER_MODELS[provider][0]}
+                    onValueChange={(v) => setProviderConfig(provider, { model: v })}
+                  >
+                    <SelectTrigger className="bg-card border-border text-xs min-w-0 [&>span]:truncate">
+                      <SelectValue placeholder="Default model" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
+                      {PROVIDER_MODELS[provider].map((m) => (
+                        <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
+                          <span className="min-w-0 whitespace-normal break-words leading-snug">
+                            {getModelDisplayName(m)}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </Card>
             ))}
           </div>

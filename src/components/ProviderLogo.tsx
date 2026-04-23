@@ -10,6 +10,7 @@ const PROVIDER_MARKS: Record<Provider, string> = {
   mistral: "M",
   together: "TG",
   ollama: "OL",
+  huggingface: "HF",
 };
 
 interface ProviderLogoProps {
