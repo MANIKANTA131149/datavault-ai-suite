@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 import { canAccessAdmin, getPlanDefinition } from "@/lib/plans";
 
@@ -19,6 +20,7 @@ export function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  const { brandName, brandTagline, presentationMode, boards } = useWorkspaceStore();
 
   // Read role directly from user object so Zustand re-renders when role changes
   const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
@@ -48,7 +50,10 @@ export function AppSidebar() {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-sm font-semibold text-primary-foreground shrink-0">
               DV
             </div>
-            <span className="text-sm font-semibold text-foreground truncate">DataVault Agent</span>
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-foreground">{brandName}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">{brandTagline}</span>
+            </div>
           </div>
         )}
         {collapsed && (
@@ -65,6 +70,12 @@ export function AppSidebar() {
       </div>
 
       <nav className="flex-1 py-2 px-2 space-y-0.5">
+        {!collapsed && presentationMode && (
+          <div className="mb-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+            <p className="text-[11px] font-medium text-primary">Presentation mode</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">{boards.length} insight board{boards.length === 1 ? "" : "s"} ready</p>
+          </div>
+        )}
         {NAV_ITEMS.map((item) => {
           const isActive = location.pathname === item.to;
           const link = (

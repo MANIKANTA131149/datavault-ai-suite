@@ -7,6 +7,7 @@ import {
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
+  AlertTriangle, CheckCircle2, ShieldCheck, GitCompareArrows, Info, Columns3, Building2, Wand2, PanelLeft, PanelRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +20,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
 import { runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
@@ -385,6 +390,304 @@ function buildPieChartRows(
   ];
 }
 
+type SummaryTone = "default" | "primary" | "accent" | "success" | "warning";
+
+type SummaryCard = {
+  label: string;
+  value: string;
+  helper?: string;
+  tone?: SummaryTone;
+};
+
+type InsightCardData = {
+  title: string;
+  value: string;
+  helper: string;
+};
+
+type RecommendationData = {
+  chart: ChartType;
+  reason: string;
+};
+
+type TrustSnapshot = {
+  confidence: number;
+  columnsUsed: string[];
+  assumptions: string[];
+  operations: string[];
+};
+
+type DatasetWarning = {
+  level: "info" | "warning";
+  message: string;
+};
+
+type DatasetColumnCard = {
+  name: string;
+  dtype: ColumnInfo["dtype"];
+  meaning: string;
+  fillRate: string;
+  uniqueness: string;
+};
+
+function toneClasses(tone: SummaryTone = "default") {
+  switch (tone) {
+    case "primary":
+      return "border-primary/20 bg-primary/5";
+    case "accent":
+      return "border-accent/20 bg-accent/5";
+    case "success":
+      return "border-success/20 bg-success/5";
+    case "warning":
+      return "border-warning/30 bg-warning/10";
+    default:
+      return "border-border bg-card";
+  }
+}
+
+function formatDisplayValue(value: any) {
+  if (typeof value === "number") return formatChartValue(value);
+  if (value == null) return "—";
+  const text = String(value).trim();
+  return text.length > 32 ? `${text.slice(0, 32)}…` : text || "—";
+}
+
+function inferColumnMeaningCard(column: ColumnInfo, totalRows: number) {
+  const name = column.name.toLowerCase();
+  const fillRate = totalRows > 0 ? column.nonNullCount / totalRows : 0;
+  const samples = column.sampleValues.map((value) => String(value ?? ""));
+  const looksList = column.dtype === "string" && samples.some((value) => /,|;|\|/.test(value));
+
+  if (looksList) return "Multi-value list";
+  if (/id|identifier|code|sku|key/.test(name)) return "Identifier / code";
+  if (column.dtype === "date" || /date|month|quarter|year|time/.test(name)) return "Time dimension";
+  if (column.dtype === "number" && /amount|total|price|sales|revenue|cost|qty|count|score|rate|margin|volume/.test(name)) return "Business metric";
+  if (column.dtype === "number" && /year/.test(name)) return "Period marker";
+  if (/name|title|label|product|customer|actor|director|manufacturer|country|category|type|department/.test(name)) return "Grouping label";
+  if (column.uniqueCount <= Math.max(6, Math.round(totalRows * 0.08))) return "Category field";
+  if (column.dtype === "number") return "Numeric measure";
+  if (fillRate < 0.6) return "Sparse attribute";
+  return "Descriptive field";
+}
+
+function buildDatasetWarnings(columns: ColumnInfo[], totalRows: number) {
+  const warnings: DatasetWarning[] = [];
+  for (const column of columns) {
+    const fillRate = totalRows > 0 ? column.nonNullCount / totalRows : 0;
+    const samples = column.sampleValues.map((value) => String(value ?? ""));
+
+    if (fillRate < 0.6) {
+      warnings.push({ level: "warning", message: `${column.name} is only ${Math.round(fillRate * 100)}% filled.` });
+    }
+    if (column.uniqueCount <= 1 && totalRows > 1) {
+      warnings.push({ level: "info", message: `${column.name} has little variation and may not be useful for grouping.` });
+    }
+    if (column.dtype === "string" && samples.some((value) => /,|;|\|/.test(value))) {
+      warnings.push({ level: "info", message: `${column.name} looks like a multi-value text field. Split-aware analysis works best here.` });
+    }
+  }
+  return warnings.slice(0, 5);
+}
+
+function buildDatasetColumnCards(columns: ColumnInfo[], totalRows: number) {
+  return columns.slice(0, 10).map((column) => ({
+    name: column.name,
+    dtype: column.dtype,
+    meaning: inferColumnMeaningCard(column, totalRows),
+    fillRate: `${Math.round((totalRows > 0 ? column.nonNullCount / totalRows : 0) * 100)}% filled`,
+    uniqueness: `${column.uniqueCount.toLocaleString()} unique`,
+  }));
+}
+
+function buildDatasetProfile(sheet?: { columns: ColumnInfo[]; rows: Record<string, any>[] } | null) {
+  if (!sheet) return null;
+  const totalRows = sheet.rows.length;
+  const numericColumns = sheet.columns.filter((column) => column.dtype === "number").length;
+  const dateColumns = sheet.columns.filter((column) => column.dtype === "date").length;
+  const categoryColumns = sheet.columns.filter((column) => column.dtype === "string" && column.uniqueCount <= Math.max(10, Math.round(totalRows * 0.08))).length;
+
+  return {
+    totalRows,
+    totalColumns: sheet.columns.length,
+    numericColumns,
+    dateColumns,
+    categoryColumns,
+    warnings: buildDatasetWarnings(sheet.columns, totalRows),
+    columnCards: buildDatasetColumnCards(sheet.columns, totalRows),
+  };
+}
+
+function collectColumnsUsed(steps: AgentStep[]) {
+  const values = new Set<string>();
+  for (const step of steps) {
+    const args = step.args || {};
+    const params = (args.params || {}) as Record<string, any>;
+    [args.sheet_name, params.column, params.groupColumn, params.aggColumn, params.dateColumn, params.rowColumn, params.colColumn, params.valueColumn]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .forEach((value) => values.add(value));
+    if (Array.isArray(params.columns)) {
+      params.columns.filter((value): value is string => typeof value === "string").forEach((value) => values.add(value));
+    }
+  }
+  return Array.from(values);
+}
+
+function buildTrustSnapshot(query: string, steps: AgentStep[], labelKey: string, valueKey: string) {
+  const columnsUsed = collectColumnsUsed(steps);
+  const operations = Array.from(new Set(steps.map((step) => step.command)));
+  let confidence = 54;
+  if (steps.some((step) => step.command === "GetColumns")) confidence += 16;
+  if (steps.some((step) => step.command === "QuerySheet")) confidence += 10;
+  if (steps.some((step) => step.command === "ExecuteFinalQuery")) confidence += 12;
+  if (columnsUsed.length > 0) confidence += 8;
+  if (query.split(/\s+/).length > 4) confidence += 4;
+
+  const assumptions = [
+    labelKey ? `Used ${labelKey} as the grouping or labeling dimension.` : "",
+    valueKey ? `Measured the answer using ${valueKey}.` : "",
+    steps.some((step) => step.command === "GetColumns") ? "Validated schema before running the final operation." : "Relied on directly available context without an extra schema turn.",
+  ].filter(Boolean);
+
+  return {
+    confidence: Math.min(96, confidence),
+    columnsUsed,
+    assumptions,
+    operations,
+  } satisfies TrustSnapshot;
+}
+
+function buildChartRecommendation(defaultChart: ChartType, labelKey: string, valueKey: string) {
+  if (defaultChart === "line" || /date|month|quarter|year|time/i.test(labelKey)) {
+    return {
+      chart: "line",
+      reason: `${labelKey} behaves like a time dimension, so a line chart will show change in ${valueKey || "the metric"} most clearly.`,
+    } satisfies RecommendationData;
+  }
+  if (/share|distribution|mix|percent/i.test(valueKey)) {
+    return {
+      chart: "pie",
+      reason: `${valueKey} reads like a share metric, so a pie chart works well for a small category set.`,
+    } satisfies RecommendationData;
+  }
+  return {
+    chart: "bar",
+    reason: `${labelKey || "the category"} is categorical and ${valueKey || "the metric"} is numeric, so a bar chart is the safest enterprise default.`,
+  } satisfies RecommendationData;
+}
+
+function buildFollowUpPrompts(query: string, labelKey: string, valueKey: string, rowCount: number) {
+  const prompts = [
+    labelKey && valueKey ? `Show top 10 ${labelKey} by ${valueKey}` : "",
+    labelKey ? `Break this down by ${labelKey}` : "",
+    valueKey ? `Explain the drivers behind ${valueKey}` : "",
+    /year|month|quarter|date|time/i.test(labelKey) && valueKey ? `Show ${valueKey} as a trend` : "",
+    rowCount > 10 && labelKey ? `Focus on the top 5 ${labelKey}` : "",
+    query ? `Summarize this answer for an executive audience` : "",
+  ].filter((prompt): prompt is string => Boolean(prompt));
+  return Array.from(new Set(prompts)).slice(0, 5);
+}
+
+function buildInsightCards(
+  rows: Record<string, any>[],
+  chartRows: Record<string, any>[],
+  labelKey: string,
+  valueKey: string,
+) {
+  if (!rows.length) return [] as InsightCardData[];
+  const cards: InsightCardData[] = [];
+
+  if (valueKey && chartRows.length > 0) {
+    const sorted = [...chartRows].sort((a, b) => Number(b[valueKey]) - Number(a[valueKey]));
+    const top = sorted[0];
+    const bottom = sorted[sorted.length - 1];
+    const average = sorted.reduce((sum, row) => sum + Number(row[valueKey] || 0), 0) / sorted.length;
+
+    if (top && labelKey) {
+      cards.push({
+        title: "Top performer",
+        value: `${formatDisplayValue(top[labelKey])}`,
+        helper: `${valueKey}: ${formatDisplayValue(top[valueKey])}`,
+      });
+    }
+    if (bottom && labelKey && sorted.length > 1) {
+      cards.push({
+        title: "Lowest point",
+        value: `${formatDisplayValue(bottom[labelKey])}`,
+        helper: `${valueKey}: ${formatDisplayValue(bottom[valueKey])}`,
+      });
+    }
+    cards.push({
+      title: "Average value",
+      value: formatDisplayValue(average),
+      helper: `${sorted.length.toLocaleString()} plotted values`,
+    });
+  } else {
+    const firstRow = rows[0];
+    Object.entries(firstRow).slice(0, 3).forEach(([key, value]) => {
+      cards.push({
+        title: key,
+        value: formatDisplayValue(value),
+        helper: "Representative result field",
+      });
+    });
+  }
+
+  return cards.slice(0, 3);
+}
+
+function buildSummaryCards(
+  result: any,
+  rows: Record<string, any>[],
+  chartRows: Record<string, any>[],
+  labelKey: string,
+  valueKey: string,
+) {
+  if (!rows.length && typeof result === "object" && result?.result !== undefined) {
+    return [
+      {
+        label: "Final answer",
+        value: formatDisplayValue(result.result),
+        helper: "Single-value result",
+        tone: "primary",
+      },
+    ] satisfies SummaryCard[];
+  }
+
+  const cards: SummaryCard[] = [
+    { label: "Rows returned", value: rows.length.toLocaleString(), helper: "Visible result rows", tone: "primary" },
+  ];
+
+  if (labelKey) {
+    cards.push({
+      label: "Primary dimension",
+      value: labelKey,
+      helper: "Used for grouping or chart labels",
+      tone: "accent",
+    });
+  }
+
+  if (valueKey && chartRows.length > 0) {
+    const sorted = [...chartRows].sort((a, b) => Number(b[valueKey]) - Number(a[valueKey]));
+    cards.push({
+      label: "Peak value",
+      value: formatDisplayValue(sorted[0]?.[valueKey]),
+      helper: labelKey ? `${formatDisplayValue(sorted[0]?.[labelKey])}` : "Highest observed value",
+      tone: "success",
+    });
+  }
+
+  if (rows.length > 0) {
+    cards.push({
+      label: "Columns in view",
+      value: Object.keys(rows[0] || {}).length.toLocaleString(),
+      helper: "Fields returned in the active result",
+      tone: "default",
+    });
+  }
+
+  return cards.slice(0, 4);
+}
+
 function formatOperationLabel(operation?: string) {
   if (!operation) return "query";
   return operation.replace(/_/g, " ");
@@ -623,7 +926,7 @@ const VirtualizedResultTable = memo(function VirtualizedResultTable({
 // ─── NarrativeResult Component ────────────────────────────────────────────────
 function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
   return (
-    <div className="ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
+    <div className="ml-4 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
       <div className="flex items-center gap-2 mb-1">
         <Sparkles size={13} className="text-purple-400" />
         <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
@@ -729,7 +1032,7 @@ const StepsTimeline = memo(function StepsTimeline({
   const [open, setOpen] = useState(live);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="ml-10 rounded-md border border-border bg-background-secondary/45">
+    <Collapsible open={open} onOpenChange={setOpen} className="ml-4 rounded-md border border-border bg-background-secondary/45">
       <CollapsibleTrigger asChild>
         <button
           type="button"
@@ -769,18 +1072,29 @@ const StepsTimeline = memo(function StepsTimeline({
 
 // ─── ResultPanel (Right Sidebar) ─────────────────────────────────────────────
 const ResultPanel = memo(function ResultPanel({
-  result, query, onClose, onBookmark,
+  result, query, onClose, onBookmark, datasetName, sheetName, steps = [], datasetColumns = [], onRunFollowUp,
 }: {
-  result: any; query: string; onClose: () => void; onBookmark: () => void;
+  result: any;
+  query: string;
+  onClose: () => void;
+  onBookmark: () => void;
   datasetName: string;
+  sheetName: string;
+  steps?: AgentStep[];
+  datasetColumns?: ColumnInfo[];
+  onRunFollowUp: (prompt: string) => void;
 }) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
   const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(result), [result]);
+  const { entries } = useHistoryStore();
+  const { brandName, brandTagline, brandAccent, setBranding, presentationMode, setPresentationMode } = useWorkspaceStore();
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
+  const [activeTab, setActiveTab] = useState("summary");
   const [showExport, setShowExport] = useState(false);
+  const [showReportBuilder, setShowReportBuilder] = useState(false);
   const chartRef = useRef<HTMLDivElement>(null);
   const [resultSearch, setResultSearch] = useState("");
   const [sortKey, setSortKey] = useState("");
@@ -796,6 +1110,10 @@ const ResultPanel = memo(function ResultPanel({
   const [chartSort, setChartSort] = useState<"none" | "asc" | "desc">("none");
   const [topN, setTopN] = useState(DEFAULT_CHART_ROWS);
   const [chartNotes, setChartNotes] = useState("");
+  const [reportTitle, setReportTitle] = useState(query || "Executive report");
+  const [reportNotes, setReportNotes] = useState("");
+  const [compareEntryId, setCompareEntryId] = useState("");
+  const [drillFilter, setDrillFilter] = useState<{ column: string; value: any } | null>(null);
   const { checkExport } = usePlanStore();
   const isEmptyArray = isArray && rows.length === 0;
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
@@ -808,6 +1126,7 @@ const ResultPanel = memo(function ResultPanel({
     setChartTitle(query ? query.slice(0, 80) : "Chart");
     setXAxisLabel(labelKey);
     setYAxisLabel(valueKey);
+    setReportTitle(query ? `${query.slice(0, 80)}` : "Executive report");
   }, [query, labelKey, valueKey]);
 
   const autoTopSort = chartSort === "none" && topN > 0 && (chartType === "bar" || chartType === "pie");
@@ -860,6 +1179,38 @@ const ResultPanel = memo(function ResultPanel({
   }), [chartType, rotateXAxisTicks]);
   const chartControlsGridClass = fullscreen ? "grid-cols-2" : "grid-cols-1";
   const chartTitleText = chartTitle || query || "Chart";
+  const summaryCards = useMemo(
+    () => buildSummaryCards(result, rows, chartRows, labelKey, valueKey),
+    [result, rows, chartRows, labelKey, valueKey]
+  );
+  const insightCards = useMemo(
+    () => buildInsightCards(rows, chartRows, labelKey, valueKey),
+    [rows, chartRows, labelKey, valueKey]
+  );
+  const recommendation = useMemo(
+    () => buildChartRecommendation(defaultChart, labelKey, valueKey),
+    [defaultChart, labelKey, valueKey]
+  );
+  const trustSnapshot = useMemo(
+    () => buildTrustSnapshot(query, steps, labelKey, valueKey),
+    [query, steps, labelKey, valueKey]
+  );
+  const followUpPrompts = useMemo(
+    () => buildFollowUpPrompts(query, labelKey, valueKey, rows.length),
+    [query, labelKey, valueKey, rows.length]
+  );
+  const qualityWarnings = useMemo(
+    () => buildDatasetWarnings(datasetColumns, rows.length || 1),
+    [datasetColumns, rows.length]
+  );
+  const compareCandidates = useMemo(
+    () => entries.filter((entry) => entry.finalResult !== null && entry.query !== query).slice(0, 8),
+    [entries, query]
+  );
+  const compareEntry = useMemo(
+    () => compareCandidates.find((entry) => entry.id === compareEntryId) || null,
+    [compareCandidates, compareEntryId]
+  );
   const chartSummaryText = [
     labelKey && valueKey ? `${labelKey} vs ${valueKey}` : "",
     topN > 0
@@ -871,13 +1222,20 @@ const ResultPanel = memo(function ResultPanel({
       : `Showing all ${visibleChartRows.length.toLocaleString()} rows`,
   ].filter(Boolean).join(" • ");
 
+  const scopedRows = useMemo(
+    () => drillFilter
+      ? rows.filter((row) => String(row?.[drillFilter.column] ?? "") === String(drillFilter.value ?? ""))
+      : rows,
+    [rows, drillFilter]
+  );
+
   const displayedRows = useMemo(() => {
     const q = resultSearch.trim().toLowerCase();
-    if (!q && !sortKey) return rows;
+    if (!q && !sortKey) return scopedRows;
 
     let next = q
-      ? rows.filter((row) => Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(q)))
-      : rows;
+      ? scopedRows.filter((row) => Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(q)))
+      : scopedRows;
     if (sortKey) {
       next = [...next].sort((a, b) => {
         const av = a[sortKey];
@@ -891,7 +1249,7 @@ const ResultPanel = memo(function ResultPanel({
       });
     }
     return next;
-  }, [rows, resultSearch, sortKey, sortDir]);
+  }, [scopedRows, resultSearch, sortKey, sortDir]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -900,6 +1258,16 @@ const ResultPanel = memo(function ResultPanel({
     }
     setSortKey(key);
     setSortDir("asc");
+  };
+
+  const handleDrillDown = (value: any) => {
+    if (!labelKey) return;
+    setDrillFilter((prev) =>
+      prev && prev.column === labelKey && String(prev.value ?? "") === String(value ?? "")
+        ? null
+        : { column: labelKey, value }
+    );
+    setActiveTab("table");
   };
 
   const downloadChartImage = async () => {
@@ -923,15 +1291,42 @@ const ResultPanel = memo(function ResultPanel({
     }
   };
 
+  const exportExecutiveReport = async () => {
+    try {
+      await checkExport("pdf");
+      generatePDF({
+        title: reportTitle || query || "Executive report",
+        query,
+        datasetName: `${brandName} · ${datasetName}`,
+        narrative: [brandTagline, reportNotes, ...insightCards.map((card) => `${card.title}: ${card.value} (${card.helper})`)]
+          .filter(Boolean)
+          .join("\n"),
+        rows: Array.isArray(result) ? displayedRows.slice(0, 50) : undefined,
+      });
+      toast.success("Executive report downloaded");
+    } catch (err: any) {
+      toast.error(err.message || "PDF export is not available on your plan");
+    }
+  };
+
   return (
     <div className={fullscreen ? "fixed inset-4 z-[60] rounded-lg border border-border bg-background-secondary shadow-2xl flex flex-col" : "h-full flex flex-col"}>
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Result</h3>
-          {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
-        </div>
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Result</h3>
+            {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
+          </div>
         <div className="flex gap-1">
-
+          <button
+            onClick={() => setPresentationMode(!presentationMode)}
+            title="Presentation mode"
+            className={`p-1.5 rounded transition-colors ${presentationMode ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-card hover:text-foreground"}`}
+          >
+            <Layout size={14} />
+          </button>
+          <button onClick={() => setShowReportBuilder(true)} title="Report builder" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
+            <Building2 size={14} />
+          </button>
           <button onClick={onBookmark} title="Save as Insight" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
             <BookmarkPlus size={14} />
           </button>
@@ -969,8 +1364,113 @@ const ResultPanel = memo(function ResultPanel({
         </div>
       )}
 
+      <div className="border-b border-border px-4 py-3 bg-background-secondary/35">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-3 bg-card xl:grid-cols-6">
+            <TabsTrigger value="summary" className="text-xs">Summary</TabsTrigger>
+            <TabsTrigger value="table" className="text-xs">Table</TabsTrigger>
+            <TabsTrigger value="chart" className="text-xs" disabled={!isChartable}>Chart</TabsTrigger>
+            <TabsTrigger value="trust" className="text-xs">Trust</TabsTrigger>
+            <TabsTrigger value="compare" className="text-xs">Compare</TabsTrigger>
+            <TabsTrigger value="raw" className="text-xs">Raw</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
       <div className="min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
-        {isNarrative && (
+        {activeTab === "summary" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Executive Summary</p>
+                  <h4 className="mt-1 text-lg font-semibold text-foreground">{query || "Current result"}</h4>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {datasetName} · {sheetName} · Recommended chart: <span className="text-foreground">{recommendation.chart}</span>
+                  </p>
+                </div>
+                <div className="rounded-full border border-border bg-background-secondary px-3 py-1 text-[11px] text-muted-foreground">
+                  {rows.length > 0 ? `${rows.length.toLocaleString()} row${rows.length === 1 ? "" : "s"}` : "Single-answer result"}
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground">{recommendation.reason}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {summaryCards.map((card) => (
+                <div key={card.label} className={`rounded-lg border p-3 ${toneClasses(card.tone)}`}>
+                  <p className="text-xs text-muted-foreground">{card.label}</p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">{card.value}</p>
+                  {card.helper && <p className="mt-1 text-xs text-muted-foreground">{card.helper}</p>}
+                </div>
+              ))}
+            </div>
+
+            {insightCards.length > 0 && (
+              <div className="rounded-lg border border-border bg-background-secondary/60 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Wand2 size={14} className="text-primary" /> AI insight cards
+                </div>
+                <div className="grid gap-3">
+                  {insightCards.map((card) => (
+                    <div key={card.title} className="rounded-lg border border-border bg-card p-3">
+                      <p className="text-xs text-muted-foreground">{card.title}</p>
+                      <p className="mt-1 text-base font-semibold text-foreground">{card.value}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{card.helper}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {followUpPrompts.length > 0 && (
+              <div className="rounded-lg border border-border bg-card p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Lightbulb size={14} className="text-warning" /> Follow-up suggestions
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {followUpPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => onRunFollowUp(prompt)}
+                      className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {qualityWarnings.length > 0 && (
+              <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <AlertTriangle size={14} className="text-warning" /> Data quality warnings
+                </div>
+                <div className="space-y-2">
+                  {qualityWarnings.map((warning, index) => (
+                    <div key={`${warning.message}-${index}`} className="text-xs text-muted-foreground">
+                      {warning.message}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {drillFilter && (
+              <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+                <div className="text-xs text-primary">
+                  Drill-down active: {drillFilter.column} = <span className="font-semibold">{formatDisplayValue(drillFilter.value)}</span>
+                </div>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setDrillFilter(null)}>
+                  <X size={12} className="mr-1" /> Clear
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === "summary" && isNarrative && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Sparkles size={13} className="text-purple-400" />
@@ -990,7 +1490,7 @@ const ResultPanel = memo(function ResultPanel({
           </div>
         )}
 
-        {isSingleValue && (
+        {activeTab === "summary" && isSingleValue && (
           <div className="text-center py-8">
             <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Result</p>
             <p className="text-4xl font-semibold text-foreground font-mono">
@@ -998,14 +1498,14 @@ const ResultPanel = memo(function ResultPanel({
             </p>
           </div>
         )}
-        {isPrimitiveValue && (
+        {activeTab === "summary" && isPrimitiveValue && (
           <div className="text-center py-8">
             <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">Result</p>
             <p className="text-4xl font-semibold text-foreground font-mono">{String(result)}</p>
           </div>
         )}
 
-        {isChartable && (
+        {activeTab === "chart" && isChartable && (
           <div>
             <div className="flex items-center justify-between gap-2 mb-3">
               <div className="flex gap-1">
@@ -1091,6 +1591,7 @@ const ResultPanel = memo(function ResultPanel({
                       data={pieChartRows}
                       dataKey={valueKey}
                       nameKey={labelKey}
+                      onClick={(payload: any) => handleDrillDown(payload?.[labelKey])}
                       cx="50%"
                       cy={showLegend ? "42%" : "50%"}
                       outerRadius={showLegend ? 78 : 96}
@@ -1107,7 +1608,7 @@ const ResultPanel = memo(function ResultPanel({
                     />
                   </PieChart>
                 ) : chartType === "line" ? (
-                  <LineChart data={visibleChartRows} margin={chartMargin}>
+                  <LineChart data={visibleChartRows} margin={chartMargin} onClick={(state: any) => handleDrillDown(state?.activeLabel)}>
                     <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
                     <XAxis
                       dataKey={labelKey}
@@ -1135,7 +1636,7 @@ const ResultPanel = memo(function ResultPanel({
                     <Line type="monotone" dataKey={valueKey} stroke={chartColor} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2.5, strokeWidth: 0, fill: chartColor } : false} activeDot={{ r: 4 }} />
                   </LineChart>
                 ) : chartType === "area" ? (
-                  <AreaChart data={visibleChartRows} margin={chartMargin}>
+                  <AreaChart data={visibleChartRows} margin={chartMargin} onClick={(state: any) => handleDrillDown(state?.activeLabel)}>
                     <defs>
                       <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
@@ -1169,7 +1670,7 @@ const ResultPanel = memo(function ResultPanel({
                     <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2, strokeWidth: 0, fill: chartColor } : false} />
                   </AreaChart>
                 ) : (
-                  <BarChart data={visibleChartRows} margin={chartMargin}>
+                  <BarChart data={visibleChartRows} margin={chartMargin} onClick={(state: any) => handleDrillDown(state?.activeLabel)}>
                     <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
                     <XAxis
                       dataKey={labelKey}
@@ -1257,9 +1758,9 @@ const ResultPanel = memo(function ResultPanel({
           </div>
         )}
 
-        {isArray && rows.length > 0 && (
+        {activeTab === "table" && isArray && rows.length > 0 && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="Search result rows..." className="h-8 bg-card border-border pl-8 text-xs" />
@@ -1267,6 +1768,23 @@ const ResultPanel = memo(function ResultPanel({
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setDensity((prev) => prev === "compact" ? "comfortable" : "compact")}>
                 <Rows3 size={12} className="mr-1" /> {density === "compact" ? "Compact" : "Roomy"}
               </Button>
+              {drillFilter && (
+                <Button variant="outline" size="sm" className="h-8 border-primary/20 text-xs text-primary" onClick={() => setDrillFilter(null)}>
+                  <X size={12} className="mr-1" /> {drillFilter.column}: {formatDisplayValue(drillFilter.value)}
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {followUpPrompts.slice(0, 3).map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => onRunFollowUp(prompt)}
+                  className="rounded-full border border-border bg-background px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+                >
+                  {prompt}
+                </button>
+              ))}
             </div>
             {displayedRows.length > 200 && (
               <VirtualizedResultTable
@@ -1294,7 +1812,13 @@ const ResultPanel = memo(function ResultPanel({
               </thead>
               <tbody>
                 {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => (
-                  <tr key={i} className="border-t border-border/50">
+                  <tr
+                    key={i}
+                    className={`border-t border-border/50 ${labelKey && row[labelKey] !== undefined ? "cursor-pointer hover:bg-card/60" : ""}`}
+                    onClick={() => {
+                      if (labelKey && row[labelKey] !== undefined) handleDrillDown(row[labelKey]);
+                    }}
+                  >
                     {Object.values(row).map((v: any, j) => (
                       <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>{String(v ?? "")}</td>
                     ))}
@@ -1307,24 +1831,162 @@ const ResultPanel = memo(function ResultPanel({
           </div>
         )}
 
-        {isEmptyArray && (
+        {activeTab === "summary" && isEmptyArray && (
           <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
             No rows returned for this query.
           </div>
         )}
-        {isEmptyObject && (
+        {activeTab === "summary" && isEmptyObject && (
           <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
             Query returned an empty object.
           </div>
         )}
-        {isBlankString && (
+        {activeTab === "summary" && isBlankString && (
           <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
             No answer returned from the model.
           </div>
         )}
-        {typeof result === "string" && !isBlankString && (
+        {activeTab === "summary" && typeof result === "string" && !isBlankString && (
           <div className="bg-card rounded-md p-4 border border-border">
             <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>
+          </div>
+        )}
+
+        {activeTab === "trust" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <ShieldCheck size={14} className="text-success" /> Confidence and assumptions
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">How the platform interpreted this answer.</p>
+                </div>
+                <div className="rounded-full border border-success/20 bg-success/5 px-3 py-1 text-xs text-success">
+                  {trustSnapshot.confidence}% confidence
+                </div>
+              </div>
+              <div className="mt-4 grid gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Operations used</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {trustSnapshot.operations.map((operation) => (
+                      <Badge key={operation} variant="outline" className="border-border bg-background text-xs text-foreground">
+                        {operation}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Columns used</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {trustSnapshot.columnsUsed.length > 0 ? trustSnapshot.columnsUsed.map((column) => (
+                      <Badge key={column} variant="outline" className="border-border bg-background text-xs text-foreground">
+                        {column}
+                      </Badge>
+                    )) : (
+                      <span className="text-xs text-muted-foreground">No explicit columns captured from the execution trace.</span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Assumptions</p>
+                  <div className="mt-2 space-y-2">
+                    {trustSnapshot.assumptions.map((assumption) => (
+                      <div key={assumption} className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                        {assumption}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Insight timeline</p>
+                  <div className="mt-2 space-y-2">
+                    {steps.map((step, index) => (
+                      <div key={`${step.turn}-${index}`} className="rounded-md border border-border bg-background px-3 py-2">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-medium text-foreground">{step.command}</span>
+                          <span className="text-muted-foreground">{step.durationMs}ms</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{describeAgentStep(step)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "compare" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+                <GitCompareArrows size={14} className="text-primary" /> Compare results side by side
+              </div>
+              <Select value={compareEntryId} onValueChange={setCompareEntryId}>
+                <SelectTrigger className="bg-background border-border text-xs">
+                  <SelectValue placeholder="Choose a recent query result" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {compareCandidates.length === 0 && <SelectItem value="none" disabled>No comparable result yet</SelectItem>}
+                  {compareCandidates.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.query.slice(0, 64)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {compareEntry ? (
+              <div className="grid gap-4">
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Current</p>
+                  <p className="mt-2 text-sm font-medium text-foreground">{query}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{datasetName}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    {summaryCards.map((card) => (
+                      <div key={card.label} className="rounded-md border border-border bg-background px-3 py-2">
+                        <p className="text-[11px] text-muted-foreground">{card.label}</p>
+                        <p className="mt-1 text-sm font-semibold text-foreground">{card.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border bg-card p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Comparison target</p>
+                  <p className="mt-2 text-sm font-medium text-foreground">{compareEntry.query}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{compareEntry.datasetName}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="rounded-md border border-border bg-background px-3 py-2">
+                      <p className="text-[11px] text-muted-foreground">Duration</p>
+                      <p className="mt-1 text-sm font-semibold text-foreground">{compareEntry.durationMs.toLocaleString()}ms</p>
+                    </div>
+                    <div className="rounded-md border border-border bg-background px-3 py-2">
+                      <p className="text-[11px] text-muted-foreground">Tokens</p>
+                      <p className="mt-1 text-sm font-semibold text-foreground">{compareEntry.totalTokens.toLocaleString()}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-border bg-background-secondary/40 p-6 text-center text-sm text-muted-foreground">
+                Pick a recent query result to compare this answer against.
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "raw" && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                <Code2 size={14} className="text-primary" /> Raw output
+              </div>
+              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 text-xs text-foreground">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </div>
           </div>
         )}
 
@@ -1348,6 +2010,117 @@ const ResultPanel = memo(function ResultPanel({
             </Button>
           )}
         </div>
+
+        <Sheet open={showReportBuilder} onOpenChange={setShowReportBuilder}>
+          <SheetContent side="right" className="w-[min(38rem,100vw)] overflow-y-auto border-border bg-background-secondary p-0 sm:max-w-none">
+            <div className="border-b border-border p-6">
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2">
+                  <Building2 size={16} className="text-primary" /> One-click report builder
+                </SheetTitle>
+                <SheetDescription>
+                  Package this answer into a branded, client-friendly summary without leaving the query flow.
+                </SheetDescription>
+              </SheetHeader>
+            </div>
+            <div className="space-y-6 p-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Report title</Label>
+                  <Input value={reportTitle} onChange={(e) => setReportTitle(e.target.value)} className="mt-1 bg-card border-border" />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Brand name</Label>
+                  <Input value={brandName} onChange={(e) => setBranding({ brandName: e.target.value })} className="mt-1 bg-card border-border" />
+                </div>
+                <div className="md:col-span-2">
+                  <Label className="text-xs text-muted-foreground">Brand tagline</Label>
+                  <Input value={brandTagline} onChange={(e) => setBranding({ brandTagline: e.target.value })} className="mt-1 bg-card border-border" />
+                </div>
+                <div className="md:col-span-2">
+                  <Label className="text-xs text-muted-foreground">Presenter notes</Label>
+                  <Textarea value={reportNotes} onChange={(e) => setReportNotes(e.target.value)} className="mt-1 min-h-[96px] bg-card border-border" placeholder="Add context, takeaways, or speaking notes..." />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Palette size={14} className="text-primary" /> Brand controls
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {([
+                    { key: "blue", color: "hsl(217, 91%, 60%)" },
+                    { key: "emerald", color: "hsl(160, 84%, 39%)" },
+                    { key: "amber", color: "hsl(38, 92%, 50%)" },
+                    { key: "rose", color: "hsl(0, 84%, 60%)" },
+                  ] as const).map((accent) => (
+                    <button
+                      key={accent.key}
+                      type="button"
+                      onClick={() => setBranding({ brandAccent: accent.key })}
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs ${brandAccent === accent.key ? "border-foreground text-foreground" : "border-border text-muted-foreground"}`}
+                    >
+                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: accent.color }} />
+                      {accent.key}
+                    </button>
+                  ))}
+                  <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>Presentation mode</span>
+                    <Switch checked={presentationMode} onCheckedChange={setPresentationMode} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{brandName}</p>
+                    <h3 className="mt-2 text-xl font-semibold text-foreground">{reportTitle}</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">{brandTagline}</p>
+                  </div>
+                  <div className="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                    {datasetName}
+                  </div>
+                </div>
+                <div className="mt-6 grid gap-3 md:grid-cols-2">
+                  {summaryCards.map((card) => (
+                    <div key={card.label} className={`rounded-lg border p-3 ${toneClasses(card.tone)}`}>
+                      <p className="text-xs text-muted-foreground">{card.label}</p>
+                      <p className="mt-1 text-lg font-semibold text-foreground">{card.value}</p>
+                      {card.helper && <p className="mt-1 text-xs text-muted-foreground">{card.helper}</p>}
+                    </div>
+                  ))}
+                </div>
+                {insightCards.length > 0 && (
+                  <div className="mt-6 space-y-3">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Key takeaways</p>
+                    {insightCards.map((card) => (
+                      <div key={card.title} className="rounded-lg border border-border bg-card px-4 py-3">
+                        <p className="text-sm font-medium text-foreground">{card.title}: {card.value}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{card.helper}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {reportNotes && (
+                  <div className="mt-6 rounded-lg border border-border bg-card px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Presenter notes</p>
+                    <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">{reportNotes}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" className="border-border" onClick={() => setShowReportBuilder(false)}>
+                  Close
+                </Button>
+                <Button onClick={exportExecutiveReport}>
+                  <FileDown size={14} className="mr-2" /> Export PDF
+                </Button>
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
 
 
@@ -1381,7 +2154,7 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
   }
 
   return (
-    <div className="ml-10 mt-1 mb-3 rounded-md border border-border bg-card p-3 space-y-3">
+    <div className="ml-4 mt-1 mb-3 rounded-md border border-border bg-card p-3 space-y-3">
       <p className="text-xs text-muted-foreground font-medium">Result</p>
 
       {isSingleValue && (
@@ -1624,10 +2397,12 @@ function SaveInsightDialog({
   open: boolean; onClose: () => void; query: string; result: any; datasetName: string;
 }) {
   const { addInsight } = useInsightsStore();
+  const { boards, assignInsightToBoard } = useWorkspaceStore();
   const [label, setLabel] = useState(query.slice(0, 60));
   const [notes, setNotes] = useState("");
   const [color, setColor] = useState<"blue" | "purple" | "green" | "amber" | "red" | "pink">("blue");
   const [tags, setTags] = useState("");
+  const [boardId, setBoardId] = useState<string>("none");
   const [saving, setSaving] = useState(false);
 
   const COLOR_DOTS: Record<string, string> = {
@@ -1635,15 +2410,27 @@ function SaveInsightDialog({
     amber: "bg-amber-400", red: "bg-red-400", pink: "bg-pink-400",
   };
 
+  useEffect(() => {
+    if (!open) return;
+    setLabel(query.slice(0, 60));
+    setNotes("");
+    setColor("blue");
+    setTags("");
+    setBoardId(boards[0]?.id || "none");
+  }, [open, query, boards]);
+
   const handleSave = async () => {
     if (!label.trim()) { toast.error("Please add a label"); return; }
     setSaving(true);
     try {
-      await addInsight({
+      const insightId = await addInsight({
         query, datasetName, result,
         label: label.trim(), notes, color,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
       });
+      if (boardId !== "none") {
+        assignInsightToBoard(boardId, insightId);
+      }
       toast.success("Saved to Insights");
       onClose();
     } catch (err: any) {
@@ -1680,6 +2467,20 @@ function SaveInsightDialog({
             <Label className="text-xs text-muted-foreground">Tags (comma-separated)</Label>
             <Input value={tags} onChange={(e) => setTags(e.target.value)} className="mt-1 bg-card border-border" placeholder="revenue, q4, important" />
           </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Insight board</Label>
+            <Select value={boardId} onValueChange={setBoardId}>
+              <SelectTrigger className="mt-1 bg-card border-border">
+                <SelectValue placeholder="Choose a board" />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border-border">
+                <SelectItem value="none">Save without board</SelectItem>
+                {boards.map((board) => (
+                  <SelectItem key={board.id} value={board.id}>{board.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <div className="flex gap-2 justify-end">
           <Button variant="outline" onClick={onClose} className="border-border">Cancel</Button>
@@ -1694,10 +2495,23 @@ function SaveInsightDialog({
 export default function QueryPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { datasets, getDataset } = useDatasetStore();
+  const { datasets, getDataset, loadDatasetData } = useDatasetStore();
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
   const { addEntry, entries } = useHistoryStore();
   const { checkMetric, checkExport, fetchPlan } = usePlanStore();
+  const {
+    presentationMode,
+    setPresentationMode,
+    boards,
+    savedSessions,
+    saveQuerySession,
+    removeQuerySession,
+    brandName,
+    brandTagline,
+    leftPanelCollapsed,
+    rightPanelCollapsed,
+    setPanelLayout,
+  } = useWorkspaceStore();
 
   const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
   const [selectedSheet, setSelectedSheet] = useState("");
@@ -1711,6 +2525,7 @@ export default function QueryPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [finalResult, setFinalResult] = useState<any>(null);
+  const [resultSteps, setResultSteps] = useState<AgentStep[]>([]);
   const [lastQuery, setLastQuery] = useState("");
   const [showResult, setShowResult] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -1718,6 +2533,7 @@ export default function QueryPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSaveInsight, setShowSaveInsight] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState("");
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
   const [queryExpanded, setQueryExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -1733,10 +2549,18 @@ export default function QueryPage() {
   const queryStartRef = useRef(0);
 
   const selectedDataset = getDataset(selectedDatasetId) ?? datasets.find((d) => d.id === selectedDatasetId);
+  const selectedSheetData = selectedDataset?.data?.sheets[selectedSheet] || null;
+  const datasetProfile = useMemo(() => buildDatasetProfile(selectedSheetData), [selectedSheetData]);
 
   useEffect(() => {
     if (selectedDataset && !selectedSheet) setSelectedSheet(selectedDataset.sheetNames[0]);
   }, [selectedDataset, selectedSheet]);
+
+  useEffect(() => {
+    if (selectedDatasetId && !selectedDataset?.data) {
+      loadDatasetData(selectedDatasetId);
+    }
+  }, [selectedDatasetId, selectedDataset?.data, loadDatasetData]);
 
   useEffect(() => {
     const replayQuestion = searchParams.get("q");
@@ -1764,6 +2588,35 @@ export default function QueryPage() {
     setFavoritePrompts((prev) => prev.includes(prompt) ? prev.filter((item) => item !== prompt) : [prompt, ...prev].slice(0, 20));
   };
 
+  const handleSaveSession = () => {
+    if (!selectedDatasetId || !lastQuery || finalResult === null) {
+      toast.error("Run a query before saving a session");
+      return;
+    }
+    saveQuerySession({
+      title: lastQuery.slice(0, 72),
+      datasetId: selectedDatasetId,
+      datasetName: selectedDataset?.fileName || "Unknown dataset",
+      lastQuery,
+      messageCount: messages.length,
+      finalResult,
+    });
+    toast.success("Session pinned to your workspace");
+  };
+
+  const handleOpenSavedSession = (sessionId: string) => {
+    const session = savedSessions.find((item) => item.id === sessionId);
+    if (!session) return;
+    setSelectedDatasetId(session.datasetId);
+    setInput(session.lastQuery);
+    setLastQuery(session.lastQuery);
+    setFinalResult(session.finalResult);
+    setResultSteps([]);
+    setShowResult(true);
+    setPanelLayout({ rightPanelCollapsed: false });
+    toast.success("Loaded saved session preview");
+  };
+
   // Smart suggestions based on dataset columns
   const smartSuggestions = useMemo(() => {
     const sheet = selectedDataset?.data?.sheets[selectedSheet];
@@ -1776,6 +2629,26 @@ export default function QueryPage() {
       "What is the average order value?",
     ];
   }, [selectedDataset, selectedSheet]);
+
+  const quickRefiners = useMemo(() => {
+    const seed = lastQuery || input || smartSuggestions[0] || "Summarize this dataset";
+    return [
+      { label: "Top 5", prompt: `${seed}. Return the top 5 results only.` },
+      { label: "Trend", prompt: `${seed}. Show the trend over time if a date column exists.` },
+      { label: "Breakdown", prompt: `${seed}. Break the answer down by the most relevant category.` },
+      { label: "Missing data", prompt: `${seed}. Focus on missing values and data quality issues.` },
+      { label: "Executive summary", prompt: `${seed}. Explain the answer in plain business language.` },
+    ];
+  }, [input, lastQuery, smartSuggestions]);
+
+  const filteredTemplateGroups = useMemo(() => {
+    const search = templateSearch.trim().toLowerCase();
+    const groups = QUERY_TEMPLATES.map((group) => ({
+      ...group,
+      templates: group.templates.filter((template) => !search || template.toLowerCase().includes(search)),
+    })).filter((group) => group.templates.length > 0);
+    return groups;
+  }, [templateSearch]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1841,6 +2714,7 @@ export default function QueryPage() {
     setMessages((prev) => [...prev, { role: "user", content: question, query: question }]);
     setCurrentSteps([]);
     setFinalResult(null);
+    setResultSteps([]);
     setLastQuery(question);
 
     let workbookSheets = selectedDataset?.data?.sheets;
@@ -1880,7 +2754,9 @@ export default function QueryPage() {
         setCurrentSteps([...steps]);
         if (step.isFinal) {
           setFinalResult(step.result);
+          setResultSteps([...steps]);
           setShowResult(true);
+          setPanelLayout({ rightPanelCollapsed: false });
         }
       }
 
@@ -1894,6 +2770,7 @@ export default function QueryPage() {
 
       setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps], query: question }]);
       setCurrentSteps([]);
+      setResultSteps([...steps]);
 
       try {
         await addEntry({
@@ -1962,8 +2839,18 @@ export default function QueryPage() {
       </AnimatePresence>
 
       {/* Left: Context Panel */}
-      <div className="w-[280px] border-r border-border bg-background-secondary flex flex-col shrink-0 overflow-auto hidden lg:flex">
+      <div className={`${leftPanelCollapsed ? "hidden" : "hidden lg:flex"} w-[232px] border-r border-border bg-background-secondary flex-col shrink-0 overflow-auto`}>
         <div className="p-4 space-y-4">
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2">
+            <div>
+              <p className="text-xs font-medium text-foreground">Workspace controls</p>
+              <p className="text-[11px] text-muted-foreground">Dataset, provider, and demo settings</p>
+            </div>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => setPanelLayout({ leftPanelCollapsed: true })}>
+              <PanelLeft size={14} />
+            </Button>
+          </div>
+
           <div>
             <Label className="text-xs text-muted-foreground">Dataset</Label>
             <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
@@ -1997,6 +2884,136 @@ export default function QueryPage() {
               <Table2 size={12} /> Preview data <Eye size={11} className="ml-auto" />
             </button>
           )}
+
+          <div className="rounded-lg border border-border bg-card p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-foreground">Presentation Mode</p>
+                <p className="text-[11px] text-muted-foreground">Cleaner client-ready workspace</p>
+              </div>
+              <Switch checked={presentationMode} onCheckedChange={setPresentationMode} />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-foreground">Workspace Brand</p>
+                <p className="text-[11px] text-muted-foreground truncate">{brandName}</p>
+              </div>
+              <div className="rounded-full border border-border bg-background px-2 py-1 text-[10px] text-muted-foreground">
+                {brandTagline}
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-md border border-border bg-background px-2.5 py-2 text-[11px] text-muted-foreground">
+              <span>Saved insight boards</span>
+              <span className="font-medium text-foreground">{boards.length}</span>
+            </div>
+          </div>
+
+          {datasetProfile && (
+            <div className="rounded-lg border border-border bg-card p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <Database size={13} className="text-primary" />
+                <div>
+                  <p className="text-xs font-medium text-foreground">Dataset Intelligence</p>
+                  <p className="text-[11px] text-muted-foreground">Profile, quality, and column meaning</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-md border border-border bg-background px-2.5 py-2">
+                  <p className="text-[11px] text-muted-foreground">Numeric</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">{datasetProfile.numericColumns}</p>
+                </div>
+                <div className="rounded-md border border-border bg-background px-2.5 py-2">
+                  <p className="text-[11px] text-muted-foreground">Dates</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">{datasetProfile.dateColumns}</p>
+                </div>
+                <div className="rounded-md border border-border bg-background px-2.5 py-2">
+                  <p className="text-[11px] text-muted-foreground">Categories</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">{datasetProfile.categoryColumns}</p>
+                </div>
+                <div className="rounded-md border border-border bg-background px-2.5 py-2">
+                  <p className="text-[11px] text-muted-foreground">Columns</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">{datasetProfile.totalColumns}</p>
+                </div>
+              </div>
+              {datasetProfile.warnings.length > 0 && (
+                <div className="space-y-2">
+                  {datasetProfile.warnings.slice(0, 3).map((warning, index) => (
+                    <div key={`${warning.message}-${index}`} className="rounded-md border border-warning/20 bg-warning/10 px-2.5 py-2 text-[11px] text-muted-foreground">
+                      {warning.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                {datasetProfile.columnCards.slice(0, 4).map((column) => (
+                  <div key={column.name} className="rounded-md border border-border bg-background px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground truncate">{column.name}</span>
+                      <Badge variant="outline" className="border-border text-[10px]">{column.dtype}</Badge>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{column.meaning}</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">{column.fillRate} · {column.uniqueness}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-border bg-card p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-foreground">Pinned Sessions</p>
+                <p className="text-[11px] text-muted-foreground">Quick ways back into strong demos</p>
+              </div>
+              <Button variant="outline" size="sm" className="h-7 border-border text-[11px]" onClick={handleSaveSession}>
+                <BookmarkPlus size={11} className="mr-1" /> Save
+              </Button>
+            </div>
+            {savedSessions.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border bg-background px-3 py-3 text-[11px] text-muted-foreground">
+                Save your best query sessions here for client walk-throughs.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {savedSessions.slice(0, 3).map((session) => (
+                  <div key={session.id} className="rounded-md border border-border bg-background px-2.5 py-2">
+                    <button type="button" onClick={() => handleOpenSavedSession(session.id)} className="w-full text-left">
+                      <p className="truncate text-xs font-medium text-foreground">{session.title}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">{session.datasetName}</p>
+                    </button>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-muted-foreground">{new Date(session.updatedAt).toLocaleDateString()}</span>
+                      <button type="button" onClick={() => removeQuerySession(session.id)} className="text-[10px] text-muted-foreground hover:text-destructive">
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Lightbulb size={13} className="text-warning" />
+              <div>
+                <p className="text-xs font-medium text-foreground">Suggested Questions</p>
+                <p className="text-[11px] text-muted-foreground">Generated from the active sheet</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {smartSuggestions.slice(0, 6).map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => setInput(prompt)}
+                  className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <Separator className="bg-border" />
 
@@ -2138,6 +3155,16 @@ export default function QueryPage() {
         </div>
       </div>
 
+      {leftPanelCollapsed && (
+        <button
+          type="button"
+          onClick={() => setPanelLayout({ leftPanelCollapsed: false })}
+          className="absolute left-3 top-3 z-20 hidden rounded-full border border-border bg-background p-2 text-muted-foreground shadow-sm transition-colors hover:text-foreground lg:inline-flex"
+        >
+          <PanelRight size={14} />
+        </button>
+      )}
+
       {/* Center: Chat */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="lg:hidden border-b border-border bg-background-secondary p-3 space-y-2">
@@ -2167,7 +3194,7 @@ export default function QueryPage() {
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-auto p-4 space-y-4 scrollbar-thin">
+        <div className="flex-1 overflow-auto px-3 py-4 space-y-4 scrollbar-thin">
           {messages.length === 0 && !isRunning && (
             <div className="flex flex-col items-center justify-center h-full gap-4">
               <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -2182,6 +3209,34 @@ export default function QueryPage() {
                   </button>
                 ))}
               </div>
+              {favoritePrompts.length > 0 && (
+                <div className="flex max-w-2xl flex-wrap justify-center gap-2">
+                  {favoritePrompts.slice(0, 4).map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => { setInput(prompt); textareaRef.current?.focus(); }}
+                      className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-primary transition-colors hover:border-primary/40"
+                    >
+                      <Star size={11} className="mr-1 inline" /> {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {recentPrompts.length > 0 && (
+                <div className="flex max-w-2xl flex-wrap justify-center gap-2">
+                  {recentPrompts.slice(0, 3).map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => { setInput(prompt); textareaRef.current?.focus(); }}
+                      className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+                    >
+                      <RefreshCw size={11} className="mr-1 inline" /> {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1.5 text-xs text-primary hover:underline mt-1">
                 <LayoutTemplate size={12} /> Browse template library
               </button>
@@ -2194,7 +3249,7 @@ export default function QueryPage() {
               <div key={i}>
                 {msg.role === "user" ? (
                   <div className="flex justify-end">
-                    <div className="bg-card rounded-lg px-4 py-2.5 max-w-md border border-border">
+                    <div className="bg-card rounded-lg px-4 py-2.5 max-w-lg border border-border">
                       <p className="text-sm text-foreground">{msg.content}</p>
                     </div>
                   </div>
@@ -2208,7 +3263,7 @@ export default function QueryPage() {
                       </div>
                     )}
                     {msg.steps && msg.steps.length > 0 && (
-                      <div className="flex gap-3 text-xs text-muted-foreground pl-10 pt-1">
+                      <div className="flex gap-3 text-xs text-muted-foreground pl-4 pt-1">
                         <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
                         <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
                         {finalStep && (
@@ -2216,6 +3271,7 @@ export default function QueryPage() {
                             <button
                               onClick={() => {
                                 setFinalResult(finalStep.result);
+                                setResultSteps(msg.steps || []);
                                 setLastQuery(msg.query || "");
                                 setShowSaveInsight(true);
                               }}
@@ -2244,7 +3300,7 @@ export default function QueryPage() {
             <div className="space-y-1">
               {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
               {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
-              <div className="flex flex-wrap items-center gap-2 pl-10">
+              <div className="flex flex-wrap items-center gap-2 pl-4">
                 <div className="flex gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0s" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
@@ -2264,21 +3320,34 @@ export default function QueryPage() {
         </div>
 
         <div className="p-4 border-t border-border bg-background">
+          <div className="mx-auto mb-3 flex max-w-[52rem] flex-wrap gap-2">
+            {quickRefiners.map((refiner) => (
+              <button
+                key={refiner.label}
+                type="button"
+                onClick={() => handleSend(refiner.prompt)}
+                disabled={isRunning || !selectedDatasetId}
+                className="rounded-full border border-border bg-background-secondary px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {refiner.label}
+              </button>
+            ))}
+          </div>
           {apiWarning && (
-            <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <div className="mx-auto mb-3 flex max-w-[52rem] items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
               <span>{apiWarning}</span>
               <Button variant="outline" size="sm" className="h-7 border-warning/30 text-xs" onClick={() => navigate("/app/settings")}>Settings</Button>
             </div>
           )}
           {lastFailedQuery && !isRunning && (
-            <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground">
+            <div className="mx-auto mb-3 flex max-w-[52rem] items-center justify-between gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground">
               <span>Last query failed.</span>
               <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={() => handleSend(lastFailedQuery)}>
                 <RefreshCw size={12} className="mr-1" /> Retry
               </Button>
             </div>
           )}
-          <div className="flex gap-2 items-end max-w-3xl mx-auto">
+          <div className="flex gap-2 items-end max-w-[52rem] mx-auto">
             <div className="relative flex-1">
               <Textarea
                 ref={textareaRef}
@@ -2315,50 +3384,144 @@ export default function QueryPage() {
               {isRunning ? <X size={16} /> : <Send size={16} />}
             </Button>
           </div>
-          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
+          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens / Ctrl+Enter to send</p>}
           {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-0.5">{input.length.toLocaleString()} characters</p>}
         </div>
       </div>
 
       {/* Right: Result Panel */}
-      {finalResult !== null && showResult && (
-        <div className="w-[380px] 2xl:w-[420px] border-l border-border bg-background-secondary shrink-0 hidden xl:block">
+      {finalResult !== null && showResult && !rightPanelCollapsed && (
+        <div className="w-[312px] 2xl:w-[336px] border-l border-border bg-background-secondary shrink-0 hidden xl:block">
           <ResultPanel
             result={finalResult}
             query={lastQuery}
-            onClose={() => setShowResult(false)}
+            onClose={() => {
+              setShowResult(false);
+              setPanelLayout({ rightPanelCollapsed: true });
+            }}
             onBookmark={() => setShowSaveInsight(true)}
             datasetName={selectedDataset?.fileName || "Unknown dataset"}
+            sheetName={selectedSheet || "Sheet1"}
+            steps={resultSteps}
+            datasetColumns={selectedSheetData?.columns || []}
+            onRunFollowUp={(prompt) => handleSend(prompt)}
           />
         </div>
       )}
 
-      {finalResult !== null && !showResult && (
-        <button onClick={() => setShowResult(true)} className="fixed right-4 bottom-20 bg-primary text-primary-foreground p-2 rounded-full shadow-lg hover:bg-primary/90 hidden xl:block">
+      {finalResult !== null && (!showResult || rightPanelCollapsed) && (
+        <button
+          onClick={() => {
+            setShowResult(true);
+            setPanelLayout({ rightPanelCollapsed: false });
+          }}
+          className="fixed right-4 bottom-20 hidden rounded-full bg-primary p-2 text-primary-foreground shadow-lg hover:bg-primary/90 xl:block"
+        >
           <PanelRightOpen size={16} />
         </button>
       )}
 
       {/* Templates Library Dialog */}
-      <Dialog open={showTemplates} onOpenChange={setShowTemplates}>
+      <Dialog open={showTemplates} onOpenChange={(open) => { setShowTemplates(open); if (!open) setTemplateSearch(""); }}>
         <DialogContent className="bg-background-secondary border-border max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><LayoutTemplate size={16} className="text-primary" /> Query Template Library</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 overflow-auto pr-1 space-y-5 mt-2">
-            {QUERY_TEMPLATES.map((cat) => (
-              <div key={cat.category}>
-                <h3 className="text-sm font-semibold text-foreground mb-2">{cat.category}</h3>
+          <div className="mt-2 space-y-3">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={templateSearch}
+                onChange={(e) => setTemplateSearch(e.target.value)}
+                placeholder="Search templates, workflows, or saved prompts..."
+                className="bg-card border-border pl-9"
+              />
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-lg border border-border bg-card p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Star size={14} className="text-warning" /> Favorite prompts
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {cat.templates.map((t) => (
+                  {favoritePrompts.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Star prompts here to build your own quick-start gallery.</p>
+                  ) : favoritePrompts.slice(0, 6).map((prompt) => (
                     <button
-                      key={t}
-                      onClick={() => { setInput(t); setShowTemplates(false); textareaRef.current?.focus(); }}
-                      className="text-xs px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 hover:bg-primary/5 transition-all"
+                      key={prompt}
+                      type="button"
+                      onClick={() => { setInput(prompt); setShowTemplates(false); textareaRef.current?.focus(); }}
+                      className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-[11px] text-primary"
                     >
-                      {t}
+                      {prompt}
                     </button>
                   ))}
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <RefreshCw size={14} className="text-primary" /> Recent prompts
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {recentPrompts.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Recent prompts from your history will appear here.</p>
+                  ) : recentPrompts.slice(0, 6).map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => { setInput(prompt); setShowTemplates(false); textareaRef.current?.focus(); }}
+                      className="rounded-full border border-border bg-background px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 flex-1 overflow-auto pr-1 space-y-5">
+            {filteredTemplateGroups.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border bg-card/60 p-8 text-center">
+                <p className="text-sm text-muted-foreground">No templates matched your search.</p>
+              </div>
+            ) : filteredTemplateGroups.map((cat) => (
+              <div key={cat.category}>
+                <h3 className="mb-3 text-sm font-semibold text-foreground">{cat.category}</h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {cat.templates.map((template) => {
+                    const starred = favoritePrompts.includes(template);
+                    return (
+                      <div key={template} className="rounded-lg border border-border bg-card p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => { setInput(template); setShowTemplates(false); textareaRef.current?.focus(); }}
+                            className="text-left text-sm text-foreground hover:text-primary"
+                          >
+                            {template}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleFavoritePrompt(template)}
+                            className={`rounded-full p-1 ${starred ? "text-warning" : "text-muted-foreground hover:text-foreground"}`}
+                            title={starred ? "Remove from favorites" : "Add to favorites"}
+                          >
+                            <Star size={12} fill={starred ? "currentColor" : "none"} />
+                          </button>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground">Click to add this to the query box</span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 border-border text-[11px]"
+                            onClick={() => { setInput(template); setShowTemplates(false); textareaRef.current?.focus(); }}
+                          >
+                            Use template
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}

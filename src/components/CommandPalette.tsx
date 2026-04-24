@@ -5,6 +5,7 @@ import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Uplo
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { canAccessAdmin } from "@/lib/plans";
 
 interface CommandItem {
@@ -24,6 +25,7 @@ export function CommandPalette() {
   const { datasets } = useDatasetStore();
   const { entries } = useHistoryStore();
   const { user } = useAuthStore();
+  const { savedSessions, boards, presentationMode, setPresentationMode, brandName } = useWorkspaceStore();
   const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
 
   useEffect(() => {
@@ -52,6 +54,7 @@ export function CommandPalette() {
     { id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" },
     ...(datasets[0] ? [{ id: "action-latest-dataset", label: "Open latest dataset in Query", description: datasets[0].fileName, icon: Database, action: () => navigate(`/app/query?dataset=${datasets[0].id}`), section: "Actions" }] : []),
     { id: "action-providers", label: "Open provider settings", icon: Key, action: () => navigate("/app/settings"), section: "Actions" },
+    { id: "action-presentation", label: presentationMode ? "Exit presentation mode" : "Enter presentation mode", description: brandName, icon: LayoutDashboard, action: () => setPresentationMode(!presentationMode), section: "Actions" },
     ...(query ? [{ id: "action-clear-command-search", label: "Clear command search", icon: X, action: () => setQuery(""), section: "Actions" }] : []),
     ...datasets.map((d) => ({
       id: `ds-${d.id}`,
@@ -69,9 +72,28 @@ export function CommandPalette() {
       action: () => navigate("/app/history"),
       section: "Recent Queries",
     })),
+    ...savedSessions.slice(0, 6).map((session) => ({
+      id: `session-${session.id}`,
+      label: session.title,
+      description: `${session.datasetName} / saved session`,
+      icon: Bookmark,
+      action: () => navigate(`/app/query?dataset=${session.datasetId}&q=${encodeURIComponent(session.lastQuery)}`),
+      section: "Saved Sessions",
+    })),
+    ...boards.slice(0, 6).map((board) => ({
+      id: `board-${board.id}`,
+      label: board.name,
+      description: `${board.insightIds.length} insights`,
+      icon: Bookmark,
+      action: () => navigate("/app/insights"),
+      section: "Insight Boards",
+    })),
   ];
 
-  const filtered = items.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()));
+  const filtered = items.filter((item) => {
+    const q = query.toLowerCase();
+    return item.label.toLowerCase().includes(q) || item.description?.toLowerCase().includes(q);
+  });
   const sections = [...new Set(filtered.map((i) => i.section))];
 
   useEffect(() => { setSelectedIndex(0); }, [query]);
@@ -100,6 +122,9 @@ export function CommandPalette() {
               className="flex-1 py-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
             />
             <kbd className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5">ESC</kbd>
+          </div>
+          <div className="border-b border-border bg-card/40 px-4 py-2 text-[11px] text-muted-foreground">
+            Search navigation, boards, saved sessions, and workspace actions.
           </div>
           <div className="max-h-72 overflow-auto scrollbar-thin p-2">
             {filtered.length === 0 ? (

@@ -10,11 +10,11 @@ import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
-
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useNotificationsStore } from "@/stores/notifications-store";
 import { Badge } from "@/components/ui/badge";
 import { ProviderLogo } from "@/components/ProviderLogo";
-import { Clock, Database, MessageSquare, Settings } from "lucide-react";
+import { Clock, Database, Layout, MessageSquare, Settings, Sparkles } from "lucide-react";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/dashboard": "Dashboard",
@@ -37,20 +37,18 @@ export default function AppLayout() {
   const { fetchInsights } = useInsightsStore();
   const { fetchPlan } = usePlanStore();
   const { fetchNotifications } = useNotificationsStore();
+  const { brandName, brandTagline, presentationMode, showProviderBadge } = useWorkspaceStore();
 
-  // Load all user data from MongoDB on mount, and apply saved theme immediately
   useEffect(() => {
     if (user) {
       fetchDatasets();
-
       fetchHistory();
       fetchSettings();
       fetchInsights();
       fetchNotifications();
       fetchPlan();
-      hydrateRole(); // Refresh role from server in case admin changed it
+      hydrateRole();
     } else {
-      // Ensure default theme is applied even before settings load
       applyTheme(theme);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -63,15 +61,28 @@ export default function AppLayout() {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-background shrink-0">
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">DataVault</span>
+            <span className="text-muted-foreground">{brandName}</span>
             <span className="text-muted-foreground">/</span>
             <span className="text-foreground font-medium">{BREADCRUMBS[location.pathname] || "Page"}</span>
+            {presentationMode && (
+              <Badge variant="outline" className="ml-2 gap-1 border-border bg-card text-[10px] text-muted-foreground">
+                <Layout size={10} /> Presentation
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className="border-border text-xs text-muted-foreground font-mono gap-1.5 cursor-default">
-              <ProviderLogo provider={activeProvider} size="sm" />
-              {PROVIDER_LABELS[activeProvider]} · {activeModel}
-            </Badge>
+            {showProviderBadge && !presentationMode && (
+              <Badge variant="outline" className="border-border text-xs text-muted-foreground font-mono gap-1.5 cursor-default">
+                <ProviderLogo provider={activeProvider} size="sm" />
+                {PROVIDER_LABELS[activeProvider]} · {activeModel}
+              </Badge>
+            )}
+            {presentationMode && (
+              <div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-[11px] text-muted-foreground lg:flex">
+                <Sparkles size={12} className="text-primary" />
+                <span className="max-w-[200px] truncate">{brandTagline}</span>
+              </div>
+            )}
             <NotificationBell />
             <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-semibold">
               {user.avatarInitials}

@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useInsightsStore, type Insight } from "@/stores/insights-store";
+import { useWorkspaceStore, type BrandAccent, type InsightBoard } from "@/stores/workspace-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { toast } from "sonner";
 
@@ -22,8 +23,37 @@ const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> = 
   pink:   { bg: "bg-pink-500/10",   text: "text-pink-400",   border: "border-pink-500/20" },
 };
 
-function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportPdf }: { insight: Insight; onEdit: () => void; onDelete: () => void; pinned: boolean; onTogglePin: () => void; onExportPdf: () => void }) {
+const BOARD_COLOR_MAP: Record<BrandAccent, string> = {
+  blue: "border-blue-500/20 bg-blue-500/10 text-blue-400",
+  emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-400",
+  amber: "border-amber-500/20 bg-amber-500/10 text-amber-400",
+  rose: "border-rose-500/20 bg-rose-500/10 text-rose-400",
+};
+
+function InsightCard({
+  insight,
+  boards,
+  onEdit,
+  onDelete,
+  pinned,
+  onTogglePin,
+  onExportPdf,
+  onAssignBoard,
+  onRemoveBoard,
+}: {
+  insight: Insight;
+  boards: InsightBoard[];
+  onEdit: () => void;
+  onDelete: () => void;
+  pinned: boolean;
+  onTogglePin: () => void;
+  onExportPdf: () => void;
+  onAssignBoard: (boardId: string) => void;
+  onRemoveBoard: (boardId: string) => void;
+}) {
   const colors = COLOR_MAP[insight.color] || COLOR_MAP.blue;
+  const memberships = boards.filter((board) => board.insightIds.includes(insight.id));
+  const availableBoards = boards.filter((board) => !board.insightIds.includes(insight.id));
   const resultPreview = typeof insight.result === "string"
     ? insight.result.slice(0, 200)
     : JSON.stringify(insight.result, null, 2)?.slice(0, 200);
@@ -78,6 +108,17 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
                 <Tag size={8} className="mr-1" />{tag}
               </Badge>
             ))}
+            {memberships.map((board) => (
+              <button
+                key={board.id}
+                type="button"
+                onClick={() => onRemoveBoard(board.id)}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${BOARD_COLOR_MAP[board.color]}`}
+                title={`Remove from ${board.name}`}
+              >
+                {board.name}
+              </button>
+            ))}
           </div>
           <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <span className="flex min-w-0 items-center gap-1">
@@ -87,6 +128,20 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
             <span className="flex shrink-0 items-center gap-1"><Calendar size={9} />{new Date(insight.createdAt).toLocaleDateString()}</span>
           </div>
         </div>
+        {availableBoards.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {availableBoards.slice(0, 3).map((board) => (
+              <button
+                key={board.id}
+                type="button"
+                onClick={() => onAssignBoard(board.id)}
+                className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+              >
+                Add to {board.name}
+              </button>
+            ))}
+          </div>
+        )}
       </Card>
     </motion.div>
   );
@@ -95,9 +150,15 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
 export default function InsightsPage() {
   const { insights, updateInsight, removeInsight } = useInsightsStore();
   const { checkExport } = usePlanStore();
+  const { boards, addBoard, assignInsightToBoard, removeInsightFromBoard } = useWorkspaceStore();
   const [search, setSearch] = useState("");
   const [colorFilter, setColorFilter] = useState("all");
   const [tagFilter, setTagFilter] = useState("all");
+  const [boardFilter, setBoardFilter] = useState("all");
+  const [showCreateBoard, setShowCreateBoard] = useState(false);
+  const [boardName, setBoardName] = useState("");
+  const [boardDescription, setBoardDescription] = useState("");
+  const [boardColor, setBoardColor] = useState<BrandAccent>("blue");
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("datavault-pinned-insights") || "[]"); } catch { return []; }
   });
@@ -115,9 +176,13 @@ export default function InsightsPage() {
       if (search && !i.label.toLowerCase().includes(search.toLowerCase()) && !i.query.toLowerCase().includes(search.toLowerCase())) return false;
       if (colorFilter !== "all" && i.color !== colorFilter) return false;
       if (tagFilter !== "all" && !i.tags.includes(tagFilter)) return false;
+      if (boardFilter !== "all") {
+        const activeBoard = boards.find((board) => board.id === boardFilter);
+        if (!activeBoard?.insightIds.includes(i.id)) return false;
+      }
       return true;
     }).sort((a, b) => Number(pinnedIds.includes(b.id)) - Number(pinnedIds.includes(a.id)));
-  }, [insights, search, colorFilter, tagFilter, pinnedIds]);
+  }, [insights, search, colorFilter, tagFilter, boardFilter, boards, pinnedIds]);
 
   const allTags = useMemo(() => Array.from(new Set(insights.flatMap((insight) => insight.tags))).sort(), [insights]);
 
@@ -171,12 +236,74 @@ export default function InsightsPage() {
     }
   };
 
+  const handleCreateBoard = () => {
+    if (!boardName.trim()) {
+      toast.error("Please give the board a name");
+      return;
+    }
+    addBoard({
+      name: boardName.trim(),
+      description: boardDescription.trim(),
+      color: boardColor,
+    });
+    setBoardName("");
+    setBoardDescription("");
+    setBoardColor("blue");
+    setShowCreateBoard(false);
+    toast.success("Insight board created");
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Saved Insights</h1>
           <p className="text-sm text-muted-foreground mt-1">{insights.length} bookmarked results</p>
+        </div>
+        <Button onClick={() => setShowCreateBoard(true)}>New board</Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card className="border-border bg-background-secondary p-4">
+          <p className="text-xs text-muted-foreground">Saved insights</p>
+          <p className="mt-2 text-2xl font-semibold text-foreground">{insights.length}</p>
+        </Card>
+        <Card className="border-border bg-background-secondary p-4">
+          <p className="text-xs text-muted-foreground">Pinned highlights</p>
+          <p className="mt-2 text-2xl font-semibold text-foreground">{pinnedIds.length}</p>
+        </Card>
+        <Card className="border-border bg-background-secondary p-4">
+          <p className="text-xs text-muted-foreground">Insight boards</p>
+          <p className="mt-2 text-2xl font-semibold text-foreground">{boards.length}</p>
+        </Card>
+      </div>
+
+      <div className="rounded-xl border border-border bg-background-secondary p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">Boards</p>
+            <p className="text-xs text-muted-foreground">Organize saved insights into client-ready collections.</p>
+          </div>
+          <Badge variant="outline" className="border-border">{boards.reduce((sum, board) => sum + board.insightIds.length, 0)} assignments</Badge>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setBoardFilter("all")}
+            className={`rounded-full border px-3 py-1 text-xs ${boardFilter === "all" ? "border-primary/20 bg-primary/5 text-primary" : "border-border text-muted-foreground"}`}
+          >
+            All insights
+          </button>
+          {boards.map((board) => (
+            <button
+              key={board.id}
+              type="button"
+              onClick={() => setBoardFilter(board.id)}
+              className={`rounded-full border px-3 py-1 text-xs ${boardFilter === board.id ? BOARD_COLOR_MAP[board.color] : "border-border text-muted-foreground"}`}
+            >
+              {board.name} ({board.insightIds.length})
+            </button>
+          ))}
         </div>
       </div>
 
@@ -217,15 +344,62 @@ export default function InsightsPage() {
             <InsightCard
               key={insight.id}
               insight={insight}
+              boards={boards}
               onEdit={() => openEdit(insight)}
               onDelete={() => setDeleteId(insight.id)}
               pinned={pinnedIds.includes(insight.id)}
               onTogglePin={() => togglePinned(insight.id)}
               onExportPdf={() => handleExportPdf(insight)}
+              onAssignBoard={(boardId) => {
+                assignInsightToBoard(boardId, insight.id);
+                toast.success("Insight added to board");
+              }}
+              onRemoveBoard={(boardId) => {
+                removeInsightFromBoard(boardId, insight.id);
+                toast.success("Insight removed from board");
+              }}
             />
           ))}
         </div>
       )}
+
+      <Dialog open={showCreateBoard} onOpenChange={setShowCreateBoard}>
+        <DialogContent className="bg-background-secondary border-border">
+          <DialogHeader>
+            <DialogTitle>Create Insight Board</DialogTitle>
+            <DialogDescription>Set up a polished collection for client walkthroughs or recurring reviews.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-xs text-muted-foreground">Board name</label>
+              <Input value={boardName} onChange={(e) => setBoardName(e.target.value)} className="mt-1 bg-card border-border" placeholder="Executive Briefing" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Description</label>
+              <Textarea value={boardDescription} onChange={(e) => setBoardDescription(e.target.value)} className="mt-1 min-h-[72px] bg-card border-border" placeholder="QBR highlights, customer demo, monthly operating review..." />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Color</label>
+              <div className="mt-2 flex gap-2">
+                {(Object.keys(BOARD_COLOR_MAP) as BrandAccent[]).map((accent) => (
+                  <button
+                    key={accent}
+                    type="button"
+                    onClick={() => setBoardColor(accent)}
+                    className={`rounded-full border px-3 py-1 text-xs ${boardColor === accent ? BOARD_COLOR_MAP[accent] : "border-border text-muted-foreground"}`}
+                  >
+                    {accent}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateBoard(false)} className="border-border">Cancel</Button>
+            <Button onClick={handleCreateBoard}>Create board</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={!!editInsight} onOpenChange={(open) => { if (!open) setEditInsight(null); }}>

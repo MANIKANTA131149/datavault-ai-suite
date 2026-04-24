@@ -9,6 +9,7 @@ import { useHistoryStore, type HistoryEntry } from "@/stores/history-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { PROVIDER_LABELS } from "@/stores/llm-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -77,6 +78,7 @@ export default function HistoryPage() {
   const { entries } = useHistoryStore();
   const { checkExport } = usePlanStore();
   const { datasets } = useDatasetStore();
+  const { pinnedHistoryIds, togglePinnedHistory, compareHistoryIds, setCompareHistoryIds, savedSessions } = useWorkspaceStore();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -84,19 +86,9 @@ export default function HistoryPage() {
   const [datasetFilter, setDatasetFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [compareIds, setCompareIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-
-  useEffect(() => {
-    try {
-      setFavoriteIds(JSON.parse(localStorage.getItem("datavault-favorite-history") || "[]"));
-    } catch {
-      setFavoriteIds([]);
-    }
-  }, []);
 
   const datasetNames = useMemo(() => {
     return Array.from(new Set(entries.map((entry) => entry.datasetName).filter(Boolean))).sort();
@@ -109,11 +101,11 @@ export default function HistoryPage() {
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
       if (providerFilter !== "all" && e.provider !== providerFilter) return false;
       if (datasetFilter !== "all" && e.datasetName !== datasetFilter) return false;
-      if (favoritesOnly && !favoriteIds.includes(e.id)) return false;
+      if (favoritesOnly && !pinnedHistoryIds.includes(e.id)) return false;
       if (!isWithinDateFilter(e.date, dateFilter)) return false;
       return true;
     });
-  }, [entries, search, statusFilter, providerFilter, datasetFilter, dateFilter, favoritesOnly, favoriteIds]);
+  }, [entries, search, statusFilter, providerFilter, datasetFilter, dateFilter, favoritesOnly, pinnedHistoryIds]);
 
   useEffect(() => {
     setPage(1);
@@ -133,14 +125,6 @@ export default function HistoryPage() {
       return acc;
     }, {});
   }, [pageEntries]);
-
-  const toggleFavorite = (id: string) => {
-    setFavoriteIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [id, ...prev];
-      localStorage.setItem("datavault-favorite-history", JSON.stringify(next));
-      return next;
-    });
-  };
 
   const copyQuestion = async (query: string) => {
     await navigator.clipboard.writeText(query);
@@ -162,7 +146,10 @@ export default function HistoryPage() {
   };
 
   const toggleCompare = (id: string) => {
-    setCompareIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id].slice(-2));
+    const next = compareHistoryIds.includes(id)
+      ? compareHistoryIds.filter((item) => item !== id)
+      : [...compareHistoryIds, id].slice(-2);
+    setCompareHistoryIds(next);
   };
 
   const replayQuery = (entry: HistoryEntry) => {
@@ -198,6 +185,21 @@ export default function HistoryPage() {
         <Button variant="outline" className="border-border" onClick={exportCSV} disabled={entries.length === 0}>
           <Download size={14} className="mr-2" /> Export
         </Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-lg border border-border bg-background-secondary p-4">
+          <p className="text-xs text-muted-foreground">Pinned queries</p>
+          <p className="mt-2 text-2xl font-semibold text-foreground">{pinnedHistoryIds.length}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-background-secondary p-4">
+          <p className="text-xs text-muted-foreground">Compare tray</p>
+          <p className="mt-2 text-2xl font-semibold text-foreground">{compareHistoryIds.length}/2</p>
+        </div>
+        <div className="rounded-lg border border-border bg-background-secondary p-4">
+          <p className="text-xs text-muted-foreground">Saved sessions</p>
+          <p className="mt-2 text-2xl font-semibold text-foreground">{savedSessions.length}</p>
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -238,6 +240,9 @@ export default function HistoryPage() {
             {Object.entries(PROVIDER_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Button variant={favoritesOnly ? "default" : "outline"} className="border-border" onClick={() => setFavoritesOnly((prev) => !prev)}>
+          <Star size={14} className="mr-2" /> {favoritesOnly ? "Pinned only" : "Show pinned"}
+        </Button>
       </div>
 
       {filtered.length > 0 && (
@@ -283,19 +288,39 @@ export default function HistoryPage() {
         </div>
       )}
 
-      {compareIds.length > 0 && (
+      {pinnedHistoryIds.length > 0 && (
+        <div className="rounded-md border border-border bg-background-secondary p-3">
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+            <Star size={14} /> Pinned queries
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {entries.filter((entry) => pinnedHistoryIds.includes(entry.id)).slice(0, 6).map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => replayQuery(entry)}
+                className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+              >
+                {entry.query}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {compareHistoryIds.length > 0 && (
         <div className="rounded-md border border-border bg-background-secondary p-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
             <GitCompare size={14} /> Compare queries
           </div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {compareIds.map((id) => {
+            {compareHistoryIds.map((id) => {
               const entry = entries.find((item) => item.id === id);
               if (!entry) return null;
               return (
                 <div key={id} className="rounded-md border border-border bg-card p-3 text-xs">
                   <p className="truncate font-medium text-foreground">{entry.query}</p>
-                  <p className="mt-1 text-muted-foreground">{entry.datasetName} · {PROVIDER_LABELS[entry.provider]}</p>
+                  <p className="mt-1 text-muted-foreground">{entry.datasetName} / {PROVIDER_LABELS[entry.provider]}</p>
                   <div className="mt-2 grid grid-cols-3 gap-2">
                     <Badge variant="outline" className="justify-center border-border">{entry.durationMs}ms</Badge>
                     <Badge variant="outline" className="justify-center border-border">{entry.totalTokens.toLocaleString()} tokens</Badge>
@@ -342,7 +367,7 @@ export default function HistoryPage() {
                     <td className="px-4 py-3 max-w-[250px] truncate text-foreground">{entry.query}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{entry.datasetName}</td>
                     <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="text-xs text-muted-foreground">{PROVIDER_LABELS[entry.provider]} · {entry.model}</span>
+                      <span className="text-xs text-muted-foreground">{PROVIDER_LABELS[entry.provider]} / {entry.model}</span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{entry.turns}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{entry.totalTokens.toLocaleString()}</td>
@@ -356,19 +381,19 @@ export default function HistoryPage() {
                           type="button"
                           aria-label="Favorite query"
                           title="Favorite query"
-                          onClick={(e) => { e.stopPropagation(); toggleFavorite(entry.id); }}
-                          className={`p-1 rounded hover:bg-background-secondary ${favoriteIds.includes(entry.id) ? "text-warning" : "text-muted-foreground hover:text-foreground"}`}
+                          onClick={(e) => { e.stopPropagation(); togglePinnedHistory(entry.id); }}
+                          className={`p-1 rounded hover:bg-background-secondary ${pinnedHistoryIds.includes(entry.id) ? "text-warning" : "text-muted-foreground hover:text-foreground"}`}
                         >
-                          <Star size={13} fill={favoriteIds.includes(entry.id) ? "currentColor" : "none"} />
+                          <Star size={13} fill={pinnedHistoryIds.includes(entry.id) ? "currentColor" : "none"} />
                         </button>
                         <button
                           type="button"
                           aria-label="Compare query"
                           title="Compare query"
                           onClick={(e) => { e.stopPropagation(); toggleCompare(entry.id); }}
-                          className={`p-1 rounded hover:bg-background-secondary ${compareIds.includes(entry.id) ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                          className={`p-1 rounded hover:bg-background-secondary ${compareHistoryIds.includes(entry.id) ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
                         >
-                          {compareIds.includes(entry.id) ? <CheckSquare size={13} /> : <Square size={13} />}
+                          {compareHistoryIds.includes(entry.id) ? <CheckSquare size={13} /> : <Square size={13} />}
                         </button>
                         <button
                           type="button"

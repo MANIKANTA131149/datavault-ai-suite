@@ -17,7 +17,7 @@ interface InsightsState {
   insights: Insight[];
   loading: boolean;
   fetchInsights: () => Promise<void>;
-  addInsight: (insight: Omit<Insight, "id" | "createdAt">) => Promise<void>;
+  addInsight: (insight: Omit<Insight, "id" | "createdAt">) => Promise<string>;
   updateInsight: (id: string, updates: Partial<Pick<Insight, "label" | "notes" | "color" | "tags">>) => Promise<void>;
   removeInsight: (id: string) => Promise<void>;
   clearInsights: () => void;
@@ -51,6 +51,7 @@ export const useInsightsStore = create<InsightsState>()((set, get) => ({
       set((state) => ({ insights: state.insights.filter((i) => i.id !== id) }));
       throw err;
     }
+    return id;
   },
 
   updateInsight: async (id, updates) => {
