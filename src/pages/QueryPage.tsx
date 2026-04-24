@@ -34,7 +34,7 @@ import { toast } from "sonner";
 import { generatePDF } from "@/lib/pdf-report";
 import html2canvas from "html2canvas";
 import {
-  BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area,
+  BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, CartesianGrid,
   XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend as RechartsLegend, LabelList,
 } from "recharts";
 
@@ -57,6 +57,9 @@ const CHART_COLORS = [
 const DEFAULT_CHART_ROWS = 50;
 const CHART_RENDER_LIMIT = 1000;
 const CHART_META_SAMPLE_LIMIT = 2000;
+const CHART_VALUE_LABEL_LIMIT = 12;
+const CHART_PIE_LABEL_LIMIT = 6;
+const CHART_PIE_SLICE_LIMIT = 8;
 const STEP_RESULT_PREVIEW_ROWS = 5;
 const STEP_RESULT_PREVIEW_LIMIT = 1200;
 const RESULT_TABLE_ROW_HEIGHT: Record<ResultDensity, number> = {
@@ -176,6 +179,11 @@ function generateSmartSuggestions(columns: ColumnInfo[]): string[] {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 type ChartType = "bar" | "pie" | "line" | "area";
 
+const CHART_VALUE_KEY_PATTERN = /(count|total|sum|amount|revenue|sales|price|cost|qty|quantity|volume|score|rate|ratio|percent|percentage|avg|average|mean|median|min|max|value|profit|loss|margin|duration|age|size|weight|distance|time|hours?|minutes?|seconds?|power|horsepower|hp|torque|displacement|cc)/i;
+const CHART_LABEL_KEY_PATTERN = /(name|title|label|category|type|group|bucket|segment|brand|manufacturer|company|country|city|state|region|department|team|player|actor|director|genre|cast|date|day|week|month|quarter|year|time|period|hour)/i;
+const CHART_TEMPORAL_KEY_PATTERN = /(date|day|week|month|quarter|year|time|period|hour)/i;
+const CHART_ID_KEY_PATTERN = /(^id$|_id$|^id_|identifier|index|serial|code)/i;
+
 function toChartNumber(value: any): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -185,6 +193,100 @@ function toChartNumber(value: any): number | null {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
+}
+
+function isChartDateLike(value: any) {
+  const text = String(value ?? "").trim();
+  return text.length > 4 && !Number.isNaN(Date.parse(text));
+}
+
+function isLikelyYearNumber(value: number) {
+  return Number.isInteger(value) && value >= 1800 && value <= 2200;
+}
+
+function isMonotonic(values: number[]) {
+  if (values.length < 2) return false;
+  let ascending = true;
+  let descending = true;
+  for (let i = 1; i < values.length; i += 1) {
+    if (values[i] < values[i - 1]) ascending = false;
+    if (values[i] > values[i - 1]) descending = false;
+  }
+  return ascending || descending;
+}
+
+function getChartKeyStats(rows: Record<string, any>[], key: string) {
+  const rawValues = rows
+    .map((row) => row?.[key])
+    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "");
+  const numericValues = rawValues
+    .map((value) => toChartNumber(value))
+    .filter((value): value is number => value !== null);
+  const uniqueCount = new Set(rawValues.map((value) => String(value))).size;
+  const min = numericValues.length > 0 ? Math.min(...numericValues) : 0;
+  const max = numericValues.length > 0 ? Math.max(...numericValues) : 0;
+  const lowerKey = key.toLowerCase();
+
+  return {
+    sampleCount: rawValues.length,
+    numericCount: numericValues.length,
+    dateCount: rawValues.filter((value) => isChartDateLike(value)).length,
+    uniqueCount,
+    numericRange: numericValues.length > 0 ? max - min : 0,
+    isMostlyNumeric: numericValues.length >= Math.max(2, Math.ceil(rawValues.length * 0.6)),
+    isMostlyDate: rawValues.length > 0 && rawValues.filter((value) => isChartDateLike(value)).length >= Math.max(2, Math.ceil(rawValues.length * 0.6)),
+    isMostlyYearLike: numericValues.length >= Math.max(2, Math.ceil(rawValues.length * 0.6)) && numericValues.every((value) => isLikelyYearNumber(value)),
+    isSequentialNumeric: numericValues.length >= 2 && numericValues.every((value) => Number.isInteger(value)) && isMonotonic(numericValues),
+    isIntegerOnly: numericValues.length > 0 && numericValues.every((value) => Number.isInteger(value)),
+    lowerKey,
+  };
+}
+
+function scoreChartValueKey(
+  key: string,
+  stats: ReturnType<typeof getChartKeyStats>,
+) {
+  if (stats.numericCount === 0) return Number.NEGATIVE_INFINITY;
+
+  let score = 0;
+  if (CHART_VALUE_KEY_PATTERN.test(stats.lowerKey)) score += 8;
+  if (CHART_LABEL_KEY_PATTERN.test(stats.lowerKey)) score -= 5;
+  if (CHART_TEMPORAL_KEY_PATTERN.test(stats.lowerKey)) score -= 7;
+  if (CHART_ID_KEY_PATTERN.test(stats.lowerKey)) score -= 8;
+  if (stats.isMostlyYearLike) score -= 8;
+  if (stats.uniqueCount <= 1) score -= 4;
+  if (!stats.isIntegerOnly) score += 1;
+  if (stats.numericRange > 0) score += 2;
+  return score;
+}
+
+function scoreChartLabelKey(
+  key: string,
+  stats: ReturnType<typeof getChartKeyStats>,
+  valueKey: string,
+) {
+  if (key === valueKey || stats.sampleCount === 0) return Number.NEGATIVE_INFINITY;
+
+  let score = 0;
+  if (!stats.isMostlyNumeric) score += 7;
+  if (stats.isMostlyDate) score += 8;
+  if (stats.isMostlyYearLike) score += 8;
+  if (CHART_LABEL_KEY_PATTERN.test(stats.lowerKey)) score += 6;
+  if (CHART_TEMPORAL_KEY_PATTERN.test(stats.lowerKey)) score += 6;
+  if (CHART_VALUE_KEY_PATTERN.test(stats.lowerKey)) score -= 4;
+  if (CHART_ID_KEY_PATTERN.test(stats.lowerKey)) score -= 7;
+  if (stats.isSequentialNumeric) score += 3;
+  if (stats.uniqueCount <= 1) score -= 4;
+  return score;
+}
+
+function pickBestChartKey(
+  keys: string[],
+  scorer: (key: string) => number,
+) {
+  return keys
+    .map((key, index) => ({ key, index, score: scorer(key) }))
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index))[0]?.key || "";
 }
 
 function getChartMeta(result: any) {
@@ -201,17 +303,14 @@ function getChartMeta(result: any) {
     : [];
   const chartSourceRows = rows.length > CHART_META_SAMPLE_LIMIT ? rows.slice(0, CHART_META_SAMPLE_LIMIT) : rows;
   const keys = chartSourceRows.length > 0 ? Object.keys(chartSourceRows[0]) : [];
-  const numericKeys = keys.filter((k) => chartSourceRows.some((row) => toChartNumber(row[k]) !== null));
-  const nonNumericKeys = keys.filter((k) => !numericKeys.includes(k));
-  const valueKey = numericKeys[0] || "";
-  // Prefer a non-numeric key as label; fallback to the second key or first key
-  const labelKey = nonNumericKeys[0] || (keys.length > 1 ? keys.find((k) => k !== valueKey) : keys[0]) || "";
-  const dateKeys = keys.filter((k) =>
-    chartSourceRows.some((row) => {
-      const value = String(row[k] ?? "");
-      return value.length > 4 && !Number.isNaN(Date.parse(value));
-    })
+  const keyStats = Object.fromEntries(keys.map((key) => [key, getChartKeyStats(chartSourceRows, key)])) as Record<string, ReturnType<typeof getChartKeyStats>>;
+  const numericKeys = keys.filter((key) => keyStats[key].numericCount > 0);
+  const valueKey = pickBestChartKey(numericKeys, (key) => scoreChartValueKey(key, keyStats[key]));
+  const labelKey = pickBestChartKey(
+    keys.filter((key) => key !== valueKey),
+    (key) => scoreChartLabelKey(key, keyStats[key], valueKey),
   );
+  const dateKeys = keys.filter((key) => keyStats[key].isMostlyDate || keyStats[key].isMostlyYearLike || CHART_TEMPORAL_KEY_PATTERN.test(keyStats[key].lowerKey));
   const chartRows = valueKey
     ? chartSourceRows
         .map((row) => {
@@ -244,6 +343,46 @@ function buildStepResultPreview(result: any) {
   return resultJson.length > STEP_RESULT_PREVIEW_LIMIT
     ? `${resultJson.slice(0, STEP_RESULT_PREVIEW_LIMIT)}...`
     : resultJson;
+}
+
+function truncateChartLabel(value: any, maxLength = 18) {
+  const text = String(value ?? "");
+  return text.length > maxLength ? `${text.slice(0, Math.max(1, maxLength - 1))}…` : text;
+}
+
+function formatChartValue(value: any) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return String(value ?? "");
+  if (Math.abs(numeric) >= 1000) {
+    return new Intl.NumberFormat("en", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(numeric);
+  }
+  return numeric.toLocaleString(undefined, { maximumFractionDigits: numeric % 1 === 0 ? 0 : 2 });
+}
+
+function buildPieChartRows(
+  rows: Record<string, any>[],
+  labelKey: string,
+  valueKey: string,
+  maxSlices = CHART_PIE_SLICE_LIMIT,
+) {
+  if (!labelKey || !valueKey || rows.length <= maxSlices) return rows;
+
+  const head = rows.slice(0, maxSlices);
+  const tail = rows.slice(maxSlices);
+  const otherValue = tail.reduce((sum, row) => sum + (toChartNumber(row?.[valueKey]) ?? 0), 0);
+  if (!Number.isFinite(otherValue) || otherValue <= 0) return head;
+
+  return [
+    ...head,
+    {
+      [labelKey]: `Other (${tail.length})`,
+      [valueKey]: otherValue,
+      __isOther: true,
+    },
+  ];
 }
 
 function formatOperationLabel(operation?: string) {
@@ -587,31 +726,44 @@ const StepsTimeline = memo(function StepsTimeline({
   live?: boolean;
 }) {
   if (!steps.length) return null;
+  const [open, setOpen] = useState(live);
 
   return (
-    <div className="ml-10 rounded-md border border-border bg-background-secondary/45 p-3">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <Collapsible open={open} onOpenChange={setOpen} className="ml-10 rounded-md border border-border bg-background-secondary/45">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-3 text-left transition-colors hover:bg-card/40"
+        >
+          <div>
+            <p className="text-xs font-medium text-foreground">{live ? "Live agent steps" : "Agent steps"}</p>
+            <p className="text-xs text-muted-foreground">
+              {open
+                ? "Showing the full step-by-step flow used to answer this query."
+                : "Click to show the step-by-step flow used to answer this query."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="border-border bg-card text-xs text-foreground">
+              {steps.length} step{steps.length === 1 ? "" : "s"}
+            </Badge>
+            {open ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+          </div>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="px-3 pb-3">
         <div>
-          <p className="text-xs font-medium text-foreground">{live ? "Live agent steps" : "Agent steps"}</p>
-          <p className="text-xs text-muted-foreground">
-            Showing the full step-by-step flow used to answer this query.
-          </p>
+          {steps.map((step, index) => (
+            <StepCard
+              key={`${step.turn}-${step.command}-${index}`}
+              step={step}
+              defaultExpanded={false}
+              showConnector={index < steps.length - 1}
+            />
+          ))}
         </div>
-        <Badge variant="secondary" className="border-border bg-card text-xs text-foreground">
-          {steps.length} step{steps.length === 1 ? "" : "s"}
-        </Badge>
-      </div>
-      <div>
-        {steps.map((step, index) => (
-          <StepCard
-            key={`${step.turn}-${step.command}-${index}`}
-            step={step}
-            defaultExpanded
-            showConnector={index < steps.length - 1}
-          />
-        ))}
-      </div>
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 });
 
@@ -658,18 +810,66 @@ const ResultPanel = memo(function ResultPanel({
     setYAxisLabel(valueKey);
   }, [query, labelKey, valueKey]);
 
+  const autoTopSort = chartSort === "none" && topN > 0 && (chartType === "bar" || chartType === "pie");
+  const effectiveChartSort = autoTopSort ? "desc" : chartSort;
   const sortedChartRows = useMemo(() => {
     let next = [...chartRows];
-    if (chartSort !== "none" && valueKey) {
-      next.sort((a, b) => chartSort === "asc" ? Number(a[valueKey]) - Number(b[valueKey]) : Number(b[valueKey]) - Number(a[valueKey]));
+    if (effectiveChartSort !== "none" && valueKey) {
+      next.sort((a, b) => effectiveChartSort === "asc" ? Number(a[valueKey]) - Number(b[valueKey]) : Number(b[valueKey]) - Number(a[valueKey]));
     }
     return next;
-  }, [chartRows, chartSort, valueKey]);
+  }, [chartRows, effectiveChartSort, valueKey]);
   const visibleChartRows = useMemo(() => {
     const selected = topN > 0 ? sortedChartRows.slice(0, topN) : sortedChartRows;
     return selected.length > CHART_RENDER_LIMIT ? selected.slice(0, CHART_RENDER_LIMIT) : selected;
   }, [sortedChartRows, topN]);
+  const pieChartRows = useMemo(
+    () => buildPieChartRows(visibleChartRows, labelKey, valueKey),
+    [visibleChartRows, labelKey, valueKey]
+  );
+  const pieChartGroupedCount = useMemo(() => {
+    if (pieChartRows.length >= visibleChartRows.length) return 0;
+    return Math.max(0, visibleChartRows.length - (pieChartRows.length - 1));
+  }, [pieChartRows.length, visibleChartRows.length]);
   const chartRenderLimited = topN === 0 && sortedChartRows.length > CHART_RENDER_LIMIT;
+  const chartTopNOptions = useMemo(() => {
+    const candidates = [5, 10, 20, DEFAULT_CHART_ROWS, 100, 250]
+      .filter((value) => value > 0 && value < sortedChartRows.length);
+    if (topN > 0 && topN < sortedChartRows.length) candidates.push(topN);
+    return Array.from(new Set(candidates)).sort((a, b) => a - b);
+  }, [sortedChartRows.length, topN]);
+  const longestVisibleLabel = useMemo(
+    () => visibleChartRows.reduce((max, row) => Math.max(max, String(row?.[labelKey] ?? "").length), 0),
+    [visibleChartRows, labelKey]
+  );
+  const rotateXAxisTicks = chartType !== "pie" && (visibleChartRows.length > 6 || longestVisibleLabel > 14);
+  const xAxisInterval = useMemo(() => {
+    if (chartType === "pie") return 0;
+    if (visibleChartRows.length > 24) return Math.ceil(visibleChartRows.length / 8) - 1;
+    if (visibleChartRows.length > 12) return 1;
+    return 0;
+  }, [chartType, visibleChartRows.length]);
+  const canShowValueLabels = chartType === "pie"
+    ? showLabels && pieChartRows.length <= CHART_PIE_LABEL_LIMIT
+    : showLabels && visibleChartRows.length <= CHART_VALUE_LABEL_LIMIT;
+  const chartMargin = useMemo(() => ({
+    top: 8,
+    right: chartType === "pie" ? 20 : 12,
+    left: chartType === "pie" ? 20 : 4,
+    bottom: chartType === "pie" ? 12 : rotateXAxisTicks ? 70 : 30,
+  }), [chartType, rotateXAxisTicks]);
+  const chartControlsGridClass = fullscreen ? "grid-cols-2" : "grid-cols-1";
+  const chartTitleText = chartTitle || query || "Chart";
+  const chartSummaryText = [
+    labelKey && valueKey ? `${labelKey} vs ${valueKey}` : "",
+    topN > 0
+      ? chartType === "line" || chartType === "area"
+        ? `Showing first ${visibleChartRows.length.toLocaleString()} row${visibleChartRows.length === 1 ? "" : "s"}`
+        : autoTopSort
+          ? `Showing top ${visibleChartRows.length.toLocaleString()} values`
+          : `Showing ${visibleChartRows.length.toLocaleString()} row${visibleChartRows.length === 1 ? "" : "s"}`
+      : `Showing all ${visibleChartRows.length.toLocaleString()} rows`,
+  ].filter(Boolean).join(" • ");
 
   const displayedRows = useMemo(() => {
     const q = resultSearch.trim().toLowerCase();
@@ -810,8 +1010,8 @@ const ResultPanel = memo(function ResultPanel({
             <div className="flex items-center justify-between gap-2 mb-3">
               <div className="flex gap-1">
                 {(["bar", "line", "area", "pie"] as const).map((t) => (
-                  <button key={t} onClick={() => setChartType(t)} title={`${t} chart`} className={`text-xs px-2 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>
-                    <BarChart3 size={12} />
+                  <button key={t} onClick={() => setChartType(t)} title={`${t} chart`} className={`text-xs px-2.5 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+                    {t}
                   </button>
                 ))}
               </div>
@@ -829,8 +1029,8 @@ const ResultPanel = memo(function ResultPanel({
                 ))}
               </div>
             </div>
-            <div className="mb-3 grid grid-cols-2 gap-2">
-              <Input value={chartTitle} onChange={(e) => setChartTitle(e.target.value)} placeholder="Chart title" className="h-8 bg-card border-border text-xs col-span-2" />
+            <div className={`mb-3 grid gap-2 ${chartControlsGridClass}`}>
+              <Input value={chartTitle} onChange={(e) => setChartTitle(e.target.value)} placeholder="Chart title" className={`h-8 bg-card border-border text-xs ${fullscreen ? "col-span-2" : ""}`} />
               <Input value={xAxisLabel} onChange={(e) => setXAxisLabel(e.target.value)} placeholder="X axis" className="h-8 bg-card border-border text-xs" />
               <Input value={yAxisLabel} onChange={(e) => setYAxisLabel(e.target.value)} placeholder="Y axis" className="h-8 bg-card border-border text-xs" />
               <Select value={chartSort} onValueChange={(v) => setChartSort(v as "none" | "asc" | "desc")}>
@@ -844,9 +1044,12 @@ const ResultPanel = memo(function ResultPanel({
               <Select value={String(topN)} onValueChange={(v) => setTopN(Number(v))}>
                 <SelectTrigger className="h-8 bg-card border-border text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-popover border-border">
-                  <SelectItem value={String(DEFAULT_CHART_ROWS)}>Top {DEFAULT_CHART_ROWS}</SelectItem>
+                  {chartTopNOptions.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {chartType === "line" || chartType === "area" ? `First ${n} rows` : `Top ${n} values`}
+                    </SelectItem>
+                  ))}
                   <SelectItem value="0">All rows</SelectItem>
-                  {[5, 10, 20, 100, 250].map((n) => <SelectItem key={n} value={String(n)}>Top {n}</SelectItem>)}
                 </SelectContent>
               </Select>
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLegend((prev) => !prev)}>
@@ -855,61 +1058,149 @@ const ResultPanel = memo(function ResultPanel({
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLabels((prev) => !prev)}>
                 {showLabels ? "Labels on" : "Labels off"}
               </Button>
-              <Textarea value={chartNotes} onChange={(e) => setChartNotes(e.target.value)} placeholder="Chart notes..." className="col-span-2 min-h-[56px] bg-card border-border text-xs" />
-              <Button variant="outline" size="sm" className="col-span-2 h-8 border-border text-xs" onClick={onBookmark}>
+              <Textarea value={chartNotes} onChange={(e) => setChartNotes(e.target.value)} placeholder="Chart notes..." className={`min-h-[56px] bg-card border-border text-xs ${fullscreen ? "col-span-2" : ""}`} />
+              <Button variant="outline" size="sm" className={`${fullscreen ? "col-span-2 " : ""}h-8 border-border text-xs`} onClick={onBookmark}>
                 <BookmarkPlus size={12} className="mr-1" /> Save chart as insight
               </Button>
             </div>
+            {!canShowValueLabels && showLabels && (
+              <div className="mb-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+                Value labels are hidden automatically when there are too many points to keep the chart readable.
+              </div>
+            )}
+            {chartType === "pie" && pieChartGroupedCount > 0 && (
+              <div className="mb-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+                Pie charts show the top {Math.max(0, pieChartRows.length - 1)} slices here. The remaining {pieChartGroupedCount.toLocaleString()} categories are grouped into <span className="font-medium text-foreground">Other</span> so the chart stays readable.
+              </div>
+            )}
             {chartRenderLimited && (
               <div className="mb-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                 Chart preview is capped at {CHART_RENDER_LIMIT.toLocaleString()} points for performance. The table and exports still include all rows.
               </div>
             )}
-            <div ref={chartRef} className={fullscreen ? "h-[50vh] rounded-md bg-background-secondary/30 p-2" : "h-52 rounded-md bg-background-secondary/30 p-2"}>
-              <p className="mb-1 truncate text-center text-xs font-medium text-foreground">{chartTitle || "Chart"}</p>
+            <div ref={chartRef} className="rounded-md border border-border bg-background-secondary/30 p-3">
+              <div className="mb-3 space-y-1">
+                <p className="truncate text-sm font-medium text-foreground">{chartTitleText}</p>
+                <p className="text-xs text-muted-foreground">{chartSummaryText}</p>
+              </div>
+              <div className={fullscreen ? "h-[54vh]" : "h-72"}>
               <ResponsiveContainer width="100%" height="100%">
                 {chartType === "pie" ? (
-                  <PieChart>
-                    <Pie data={visibleChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={80} label={showLabels}>
-                      {visibleChartRows.map((_: any, i: number) => <Cell key={i} fill={i === 0 ? chartColor : CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  <PieChart margin={chartMargin}>
+                    <Pie
+                      data={pieChartRows}
+                      dataKey={valueKey}
+                      nameKey={labelKey}
+                      cx="50%"
+                      cy={showLegend ? "42%" : "50%"}
+                      outerRadius={showLegend ? 78 : 96}
+                      innerRadius={pieChartRows.length > 4 ? 22 : 0}
+                      label={canShowValueLabels ? ({ name, percent }) => `${truncateChartLabel(name, 12)} ${Math.round((percent || 0) * 100)}%` : false}
+                      labelLine={false}
+                    >
+                      {pieChartRows.map((_: any, i: number) => <Cell key={i} fill={i === 0 ? chartColor : CHART_COLORS[i % CHART_COLORS.length]} />)}
                     </Pie>
-                    {showLegend && <RechartsLegend />}
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    {showLegend && <RechartsLegend verticalAlign="bottom" wrapperStyle={{ fontSize: 11, paddingTop: 12 }} formatter={(value) => truncateChartLabel(value, 16)} />}
+                    <RechartsTooltip
+                      formatter={(value: any) => formatChartValue(value)}
+                      contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
+                    />
                   </PieChart>
                 ) : chartType === "line" ? (
-                  <LineChart data={visibleChartRows}>
-                    <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    {showLegend && <RechartsLegend />}
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Line type="monotone" dataKey={valueKey} stroke={chartColor} strokeWidth={2} dot={false} />
+                  <LineChart data={visibleChartRows} margin={chartMargin}>
+                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey={labelKey}
+                      label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
+                      tickLine={false}
+                      axisLine={false}
+                      angle={rotateXAxisTicks ? -35 : 0}
+                      textAnchor={rotateXAxisTicks ? "end" : "middle"}
+                      height={rotateXAxisTicks ? 72 : 32}
+                      tickMargin={10}
+                      interval={xAxisInterval}
+                    />
+                    <YAxis
+                      label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(value) => formatChartValue(value)}
+                      tickLine={false}
+                      axisLine={false}
+                      width={60}
+                    />
+                    {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                    <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Line type="monotone" dataKey={valueKey} stroke={chartColor} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2.5, strokeWidth: 0, fill: chartColor } : false} activeDot={{ r: 4 }} />
                   </LineChart>
                 ) : chartType === "area" ? (
-                  <AreaChart data={visibleChartRows}>
+                  <AreaChart data={visibleChartRows} margin={chartMargin}>
                     <defs>
                       <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
                         <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    {showLegend && <RechartsLegend />}
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
+                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey={labelKey}
+                      label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
+                      tickLine={false}
+                      axisLine={false}
+                      angle={rotateXAxisTicks ? -35 : 0}
+                      textAnchor={rotateXAxisTicks ? "end" : "middle"}
+                      height={rotateXAxisTicks ? 72 : 32}
+                      tickMargin={10}
+                      interval={xAxisInterval}
+                    />
+                    <YAxis
+                      label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(value) => formatChartValue(value)}
+                      tickLine={false}
+                      axisLine={false}
+                      width={60}
+                    />
+                    {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                    <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2, strokeWidth: 0, fill: chartColor } : false} />
                   </AreaChart>
                 ) : (
-                  <BarChart data={visibleChartRows}>
-                    <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                    {showLegend && <RechartsLegend />}
-                    <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Bar dataKey={valueKey} fill={chartColor} radius={[4, 4, 0, 0]}>
-                      {showLabels && <LabelList dataKey={valueKey} position="top" fill="hsl(var(--muted-foreground))" fontSize={10} />}
+                  <BarChart data={visibleChartRows} margin={chartMargin}>
+                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey={labelKey}
+                      label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
+                      tickLine={false}
+                      axisLine={false}
+                      angle={rotateXAxisTicks ? -35 : 0}
+                      textAnchor={rotateXAxisTicks ? "end" : "middle"}
+                      height={rotateXAxisTicks ? 72 : 32}
+                      tickMargin={10}
+                      interval={xAxisInterval}
+                    />
+                    <YAxis
+                      label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                      tickFormatter={(value) => formatChartValue(value)}
+                      tickLine={false}
+                      axisLine={false}
+                      width={60}
+                    />
+                    {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                    <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Bar dataKey={valueKey} fill={chartColor} radius={[6, 6, 0, 0]} maxBarSize={36}>
+                      {canShowValueLabels && <LabelList dataKey={valueKey} position="top" formatter={(value: any) => formatChartValue(value)} fill="hsl(var(--muted-foreground))" fontSize={10} />}
                     </Bar>
                   </BarChart>
                 )}
               </ResponsiveContainer>
+              </div>
             </div>
             {chartNotes && <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">{chartNotes}</p>}
           </div>
@@ -1077,6 +1368,10 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
   const isBlankString = typeof result === "string" && !result.trim();
   const inlineChartRows = useMemo(() => chartRows.slice(0, Math.min(DEFAULT_CHART_ROWS, CHART_RENDER_LIMIT)), [chartRows]);
+  const inlinePieChartRows = useMemo(
+    () => buildPieChartRows(inlineChartRows, labelKey, valueKey),
+    [inlineChartRows, labelKey, valueKey]
+  );
   const inlineChartLimited = chartRows.length > inlineChartRows.length;
 
   useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
@@ -1109,8 +1404,8 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
             <ResponsiveContainer width="100%" height="100%">
               {chartType === "pie" ? (
                 <PieChart>
-                  <Pie data={inlineChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
-                    {inlineChartRows.map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  <Pie data={inlinePieChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
+                    {inlinePieChartRows.map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                   </Pie>
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                 </PieChart>
@@ -2027,7 +2322,7 @@ export default function QueryPage() {
 
       {/* Right: Result Panel */}
       {finalResult !== null && showResult && (
-        <div className="w-[320px] border-l border-border bg-background-secondary shrink-0 hidden xl:block">
+        <div className="w-[380px] 2xl:w-[420px] border-l border-border bg-background-secondary shrink-0 hidden xl:block">
           <ResultPanel
             result={finalResult}
             query={lastQuery}

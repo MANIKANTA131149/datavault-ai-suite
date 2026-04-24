@@ -18,7 +18,7 @@ const STEPS = [
   },
   {
     title: "Configure your LLM provider",
-    description: "Head to the Query page and enter your API key for Groq, OpenAI, Anthropic, or any supported provider.",
+    description: "Head to the Query page and enter your API key for Groq, OpenAI, Google Gemini, Anthropic, or any supported provider.",
     icon: null,
     iconComponent: Settings,
   },

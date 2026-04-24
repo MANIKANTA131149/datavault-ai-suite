@@ -3,6 +3,7 @@ import type { Provider } from "@/lib/llm-client";
 const PROVIDER_MARKS: Record<Provider, string> = {
   groq: "GQ",
   openai: "AI",
+  gemini: "GM",
   anthropic: "A",
   bedrock: "AWS",
   azure: "AZ",

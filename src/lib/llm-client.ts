@@ -7,7 +7,7 @@ export interface LLMResponse {
 }
 
 export type Provider =
-  | "groq" | "openai" | "anthropic" | "bedrock"
+  | "groq" | "openai" | "gemini" | "anthropic" | "bedrock"
   | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface";
 
 export interface LLMProviderOptions {
@@ -18,6 +18,7 @@ export interface LLMProviderOptions {
 const PROVIDER_ENDPOINTS: Record<string, string> = {
   groq: "https://api.groq.com/openai/v1/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   mistral: "https://api.mistral.ai/v1/chat/completions",
   together: "https://api.together.xyz/v1/chat/completions",
   huggingface: `${getApiBaseUrl()}/llm/huggingface/chat`,

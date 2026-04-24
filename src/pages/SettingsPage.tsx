@@ -172,6 +172,7 @@ export default function SettingsPage() {
     if (provider === "ollama") return true;
     if (provider === "bedrock") return key.length >= 16 && !!secretInputs[provider];
     if (provider === "openai") return key.startsWith("sk-");
+    if (provider === "gemini") return key.startsWith("AIza");
     if (provider === "anthropic") return key.startsWith("sk-ant-");
     return key.length > 8;
   };

@@ -5,6 +5,15 @@ import type { Provider } from "@/lib/llm-client";
 export const PROVIDER_MODELS: Record<Provider, string[]> = {
   groq: ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+  gemini: [
+    "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+  ],
   anthropic: ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4"],
   bedrock: [
     "amazon.nova-lite-v1:0",
@@ -52,6 +61,7 @@ export const PROVIDER_MODELS: Record<Provider, string[]> = {
 export const PROVIDER_LABELS: Record<Provider, string> = {
   groq: "Groq",
   openai: "OpenAI",
+  gemini: "Google Gemini",
   anthropic: "Anthropic",
   bedrock: "AWS Bedrock",
   azure: "Azure OpenAI",
