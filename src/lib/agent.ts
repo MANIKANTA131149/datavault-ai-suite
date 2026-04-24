@@ -490,6 +490,8 @@ function buildGroupedRankingFallback(
   const metricColumn =
     /\btorque\b/.test(q)
       ? findColumnByPattern(columns, /torque/)
+      : /\bfuel.?efficien|fuel economy|mileage|mpg|km\/l|kmpl|mi\/gal|consumption|economy\b/.test(q)
+        ? findColumnByPattern(columns, /fuel.?efficien|economy|mileage|mpg|kmpl|km\/l|mi\/gal|consumption/)
       : /\bhorsepower|power|hp|performance\b/.test(q)
         ? findColumnByPattern(columns, /horsepower|power|hp|performance|output/)
         : findMentionedColumnByName(q, columns.filter((column) => column.dtype === "number" || columnHasNumericText(column)));
@@ -507,7 +509,10 @@ function buildGroupedRankingFallback(
     aggColumn: metricColumn.name,
     aggFunction,
     limit: 1,
-    order: /\blowest|minimum|min|smallest|bottom|worst\b/.test(q) ? "asc" : "desc",
+    order:
+      /\bconsumption|l\/100|liters per 100|litres per 100\b/.test(normalizeColumnName(metricColumn.name))
+        ? "asc"
+        : /\blowest|minimum|min|smallest|bottom|worst\b/.test(q) ? "asc" : "desc",
   };
 
   if (aggFunction !== "count" && columnHasNumericText(metricColumn)) {
@@ -516,6 +521,305 @@ function buildGroupedRankingFallback(
   }
 
   return { command: "ExecuteFinalQuery", args: { operation: "groupby", params } };
+}
+
+function resolveColumnName(columns: SheetData["columns"], hint: unknown) {
+  if (typeof hint !== "string") return undefined;
+  const trimmed = hint.trim();
+  if (!trimmed) return undefined;
+
+  const exact = columns.find((column) => column.name === trimmed);
+  if (exact) return exact.name;
+
+  const normalizedHint = normalizeColumnName(trimmed);
+  return columns.find((column) => normalizeColumnName(column.name) === normalizedHint)?.name;
+}
+
+function inferGroupedOrder(question: string, metricColumnName?: string, aggFunction?: string) {
+  const q = question.toLowerCase();
+  const normalizedMetric = metricColumnName ? normalizeColumnName(metricColumnName) : "";
+
+  if (
+    /\bconsumption|l\/100|liters per 100|litres per 100\b/.test(q) ||
+    /\bconsumption|l\/100|liters per 100|litres per 100\b/.test(normalizedMetric)
+  ) {
+    return "asc";
+  }
+
+  if (/\blowest|minimum|min|smallest|bottom|worst|least\b/.test(q)) {
+    return "asc";
+  }
+
+  if (/\bhighest|maximum|max|largest|top|best\b/.test(q)) {
+    return "desc";
+  }
+
+  if (aggFunction === "min") return "asc";
+  if (aggFunction === "max") return "desc";
+  return /\bmost\b/.test(q) ? "desc" : "desc";
+}
+
+type MultiValueTextProfile = {
+  delimiter: string;
+  hitRate: number;
+  averageItemsPerCell: number;
+  maxItemsPerCell: number;
+  sampleItems: string[];
+};
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function splitDelimitedText(value: any, delimiter: string) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item ?? "").trim()).filter(Boolean);
+  }
+  if (value == null) return [];
+  return String(value)
+    .split(new RegExp(`\\s*${escapeRegExp(delimiter)}\\s*`))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getColumnValues(rows: Record<string, any>[], columnName: string) {
+  return rows.map((row) => row[columnName]);
+}
+
+function detectMultiValueTextProfile(values: any[], columnName = ""): MultiValueTextProfile | null {
+  const stringValues = values
+    .filter((value) => typeof value === "string" && value.trim())
+    .slice(0, 150) as string[];
+
+  if (stringValues.length < 3) return null;
+
+  const normalizedName = normalizeColumnName(columnName);
+  const semanticBoost =
+    /cast|actor|actors|actress|starring|director|writer|author|artist|genre|listed|category|categories|tag|tags|keyword|country|countries|language|languages|member|members|participant|participants|skill|skills/.test(normalizedName);
+
+  let best: (MultiValueTextProfile & { hits: number; repeatedItems: boolean; averageItemLength: number }) | null = null;
+
+  for (const delimiter of [",", ";", "|"]) {
+    let hits = 0;
+    let totalItems = 0;
+    let totalChars = 0;
+    let maxItemsPerCell = 0;
+    const sampleItems: string[] = [];
+    const itemCounts = new Map<string, number>();
+
+    for (const value of stringValues) {
+      const parts = splitDelimitedText(value, delimiter);
+      if (parts.length < 2) continue;
+
+      hits++;
+      totalItems += parts.length;
+      maxItemsPerCell = Math.max(maxItemsPerCell, parts.length);
+
+      for (const part of parts) {
+        totalChars += part.length;
+        const normalized = part.toLowerCase();
+        itemCounts.set(normalized, (itemCounts.get(normalized) || 0) + 1);
+        if (sampleItems.length < 5 && !sampleItems.some((existing) => existing.toLowerCase() === normalized)) {
+          sampleItems.push(part);
+        }
+      }
+    }
+
+    if (hits === 0 || totalItems === 0) continue;
+
+    const profile = {
+      delimiter,
+      hitRate: hits / stringValues.length,
+      averageItemsPerCell: totalItems / hits,
+      maxItemsPerCell,
+      sampleItems,
+      hits,
+      repeatedItems: Array.from(itemCounts.values()).some((count) => count >= 2),
+      averageItemLength: totalChars / totalItems,
+    };
+
+    if (!best || profile.hits > best.hits || (profile.hits === best.hits && profile.averageItemsPerCell > best.averageItemsPerCell)) {
+      best = profile;
+    }
+  }
+
+  if (!best) return null;
+
+  const minimumHits = semanticBoost ? 2 : Math.max(3, Math.ceil(stringValues.length * 0.35));
+  if (best.hits < minimumHits) return null;
+  if (!semanticBoost && !best.repeatedItems) return null;
+  if (!semanticBoost && best.averageItemLength > 40) return null;
+
+  return {
+    delimiter: best.delimiter,
+    hitRate: best.hitRate,
+    averageItemsPerCell: best.averageItemsPerCell,
+    maxItemsPerCell: best.maxItemsPerCell,
+    sampleItems: best.sampleItems,
+  };
+}
+
+function detectListLikeColumn(sheetData: SheetData, columnName: string) {
+  return detectMultiValueTextProfile(getColumnValues(sheetData.rows, columnName), columnName);
+}
+
+function extractTopN(question: string) {
+  const match = question.toLowerCase().match(/\btop\s+(\d+)\b/);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function inferFrequencyOrder(question: string) {
+  return /\bleast|lowest|fewest|rarest\b/i.test(question) ? "asc" : "desc";
+}
+
+function buildSplitFrequencyFallback(
+  question: string,
+  sheetData: SheetData
+): { command: string; args: Record<string, any> } | null {
+  const q = question.toLowerCase();
+  const asksItemFrequency =
+    /\bmost frequent|most frequently|most common|appear(?:s)? most|appear(?:s)? most frequently|occur(?:s)? most|show(?:s)? up most|top\b|fewest|least frequent|rarest|common\b/.test(q) ||
+    (/\b(which|what|who)\b/.test(q) && /\bappear|appears|appearing|frequency|frequent|common|count\b/.test(q));
+
+  if (!asksItemFrequency) return null;
+
+  const profiledColumns = sheetData.columns
+    .map((column) => ({
+      column,
+      profile: detectMultiValueTextProfile(getColumnValues(sheetData.rows, column.name), column.name),
+    }))
+    .filter((entry): entry is { column: SheetData["columns"][number]; profile: MultiValueTextProfile } => Boolean(entry.profile));
+
+  if (profiledColumns.length === 0) return null;
+
+  const semanticMappings: Array<{ questionPattern: RegExp; columnPattern: RegExp }> = [
+    { questionPattern: /\bactor|actors|actress|cast|starring|star\b/, columnPattern: /cast|actor|actors|actress|starring|star/ },
+    { questionPattern: /\bdirector|directors|writer|writers|author|authors|artist|artists\b/, columnPattern: /director|writer|author|artist/ },
+    { questionPattern: /\bgenre|genres|category|categories|tag|tags|listed\b/, columnPattern: /genre|listed|category|categories|tag|tags/ },
+    { questionPattern: /\bcountry|countries|language|languages|location|locations\b/, columnPattern: /country|language|location/ },
+  ];
+
+  let chosen = null as { column: SheetData["columns"][number]; profile: MultiValueTextProfile } | null;
+  for (const mapping of semanticMappings) {
+    if (!mapping.questionPattern.test(q)) continue;
+    chosen = profiledColumns.find((entry) => mapping.columnPattern.test(normalizeColumnName(entry.column.name))) || null;
+    if (chosen) break;
+  }
+
+  if (!chosen) {
+    const mentioned = findMentionedColumnByName(question, profiledColumns.map((entry) => entry.column));
+    chosen = mentioned ? profiledColumns.find((entry) => entry.column.name === mentioned.name) || null : null;
+  }
+
+  if (!chosen && profiledColumns.length === 1) {
+    chosen = profiledColumns[0];
+  }
+
+  if (!chosen) return null;
+
+  return {
+    command: "ExecuteFinalQuery",
+    args: {
+      operation: "split_frequency",
+      params: {
+        column: chosen.column.name,
+        delimiter: chosen.profile.delimiter,
+        limit: extractTopN(question) ?? (/\bwhich|what|who\b/.test(q) ? 1 : 10),
+        order: inferFrequencyOrder(question),
+      },
+    },
+  };
+}
+
+function repairLegacyCommandForQuestion(
+  parsed: { command: string; args?: Record<string, any> },
+  question: string,
+  sheetData: SheetData
+) {
+  const columns = sheetData.columns;
+  const args = parsed.args || {};
+  if (parsed.command !== "QuerySheet" && parsed.command !== "ExecuteFinalQuery") {
+    return parsed;
+  }
+
+  const splitFrequencyFallback = buildSplitFrequencyFallback(question, sheetData);
+  const params = args.params || {};
+  const referencedColumns = [
+    params.column,
+    params.groupColumn,
+    params.groupBy,
+    params.groupby,
+    params.group_column,
+    params.aggColumn,
+  ]
+    .map((hint) => resolveColumnName(columns, hint))
+    .filter((value): value is string => Boolean(value));
+
+  if (splitFrequencyFallback && args.operation !== "split_frequency") {
+    const referencesListLikeColumn = referencedColumns.some((columnName) => Boolean(detectListLikeColumn(sheetData, columnName)));
+    if (referencesListLikeColumn || /\bactor|actors|actress|cast|genre|genres|tag|tags|listed|country|countries|language|languages\b/i.test(question)) {
+      return {
+        command: parsed.command,
+        args: {
+          ...splitFrequencyFallback.args,
+          sheet_name: args.sheet_name,
+        },
+      };
+    }
+  }
+
+  const fallback = buildGroupedRankingFallback(question, columns);
+  if (args.operation === "groupby") {
+    return repairCommandForQuestion(parsed, question, columns);
+  }
+
+  const hintedGroupColumn = resolveColumnName(
+    columns,
+    params.groupColumn ?? params.groupBy ?? params.groupby ?? params.group_column
+  );
+  const hintedMetricColumn = resolveColumnName(columns, params.column ?? params.aggColumn);
+  const hintedAggFunction =
+    typeof params.aggFunction === "string" && params.aggFunction.trim()
+      ? params.aggFunction.trim().toLowerCase()
+      : typeof params.function === "string" && params.function.trim()
+        ? params.function.trim().toLowerCase()
+        : undefined;
+  const hasIgnoredGroupingHint =
+    Boolean(hintedGroupColumn);
+  const asksForManufacturerRanking =
+    /\b(which|what|who)\b/i.test(question) &&
+    /\bmanufacturer|make|maker|brand|company|vendor|oem\b/i.test(question);
+
+  if (fallback && (args.operation === "aggregate" || hasIgnoredGroupingHint || asksForManufacturerRanking)) {
+    return {
+      command: parsed.command,
+      args: {
+        ...fallback.args,
+        sheet_name: args.sheet_name,
+      },
+    };
+  }
+
+  if (args.operation === "aggregate" && hintedGroupColumn && hintedMetricColumn) {
+    return {
+      command: parsed.command,
+      args: {
+        sheet_name: args.sheet_name,
+        operation: "groupby",
+        params: {
+          groupColumn: hintedGroupColumn,
+          aggColumn: hintedMetricColumn,
+          aggFunction: hintedAggFunction || "count",
+          limit: 1,
+          order: inferGroupedOrder(question, hintedMetricColumn, hintedAggFunction),
+        },
+      },
+    };
+  }
+
+  return parsed;
 }
 
 function repairCommandForQuestion(
@@ -668,11 +972,15 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
     case "aggregate": {
       const { column, function: fn } = params;
-      const nums = data.map((r) => Number(r[column])).filter((n) => !isNaN(n));
+      const values = data.map((row) => row[column]).filter((value) => value != null && value !== "");
+      if (fn === "count") return { result: values.length };
+      if (fn === "count_distinct" || fn === "distinct_count") {
+        return { result: new Set(values.map((value) => String(value))).size };
+      }
+      const nums = values.map((value) => Number(value)).filter((n) => !isNaN(n));
       if (nums.length === 0) return { result: 0 };
       switch (fn) {
         case "sum": return { result: nums.reduce((s, v) => s + v, 0) };
-        case "count": return { result: nums.length };
         case "mean": return { result: nums.reduce((s, v) => s + v, 0) / nums.length };
         case "min": return { result: Math.min(...nums) };
         case "max": return { result: Math.max(...nums) };
@@ -692,6 +1000,51 @@ function executeOperation(data: Record<string, any>[], operation: string, params
         }
         default: return { result: nums.length };
       }
+    }
+    case "split_frequency": {
+      const {
+        column,
+        delimiter,
+        limit,
+        order = "desc",
+        filter: filterParam,
+        caseSensitive = false,
+        uniquePerRow = true,
+      } = params;
+
+      const filtered = filterParam ? executeOperation(data, "filter", filterParam) : data;
+      const resolvedDelimiter =
+        typeof delimiter === "string" && delimiter
+          ? delimiter
+          : detectMultiValueTextProfile(getColumnValues(filtered, column), column)?.delimiter || ",";
+
+      const counts = new Map<string, { label: string; count: number }>();
+      for (const row of filtered) {
+        const parts = splitDelimitedText(row[column], resolvedDelimiter);
+        if (parts.length === 0) continue;
+
+        const seenInRow = new Set<string>();
+        for (const part of parts) {
+          const normalized = caseSensitive ? part : part.toLowerCase();
+          if (uniquePerRow && seenInRow.has(normalized)) continue;
+          seenInRow.add(normalized);
+
+          const existing = counts.get(normalized);
+          if (existing) {
+            existing.count += 1;
+          } else {
+            counts.set(normalized, { label: part, count: 1 });
+          }
+        }
+      }
+
+      const result = Array.from(counts.values()).map(({ label, count }) => ({ [column]: label, count }));
+      result.sort((a, b) => {
+        const diff = Number(b.count) - Number(a.count);
+        if (diff !== 0) return order === "asc" ? -diff : diff;
+        return String(a[column] ?? "").localeCompare(String(b[column] ?? ""));
+      });
+      return limit ? result.slice(0, Number(limit)) : result;
     }
     case "select": {
       const { columns, limit = 50 } = params;
@@ -1298,6 +1651,575 @@ export async function* runAgent(
         `\nRespond with a single JSON command only.`,
       ].join(""),
     });
+  }
+
+  yield {
+    turn,
+    command: "MaxTurnsReached",
+    args: {},
+    result: "Agent reached maximum turns without a final answer.",
+    tokens: { input: 0, output: 0 },
+    durationMs: 0,
+    isFinal: true,
+  };
+}
+
+type WorkbookSheets = Record<string, SheetData>;
+
+const DEFAULT_AGENT_PROMPT = `You are a data analyst agent. Work one step at a time and request only the information you need.
+
+You have access to these commands:
+
+1. GetSheetDescription()
+   Returns all sheet names, row counts, and column lists.
+
+2. GetColumns(sheet_name)
+   Returns detailed column info and sample values for a sheet.
+
+3. QuerySheet(sheet_name, operation, params)
+   Runs one intermediate data operation on a sheet.
+
+4. ExecuteFinalQuery(sheet_name, operation, params)
+   Runs the final data operation that answers the question.
+
+5. Answer(value)
+   Use only for clarification questions or schema-only final answers.
+
+For backward compatibility, QuerySheet and ExecuteFinalQuery may also use pandas_query instead of operation/params.
+Prefer operation/params unless the user or custom prompt explicitly relies on pandas_query.
+
+Supported operations:
+- count {}
+- head {"n": 10}
+- filter {"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}
+- multi_filter {"filters":[...],"logic":"AND|OR"}
+- sort {"column":"col","order":"asc|desc","limit":N}
+- select {"columns":["col1","col2"],"limit":N}
+- unique {"column":"col"}
+- aggregate {"column":"col","function":"sum|count|count_distinct|mean|min|max|median|std|variance"}
+- groupby {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"asc|desc"}
+- split_frequency {"column":"col","delimiter":",","limit":N,"order":"asc|desc","uniquePerRow":true|false}
+- percentile {"column":"col","percentiles":[25,50,75]}
+- correlation {"column1":"col1","column2":"col2"}
+- date_trunc {"dateColumn":"col","period":"day|week|month|quarter|year","aggColumn":"col2","aggFunction":"count|sum|mean"}
+- outlier_detect {"column":"col","method":"zscore|iqr","threshold":2}
+- pivot {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
+- pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
+
+Rules:
+- If you are unsure which sheet to use, call GetSheetDescription first.
+- Call GetColumns before writing a query on a sheet you have not inspected yet.
+- Use exact column names from the returned schema.
+- If GetColumns says a column contains delimited lists/tags/names inside one cell, use split_frequency to count the individual items.
+- Do not group by or aggregate the whole cell when the question is about items inside a multi-value text column.
+- Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer.
+- Respond with exactly one JSON object and no extra text.
+
+Examples:
+{"command":"GetSheetDescription","args":{}}
+{"command":"GetColumns","args":{"sheet_name":"sales"}}
+{"command":"QuerySheet","args":{"sheet_name":"sales","operation":"groupby","params":{"groupColumn":"region","aggColumn":"amount","aggFunction":"sum"}}}
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"amount","function":"sum"}}}
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"split_frequency","params":{"column":"cast","delimiter":",","limit":10,"order":"desc"}}}`;
+
+function resolveDefaultSheetName(sheets: WorkbookSheets, selectedSheetName: string) {
+  if (selectedSheetName && sheets[selectedSheetName]) return selectedSheetName;
+  return Object.keys(sheets)[0] || "";
+}
+
+function formatSampleValue(value: any) {
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === undefined) return "null";
+  return JSON.stringify(value);
+}
+
+function formatCompactNumber(value: number) {
+  return Number.isInteger(value) ? value.toString() : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function inferColumnMeaning(
+  column: SheetData["columns"][number],
+  totalRows: number,
+  values: any[],
+  multiValueProfile: MultiValueTextProfile | null
+) {
+  const normalizedName = normalizeColumnName(column.name);
+  const nonNullCount = values.filter((value) => value != null && value !== "").length;
+  const nonNullRatio = totalRows > 0 ? nonNullCount / totalRows : 0;
+  const averageLength =
+    column.dtype === "string" && nonNullCount > 0
+      ? values
+          .filter((value) => value != null && value !== "")
+          .reduce((sum, value) => sum + String(value).length, 0) / nonNullCount
+      : 0;
+
+  if (multiValueProfile) {
+    if (/cast|actor|actors|actress|starring|director|writer|author|artist/.test(normalizedName)) {
+      return "multi-value list of people names";
+    }
+    if (/genre|listed|category|categories|tag|tags|keyword/.test(normalizedName)) {
+      return "multi-value list of categories/tags";
+    }
+    if (/country|countries|language|languages|location|locations|region/.test(normalizedName)) {
+      return "multi-value list of places/languages";
+    }
+    return "multi-value list of text items";
+  }
+
+  if (column.dtype === "date") return /year/.test(normalizedName) ? "year/date field" : "date/time field";
+  if (column.dtype === "boolean") return "boolean flag";
+
+  if (/id|identifier|code|key/.test(normalizedName)) return "identifier/code";
+  if (column.dtype === "number") return /year/.test(normalizedName) ? "year value" : "numeric measure";
+  if (/title|name|label/.test(normalizedName)) return "title/name";
+  if (/description|summary|overview|plot|synopsis|notes?/.test(normalizedName) || (averageLength > 60 && column.uniqueCount >= Math.max(10, totalRows * 0.5))) {
+    return "free-text description";
+  }
+  if (/country|city|state|region|location|language/.test(normalizedName)) return "location/category text";
+  if (column.uniqueCount <= Math.min(50, Math.max(5, totalRows * 0.2)) && nonNullRatio > 0) return "categorical text";
+  if (column.uniqueCount >= Math.max(10, totalRows * 0.9)) return "high-cardinality text";
+  return "text field";
+}
+
+function buildColumnsDescription(sheets: WorkbookSheets, sheetName: string) {
+  const sheet = sheets[sheetName];
+  if (!sheet) {
+    return `ERROR: Sheet '${sheetName}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+  }
+
+  const lines = [`Sheet '${sheetName}' schema:`];
+  for (const column of sheet.columns) {
+    const values = getColumnValues(sheet.rows, column.name);
+    const sample = `[${column.sampleValues.slice(0, 3).map(formatSampleValue).join(", ")}]`;
+    const nullCount = sheet.rows.length - column.nonNullCount;
+    const coverage = sheet.rows.length > 0 ? `${((column.nonNullCount / sheet.rows.length) * 100).toFixed(1)}% filled` : "0.0% filled";
+    const multiValueProfile = detectMultiValueTextProfile(values, column.name);
+    const meaning = inferColumnMeaning(column, sheet.rows.length, values, multiValueProfile);
+    const parts = [
+      `${column.name} (${column.dtype})`,
+      `meaning: ${meaning}`,
+      coverage,
+      `${column.uniqueCount} unique non-null values`,
+    ];
+
+    if (nullCount > 0) {
+      parts.push(`${nullCount} null/blank`);
+    }
+
+    if (column.dtype === "number") {
+      const numericValues = values.map((value) => Number(value)).filter((value) => !isNaN(value));
+      if (numericValues.length > 0) {
+        const min = Math.min(...numericValues);
+        const max = Math.max(...numericValues);
+        parts.push(`range: ${formatCompactNumber(min)} to ${formatCompactNumber(max)}`);
+      }
+    } else if (column.dtype === "date") {
+      const dateValues = values
+        .map((value) => new Date(String(value)))
+        .filter((value) => !isNaN(value.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime());
+      if (dateValues.length > 0) {
+        parts.push(`range: ${dateValues[0].toISOString().slice(0, 10)} to ${dateValues[dateValues.length - 1].toISOString().slice(0, 10)}`);
+      }
+    }
+
+    parts.push(`sample values: ${sample}`);
+
+    if (multiValueProfile) {
+      parts.push(
+        `list pattern: "${multiValueProfile.delimiter}"-separated items, avg ${formatCompactNumber(multiValueProfile.averageItemsPerCell)} items/cell`
+      );
+      if (multiValueProfile.sampleItems.length > 0) {
+        parts.push(`sample items: [${multiValueProfile.sampleItems.map(formatSampleValue).join(", ")}]`);
+      }
+      parts.push(`for individual item counts use split_frequency, not groupby on the full cell`);
+    }
+
+    lines.push(`  ${parts.join(" | ")}`);
+  }
+  return lines.join("\n");
+}
+
+function buildSheetDescription(sheets: WorkbookSheets) {
+  const names = Object.keys(sheets);
+  if (names.length === 0) return "No sheets available.";
+
+  const lines = names.map((name) => {
+    const sheet = sheets[name];
+    const columns = sheet.columns.map((column) => column.name).join(", ");
+    return `  Sheet '${name}': ${sheet.rows.length} rows | Columns: [${columns}]`;
+  });
+
+  return "Available sheets:\n" + lines.join("\n");
+}
+
+function formatResultForModel(result: any) {
+  const preview = Array.isArray(result) ? result.slice(0, 20) : result;
+  const serialized = typeof preview === "string" ? preview : JSON.stringify(preview);
+  return serialized.length > 4000 ? `${serialized.slice(0, 4000)}... (truncated)` : serialized;
+}
+
+function parseLegacyLiteral(rawValue: string) {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return trimmed;
+
+  if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith("\"") && trimmed.endsWith("\""))) {
+    return trimmed.slice(1, -1);
+  }
+  if (/^(true|false)$/i.test(trimmed)) {
+    return /^true$/i.test(trimmed);
+  }
+  if (/^(none|null)$/i.test(trimmed)) {
+    return null;
+  }
+
+  const numeric = Number(trimmed.replace(/_/g, ""));
+  return Number.isNaN(numeric) ? trimmed : numeric;
+}
+
+function parseLegacyColumnList(token: string) {
+  return Array.from(token.matchAll(/['"]([^'"]+)['"]/g)).map((match) => match[1]);
+}
+
+function buildLegacyFilter(column: string, operator: string, rawValue: string) {
+  return { column, operator, value: parseLegacyLiteral(rawValue) };
+}
+
+function translateLegacyPandasQuery(pandasQuery: string) {
+  const query = pandasQuery.trim();
+
+  let match = query.match(/^len\(df\)$/i);
+  if (match || /^df\.shape\[0\]$/i.test(query)) {
+    return { operation: "count", params: {} };
+  }
+
+  match = query.match(/^df\.head\((\d+)\)$/i);
+  if (match) {
+    return { operation: "head", params: { n: Number(match[1]) } };
+  }
+
+  match = query.match(/^df\.sort_values\(\s*(['"])(.+?)\1\s*,\s*ascending\s*=\s*(True|False)\s*\)(?:\.head\((\d+)\))?$/i);
+  if (match) {
+    const [, , column, ascending, limit] = match;
+    return {
+      operation: "sort",
+      params: {
+        column,
+        order: /^true$/i.test(ascending) ? "asc" : "desc",
+        ...(limit ? { limit: Number(limit) } : {}),
+      },
+    };
+  }
+
+  match = query.match(/^df\.groupby\(\s*(['"])(.+?)\1\s*\)\s*\[\s*(['"])(.+?)\3\s*\]\.(sum|count|mean|min|max)\(\)(?:\.sort_values\(\s*ascending\s*=\s*(True|False)\s*\))?(?:\.head\((\d+)\))?$/i);
+  if (match) {
+    const [, , groupColumn, , aggColumn, aggFunction, ascending, limit] = match;
+    return {
+      operation: "groupby",
+      params: {
+        groupColumn,
+        aggColumn,
+        aggFunction: aggFunction.toLowerCase(),
+        ...(ascending ? { order: /^true$/i.test(ascending) ? "asc" : "desc" } : {}),
+        ...(limit ? { limit: Number(limit) } : {}),
+      },
+    };
+  }
+
+  match = query.match(/^df\s*\[\s*df\s*\[\s*(['"])(.+?)\1\s*\]\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*\]\s*\[\s*(['"])(.+?)\5\s*\]\.(sum|count|mean|min|max|median|std|var|variance|nunique)\(\)$/i);
+  if (match) {
+    const [, , filterColumn, operator, rawValue, , targetColumn, rawFunction] = match;
+    const fn = rawFunction.toLowerCase();
+    const operations =
+      fn === "count"
+        ? [
+            { operation: "filter", params: buildLegacyFilter(filterColumn, operator, rawValue) },
+            { operation: "remove_nulls", params: { column: targetColumn } },
+            { operation: "count", params: {} },
+          ]
+        : fn === "nunique"
+          ? [
+              { operation: "filter", params: buildLegacyFilter(filterColumn, operator, rawValue) },
+              { operation: "unique", params: { column: targetColumn } },
+              { operation: "count", params: {} },
+            ]
+          : [
+              { operation: "filter", params: buildLegacyFilter(filterColumn, operator, rawValue) },
+              { operation: "aggregate", params: { column: targetColumn, function: fn === "var" ? "variance" : fn } },
+            ];
+
+    return { operation: "pipeline", params: { operations } };
+  }
+
+  match = query.match(/^df\s*\[\s*(['"])(.+?)\1\s*\]\.(sum|count|mean|min|max|median|std|var|variance|nunique)\(\)$/i);
+  if (match) {
+    const [, , column, rawFunction] = match;
+    const fn = rawFunction.toLowerCase();
+    if (fn === "count") {
+      return {
+        operation: "pipeline",
+        params: { operations: [{ operation: "remove_nulls", params: { column } }, { operation: "count", params: {} }] },
+      };
+    }
+    if (fn === "nunique") {
+      return {
+        operation: "pipeline",
+        params: { operations: [{ operation: "unique", params: { column } }, { operation: "count", params: {} }] },
+      };
+    }
+    return { operation: "aggregate", params: { column, function: fn === "var" ? "variance" : fn } };
+  }
+
+  match = query.match(/^df\s*\[\s*(['"])(.+?)\1\s*\]\.(?:dropna\(\)\.)?unique\(\)(?:\.tolist\(\))?$/i);
+  if (match) {
+    return { operation: "unique", params: { column: match[2] } };
+  }
+
+  match = query.match(/^df\s*\[\s*df\s*\[\s*(['"])(.+?)\1\s*\]\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*\]\s*\[\s*(\[.+\]|['"].+?['"])\s*\](?:\.head\((\d+)\))?$/i);
+  if (match) {
+    const [, , filterColumn, operator, rawValue, selectionToken, limit] = match;
+    const columns = parseLegacyColumnList(selectionToken);
+    const operations: Array<{ operation: string; params: Record<string, any> }> = [
+      { operation: "filter", params: buildLegacyFilter(filterColumn, operator, rawValue) },
+    ];
+    if (columns.length > 0) {
+      operations.push({ operation: "select", params: { columns, ...(limit ? { limit: Number(limit) } : {}) } });
+    } else if (limit) {
+      operations.push({ operation: "head", params: { n: Number(limit) } });
+    }
+    return { operation: "pipeline", params: { operations } };
+  }
+
+  match = query.match(/^df\s*\[\s*df\s*\[\s*(['"])(.+?)\1\s*\]\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*\]\s*(?:\.head\((\d+)\))?$/i);
+  if (match) {
+    const [, , filterColumn, operator, rawValue, limit] = match;
+    if (limit) {
+      return {
+        operation: "pipeline",
+        params: {
+          operations: [
+            { operation: "filter", params: buildLegacyFilter(filterColumn, operator, rawValue) },
+            { operation: "head", params: { n: Number(limit) } },
+          ],
+        },
+      };
+    }
+    return { operation: "filter", params: buildLegacyFilter(filterColumn, operator, rawValue) };
+  }
+
+  match = query.match(/^df\s*\[\s*(\[.+\]|['"].+?['"])\s*\](?:\.head\((\d+)\))?$/i);
+  if (match) {
+    const [, selectionToken, limit] = match;
+    const columns = parseLegacyColumnList(selectionToken);
+    if (columns.length > 0) {
+      return { operation: "select", params: { columns, ...(limit ? { limit: Number(limit) } : {}) } };
+    }
+  }
+
+  return null;
+}
+
+function executeSheetCommand(args: Record<string, any>, sheets: WorkbookSheets, defaultSheetName: string) {
+  const requestedSheetName = typeof args.sheet_name === "string" && args.sheet_name.trim()
+    ? args.sheet_name.trim()
+    : defaultSheetName;
+
+  const sheet = sheets[requestedSheetName];
+  if (!sheet) {
+    return {
+      args: { ...args, sheet_name: requestedSheetName },
+      result: `ERROR: Sheet '${requestedSheetName}' not found. Available: ${Object.keys(sheets).join(", ")}`,
+    };
+  }
+
+  if (typeof args.pandas_query === "string" && args.pandas_query.trim()) {
+    const translated = translateLegacyPandasQuery(args.pandas_query);
+    if (!translated) {
+      return {
+        args: { ...args, sheet_name: requestedSheetName },
+        result: "QUERY_ERROR: Unsupported pandas_query expression. Use operation + params for this query.",
+      };
+    }
+
+    return {
+      args: { ...args, sheet_name: requestedSheetName },
+      result: executeOperation(sheet.rows, translated.operation, translated.params),
+    };
+  }
+
+  if (typeof args.operation !== "string" || !args.operation.trim()) {
+    return {
+      args: { ...args, sheet_name: requestedSheetName },
+      result: "QUERY_ERROR: Missing operation or pandas_query.",
+    };
+  }
+
+  return {
+    args: { ...args, sheet_name: requestedSheetName },
+    result: executeOperation(sheet.rows, args.operation, args.params || {}),
+  };
+}
+
+export async function* runLegacyAgent(
+  question: string,
+  sheets: WorkbookSheets,
+  selectedSheetName: string,
+  provider: Provider,
+  model: string,
+  apiKey: string,
+  temperature: number,
+  maxTokens: number,
+  systemPromptOverride?: string,
+  conversationHistory?: ConversationContext[],
+  providerOptions: LLMProviderOptions = {}
+): AsyncGenerator<AgentStep> {
+  const defaultSheetName = resolveDefaultSheetName(sheets, selectedSheetName);
+  if (!defaultSheetName) {
+    yield {
+      turn: 1,
+      command: "Error",
+      args: {},
+      result: "No sheets are available for querying.",
+      tokens: { input: 0, output: 0 },
+      durationMs: 0,
+      isFinal: true,
+    };
+    return;
+  }
+
+  const history: { role: string; content: string }[] = [];
+  const prompt = systemPromptOverride || DEFAULT_AGENT_PROMPT;
+  const maxTurns = 8;
+  let turn = 0;
+
+  const introParts = [
+    `Question: ${question}`,
+    `Current selected sheet: "${defaultSheetName}"`,
+    `Available sheet count: ${Object.keys(sheets).length}`,
+  ];
+
+  if (conversationHistory && conversationHistory.length > 0) {
+    const recent = conversationHistory.slice(-3).map((entry, index) =>
+      `Q${index + 1}: ${entry.question}\nA${index + 1}: ${typeof entry.answer === "string" ? entry.answer : JSON.stringify(entry.answer).slice(0, 300)}`
+    );
+    introParts.push(`Recent conversation:\n${recent.join("\n")}`);
+  }
+
+  introParts.push("Respond with one JSON command only.");
+  let llmInput = introParts.join("\n\n");
+
+  while (turn < maxTurns) {
+    turn++;
+    const startTime = Date.now();
+    history.push({ role: "user", content: llmInput });
+
+    let llmResponse: LLMResponse;
+    try {
+      llmResponse = await callLLM(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
+    } catch (err: any) {
+      yield {
+        turn,
+        command: "Error",
+        args: {},
+        result: err.message,
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+        isFinal: true,
+      };
+      return;
+    }
+
+    history.push({ role: "assistant", content: llmResponse.content });
+
+    let parsed = parseCommand(llmResponse.content);
+    if (!parsed) {
+      yield {
+        turn,
+        command: "PARSE_ERROR",
+        args: {},
+        result: "Could not parse command, retrying...",
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = "Invalid response. Reply ONLY with a JSON command object.";
+      continue;
+    }
+
+    const requestedSheetName =
+      typeof parsed.args?.sheet_name === "string" && parsed.args.sheet_name.trim()
+        ? parsed.args.sheet_name.trim()
+        : defaultSheetName;
+    const repairSheet = sheets[requestedSheetName] || sheets[defaultSheetName];
+    parsed = repairLegacyCommandForQuestion(parsed, question, repairSheet);
+
+    let { command, args = {} } = parsed;
+    args = args || {};
+    let result: any;
+    let normalizedArgs = args as Record<string, any>;
+    const rawArgs = args as Record<string, any>;
+    const defaultRawResult = llmResponse.content;
+    const answerPayload = rawArgs.value !== undefined ? rawArgs.value : (Object.keys(rawArgs).length > 0 ? rawArgs : defaultRawResult);
+    const normalizedAnswer =
+      typeof answerPayload === "string" && !answerPayload.trim()
+        ? defaultRawResult?.trim() || "No result returned from the model."
+        : answerPayload;
+
+    switch (command) {
+      case "Answer":
+      case "FinalAnswer":
+        result = normalizedAnswer;
+        break;
+      case "NarrativeAnswer":
+        result = {
+          narrative: rawArgs.text || rawArgs.narrative || defaultRawResult,
+          highlights: rawArgs.highlights || [],
+        };
+        break;
+      case "GetSheetDescription":
+        result = buildSheetDescription(sheets);
+        normalizedArgs = {};
+        break;
+      case "GetColumns": {
+        const requestedSheetName = typeof rawArgs.sheet_name === "string" && rawArgs.sheet_name.trim()
+          ? rawArgs.sheet_name.trim()
+          : defaultSheetName;
+        normalizedArgs = { ...rawArgs, sheet_name: requestedSheetName };
+        result = buildColumnsDescription(sheets, requestedSheetName);
+        break;
+      }
+      case "QuerySheet":
+      case "ExecuteFinalQuery": {
+        const executed = executeSheetCommand(rawArgs, sheets, defaultSheetName);
+        normalizedArgs = executed.args;
+        result = command === "QuerySheet" && Array.isArray(executed.result)
+          ? executed.result.slice(0, 20)
+          : executed.result;
+        break;
+      }
+      default:
+        result = `ERROR: Unknown command '${command}'`;
+    }
+
+    const isFinal =
+      command === "ExecuteFinalQuery" ||
+      command === "Answer" ||
+      command === "FinalAnswer" ||
+      command === "NarrativeAnswer";
+
+    yield {
+      turn,
+      command,
+      args: normalizedArgs,
+      result,
+      tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+      durationMs: Date.now() - startTime,
+      isFinal,
+    };
+
+    if (isFinal) return;
+    llmInput = `Result: ${formatResultForModel(result)}`;
   }
 
   yield {

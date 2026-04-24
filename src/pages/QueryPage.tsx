@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
+import { memo, useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { List } from "react-window";
@@ -27,7 +27,7 @@ import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
-import { runAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import { runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
 import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
 import { toast } from "sonner";
@@ -56,6 +56,9 @@ const CHART_COLORS = [
 ];
 const DEFAULT_CHART_ROWS = 50;
 const CHART_RENDER_LIMIT = 1000;
+const CHART_META_SAMPLE_LIMIT = 2000;
+const STEP_RESULT_PREVIEW_ROWS = 5;
+const STEP_RESULT_PREVIEW_LIMIT = 1200;
 const RESULT_TABLE_ROW_HEIGHT: Record<ResultDensity, number> = {
   compact: 30,
   comfortable: 38,
@@ -196,20 +199,21 @@ function getChartMeta(result: any) {
   const rows: Record<string, any>[] = Array.isArray(rawData)
     ? rawData.filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
     : [];
-  const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
-  const numericKeys = keys.filter((k) => rows.some((row) => toChartNumber(row[k]) !== null));
+  const chartSourceRows = rows.length > CHART_META_SAMPLE_LIMIT ? rows.slice(0, CHART_META_SAMPLE_LIMIT) : rows;
+  const keys = chartSourceRows.length > 0 ? Object.keys(chartSourceRows[0]) : [];
+  const numericKeys = keys.filter((k) => chartSourceRows.some((row) => toChartNumber(row[k]) !== null));
   const nonNumericKeys = keys.filter((k) => !numericKeys.includes(k));
   const valueKey = numericKeys[0] || "";
   // Prefer a non-numeric key as label; fallback to the second key or first key
   const labelKey = nonNumericKeys[0] || (keys.length > 1 ? keys.find((k) => k !== valueKey) : keys[0]) || "";
   const dateKeys = keys.filter((k) =>
-    rows.some((row) => {
+    chartSourceRows.some((row) => {
       const value = String(row[k] ?? "");
       return value.length > 4 && !Number.isNaN(Date.parse(value));
     })
   );
   const chartRows = valueKey
-    ? rows
+    ? chartSourceRows
         .map((row) => {
           const numeric = toChartNumber(row[valueKey]);
           if (numeric === null) return null;
@@ -221,6 +225,62 @@ function getChartMeta(result: any) {
   const isChartable = chartRows.length >= 2 && Boolean(valueKey) && Boolean(labelKey) && labelKey !== valueKey;
   const defaultChart: ChartType = dateKeys.includes(labelKey) ? "line" : "bar";
   return { rows, keys, chartRows, valueKey, labelKey, isChartable, defaultChart };
+}
+
+function buildStepResultPreview(result: any) {
+  if (Array.isArray(result)) {
+    const previewRows = result.slice(0, STEP_RESULT_PREVIEW_ROWS);
+    const previewJson = JSON.stringify(previewRows, null, 2);
+    return `${result.length.toLocaleString()} row(s)\n${previewJson}${result.length > previewRows.length ? "\n..." : ""}`;
+  }
+
+  if (typeof result === "string") {
+    return result.length > STEP_RESULT_PREVIEW_LIMIT
+      ? `${result.slice(0, STEP_RESULT_PREVIEW_LIMIT)}...`
+      : result;
+  }
+
+  const resultJson = JSON.stringify(result, null, 2);
+  return resultJson.length > STEP_RESULT_PREVIEW_LIMIT
+    ? `${resultJson.slice(0, STEP_RESULT_PREVIEW_LIMIT)}...`
+    : resultJson;
+}
+
+function formatOperationLabel(operation?: string) {
+  if (!operation) return "query";
+  return operation.replace(/_/g, " ");
+}
+
+function describeAgentStep(step: AgentStep) {
+  const args = (step.args || {}) as Record<string, any>;
+  const sheetName = typeof args.sheet_name === "string" && args.sheet_name.trim() ? args.sheet_name.trim() : "";
+  const operation = typeof args.operation === "string" && args.operation.trim()
+    ? formatOperationLabel(args.operation.trim())
+    : typeof args.pandas_query === "string" && args.pandas_query.trim()
+      ? "pandas query"
+      : "";
+
+  switch (step.command) {
+    case "GetSheetDescription":
+      return "Checked which sheets are available in the workbook.";
+    case "GetColumns":
+      return `Inspected the schema${sheetName ? ` for "${sheetName}"` : ""}.`;
+    case "QuerySheet":
+      return `Ran an intermediate ${operation || "query"}${sheetName ? ` on "${sheetName}"` : ""}.`;
+    case "ExecuteFinalQuery":
+      return `Ran the final ${operation || "query"}${sheetName ? ` on "${sheetName}"` : ""}.`;
+    case "Answer":
+    case "FinalAnswer":
+      return "Returned a direct answer.";
+    case "NarrativeAnswer":
+      return "Returned a written explanation.";
+    case "PARSE_ERROR":
+      return "Retried because the model response was not valid JSON.";
+    case "Error":
+      return "Stopped because the query hit an error.";
+    default:
+      return "";
+  }
 }
 
 function getFinalStep(steps?: AgentStep[]) {
@@ -327,7 +387,7 @@ interface ResultRowProps {
   density: ResultDensity;
 }
 
-function ResultTableRow({
+const ResultTableRow = memo(function ResultTableRow({
   index,
   style,
   ariaAttributes,
@@ -361,9 +421,9 @@ function ResultTableRow({
       })}
     </div>
   );
-}
+});
 
-function VirtualizedResultTable({
+const VirtualizedResultTable = memo(function VirtualizedResultTable({
   rows,
   headers,
   density,
@@ -419,7 +479,7 @@ function VirtualizedResultTable({
       </div>
     </div>
   );
-}
+});
 
 // ─── NarrativeResult Component ────────────────────────────────────────────────
 function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
@@ -445,11 +505,26 @@ function NarrativeResult({ result }: { result: { narrative: string; highlights?:
 }
 
 // ─── StepCard Component ───────────────────────────────────────────────────────
-function StepCard({ step }: { step: AgentStep }) {
-  const [expanded, setExpanded] = useState(false);
+const StepCard = memo(function StepCard({
+  step,
+  defaultExpanded = true,
+  showConnector = true,
+}: {
+  step: AgentStep;
+  defaultExpanded?: boolean;
+  showConnector?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const colorClass = COMMAND_COLORS[step.command] || "bg-muted text-muted-foreground";
   const [showFull, setShowFull] = useState(false);
-  const resultStr = JSON.stringify(step.result, null, 2);
+  const argsStr = useMemo(() => JSON.stringify(step.args, null, 2), [step.args]);
+  const resultPreview = useMemo(() => buildStepResultPreview(step.result), [step.result]);
+  const summary = useMemo(() => describeAgentStep(step), [step]);
+  const fullResultStr = useMemo(
+    () => (expanded ? JSON.stringify(step.result, null, 2) : ""),
+    [expanded, step.result]
+  );
+  const canShowFull = expanded && fullResultStr.length > resultPreview.length;
 
   return (
     <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3">
@@ -457,7 +532,7 @@ function StepCard({ step }: { step: AgentStep }) {
         <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 ${colorClass}`}>
           {step.turn}
         </div>
-        <div className="w-px flex-1 bg-border mt-1" />
+        {showConnector && <div className="w-px flex-1 bg-border mt-1" />}
       </div>
       <div className="flex-1 pb-4 min-w-0">
         <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 w-full text-left">
@@ -468,6 +543,7 @@ function StepCard({ step }: { step: AgentStep }) {
           )}
           {expanded ? <ChevronDown size={14} className="text-muted-foreground ml-auto" /> : <ChevronRight size={14} className="text-muted-foreground ml-auto" />}
         </button>
+        {summary && <p className="mt-1 text-xs text-muted-foreground">{summary}</p>}
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="mt-2 space-y-2 overflow-hidden">
             {Object.keys(step.args).length > 0 && (
@@ -482,17 +558,17 @@ function StepCard({ step }: { step: AgentStep }) {
                     <Copy size={10} /> Copy command
                   </button>
                 </div>
-                <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">{JSON.stringify(step.args, null, 2)}</pre>
+                <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">{argsStr}</pre>
               </div>
             )}
             <div className="bg-card rounded-md p-3 border border-border">
               <p className="text-xs text-muted-foreground mb-1 font-medium">Result</p>
               <pre className="text-xs font-mono text-foreground whitespace-pre-wrap max-h-40 overflow-auto scrollbar-thin">
-                {showFull ? resultStr : resultStr.slice(0, 500)}{resultStr.length > 500 && !showFull && "..."}
+                {showFull ? fullResultStr : resultPreview}
               </pre>
-              {resultStr.length > 500 && (
+              {canShowFull && (
                 <button onClick={() => setShowFull(!showFull)} className="text-xs text-primary mt-1 hover:underline">
-                  {showFull ? "Show less" : "Show full"}
+                  {showFull ? "Show summary" : "Show raw JSON"}
                 </button>
               )}
             </div>
@@ -501,10 +577,46 @@ function StepCard({ step }: { step: AgentStep }) {
       </div>
     </motion.div>
   );
-}
+});
+
+const StepsTimeline = memo(function StepsTimeline({
+  steps,
+  live = false,
+}: {
+  steps: AgentStep[];
+  live?: boolean;
+}) {
+  if (!steps.length) return null;
+
+  return (
+    <div className="ml-10 rounded-md border border-border bg-background-secondary/45 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-foreground">{live ? "Live agent steps" : "Agent steps"}</p>
+          <p className="text-xs text-muted-foreground">
+            Showing the full step-by-step flow used to answer this query.
+          </p>
+        </div>
+        <Badge variant="secondary" className="border-border bg-card text-xs text-foreground">
+          {steps.length} step{steps.length === 1 ? "" : "s"}
+        </Badge>
+      </div>
+      <div>
+        {steps.map((step, index) => (
+          <StepCard
+            key={`${step.turn}-${step.command}-${index}`}
+            step={step}
+            defaultExpanded
+            showConnector={index < steps.length - 1}
+          />
+        ))}
+      </div>
+    </div>
+  );
+});
 
 // ─── ResultPanel (Right Sidebar) ─────────────────────────────────────────────
-function ResultPanel({
+const ResultPanel = memo(function ResultPanel({
   result, query, onClose, onBookmark,
 }: {
   result: any; query: string; onClose: () => void; onBookmark: () => void;
@@ -514,7 +626,7 @@ function ResultPanel({
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
   const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
-  const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
+  const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(result), [result]);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const [showExport, setShowExport] = useState(false);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -561,7 +673,11 @@ function ResultPanel({
 
   const displayedRows = useMemo(() => {
     const q = resultSearch.trim().toLowerCase();
-    let next = rows.filter((row) => !q || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(q)));
+    if (!q && !sortKey) return rows;
+
+    let next = q
+      ? rows.filter((row) => Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(q)))
+      : rows;
     if (sortKey) {
       next = [...next].sort((a, b) => {
         const av = a[sortKey];
@@ -946,15 +1062,15 @@ function ResultPanel({
 
     </div>
   );
-}
+});
 
 // ─── InlineFinalResult ────────────────────────────────────────────────────────
-function InlineFinalResult({ result }: { result: any }) {
+const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: any }) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
   const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
-  const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = getChartMeta(result);
+  const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(result), [result]);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const areaGradientId = useId().replace(/:/g, "");
   const isEmptyArray = isArray && rows.length === 0;
@@ -1076,7 +1192,7 @@ function InlineFinalResult({ result }: { result: any }) {
       )}
     </div>
   );
-}
+});
 
 // ─── DataPreviewPanel ─────────────────────────────────────────────────────────
 function DataPreviewPanel({ dataset, sheet, onClose }: {
@@ -1432,15 +1548,15 @@ export default function QueryPage() {
     setFinalResult(null);
     setLastQuery(question);
 
-    let sheetData = selectedDataset?.data?.sheets[selectedSheet];
-    if (!sheetData) {
+    let workbookSheets = selectedDataset?.data?.sheets;
+    if (!workbookSheets) {
       toast.info("Loading dataset from storage…");
       const { loadDatasetData } = useDatasetStore.getState();
       const fetched = await loadDatasetData(selectedDatasetId);
-      sheetData = fetched?.sheets[selectedSheet];
+      workbookSheets = fetched?.sheets;
     }
     if (cancelRequestedRef.current) return;
-    if (!sheetData) {
+    if (!workbookSheets || !workbookSheets[selectedSheet]) {
       toast.error("Dataset data unavailable. Please re-upload the file.");
       setIsRunning(false);
       return;
@@ -1449,8 +1565,8 @@ export default function QueryPage() {
     const startTime = Date.now();
 
     try {
-      for await (const step of runAgent(
-        question, sheetData, activeProvider, activeModel, apiKey, temperature, maxTokens,
+      for await (const step of runLegacyAgent(
+        question, workbookSheets, selectedSheet, activeProvider, activeModel, apiKey, temperature, maxTokens,
         systemPrompt || undefined, conversationContext, providerOptions
       )) {
         if (cancelRequestedRef.current) {
@@ -1790,7 +1906,7 @@ export default function QueryPage() {
                 ) : (
                   <div className="space-y-1">
                     {msg.steps && msg.steps.length > 0 ? (
-                      finalStep ? <StepCard step={finalStep} /> : null
+                      <StepsTimeline steps={msg.steps} />
                     ) : (
                       <div className="bg-destructive/10 rounded-lg px-4 py-2.5 border border-destructive/20">
                         <p className="text-sm text-destructive">{msg.content}</p>
@@ -1831,7 +1947,7 @@ export default function QueryPage() {
 
           {isRunning && (
             <div className="space-y-1">
-              {currentFinalStep && <StepCard step={currentFinalStep} />}
+              {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
               {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
               <div className="flex flex-wrap items-center gap-2 pl-10">
                 <div className="flex gap-1">
