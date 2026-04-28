@@ -1,4 +1,5 @@
 import { memo, useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { List, type RowComponentProps } from "react-window";
@@ -694,12 +695,14 @@ const StepCard = memo(function StepCard({
                     <Copy size={10} /> Copy command
                   </button>
                 </div>
-                <pre className="text-xs font-mono text-foreground whitespace-pre-wrap">{argsStr}</pre>
+                <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground [overflow-wrap:anywhere]">
+                  {argsStr}
+                </pre>
               </div>
             )}
             <div className="bg-card rounded-md p-3 border border-border">
               <p className="text-xs text-muted-foreground mb-1 font-medium">Result</p>
-              <pre className="text-xs font-mono text-foreground whitespace-pre-wrap max-h-40 overflow-auto scrollbar-thin">
+              <pre className="max-h-40 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
                 {showFull ? fullResultStr : resultPreview}
               </pre>
               {canShowFull && (
@@ -806,6 +809,22 @@ const ResultPanel = memo(function ResultPanel({
     setXAxisLabel(labelKey);
     setYAxisLabel(valueKey);
   }, [query, labelKey, valueKey]);
+  useEffect(() => {
+    if (!fullscreen || typeof document === "undefined") return;
+
+    const originalOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [fullscreen]);
 
   const autoTopSort = chartSort === "none" && topN > 0 && (chartType === "bar" || chartType === "pie");
   const effectiveChartSort = autoTopSort ? "desc" : chartSort;
@@ -920,9 +939,9 @@ const ResultPanel = memo(function ResultPanel({
     }
   };
 
-  return (
-    <div className={fullscreen ? "fixed inset-2 z-[60] flex flex-col rounded-lg border border-border bg-background-secondary shadow-2xl sm:inset-4" : "h-full flex flex-col"}>
-      <div className="flex flex-col gap-2 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+  const panelContent = (
+    <>
+      <div className="shrink-0 flex flex-col gap-2 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-foreground">Result</h3>
           {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
@@ -945,7 +964,7 @@ const ResultPanel = memo(function ResultPanel({
       </div>
 
       {showExport && (
-        <div className="p-3 border-b border-border bg-card/40 space-y-2">
+        <div className="shrink-0 p-3 border-b border-border bg-card/40 space-y-2">
           <p className="text-xs text-muted-foreground font-medium">Export As</p>
           <div className="flex flex-wrap gap-1.5">
             {isArray && (
@@ -966,7 +985,7 @@ const ResultPanel = memo(function ResultPanel({
         </div>
       )}
 
-      <div className="min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
+      <div className="min-w-0 min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
         {isNarrative && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -1321,7 +1340,7 @@ const ResultPanel = memo(function ResultPanel({
         )}
         {typeof result === "string" && !isBlankString && (
           <div className="bg-card rounded-md p-4 border border-border">
-            <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>
+            <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{result}</p>
           </div>
         )}
 
@@ -1347,8 +1366,28 @@ const ResultPanel = memo(function ResultPanel({
         </div>
       </div>
 
+    </>
+  );
 
-    </div>
+  if (!fullscreen || typeof document === "undefined") {
+    return <div className="flex h-full min-h-0 flex-col">{panelContent}</div>;
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80]">
+      <button
+        type="button"
+        aria-label="Exit fullscreen result"
+        className="absolute inset-0 bg-background/86 backdrop-blur-md"
+        onClick={() => setFullscreen(false)}
+      />
+      <div className="relative z-10 h-full overflow-y-auto p-2 sm:p-4 lg:p-6">
+        <div className="mx-auto flex min-h-[calc(100dvh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden rounded-[24px] border border-border bg-background-secondary shadow-2xl sm:min-h-[calc(100dvh-2rem)] lg:min-h-[calc(100dvh-3rem)]">
+          {panelContent}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 });
 
@@ -1378,7 +1417,7 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
   }
 
   return (
-    <div className="ml-10 mt-1 mb-3 rounded-md border border-border bg-card p-3 space-y-3">
+    <div className="ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-3 space-y-3">
       <p className="text-xs text-muted-foreground font-medium">Result</p>
 
       {isSingleValue && (
@@ -1476,9 +1515,9 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
           No answer returned from the model.
         </div>
       )}
-      {!isBlankString && typeof result === "string" && <p className="text-sm text-foreground whitespace-pre-wrap">{result}</p>}
+      {!isBlankString && typeof result === "string" && <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{result}</p>}
       {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && (
-        <pre className="bg-background-secondary rounded-md p-2 border border-border text-xs font-mono text-foreground overflow-auto max-h-52 scrollbar-thin">
+        <pre className="max-h-52 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-border bg-background-secondary p-2 text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
           {JSON.stringify(result, null, 2)}
         </pre>
       )}
@@ -1728,6 +1767,7 @@ export default function QueryPage() {
   // Multi-turn conversation memory
   const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
 
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelRequestedRef = useRef(false);
@@ -1744,7 +1784,11 @@ export default function QueryPage() {
     if (replayQuestion) setInput(replayQuestion);
   }, [searchParams]);
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentSteps]);
+  useEffect(() => {
+    const scroller = chatScrollRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+  }, [messages, currentSteps]);
   useEffect(() => {
     if (!isRunning) {
       setElapsedMs(0);
@@ -1955,7 +1999,7 @@ export default function QueryPage() {
   const bedrockRegionForProvider = activeProviderConfig.region || "us-east-1";
 
   return (
-    <div className="relative flex min-h-[calc(100dvh-3.5rem)] flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] xl:h-[calc(100dvh-3.5rem)] xl:flex-row">
+    <div className="relative flex h-[calc(100dvh-3.5rem-4.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] md:h-[calc(100dvh-3.5rem)] xl:flex-row">
       <AnimatePresence>
         {showPreview && selectedDataset && (
           <DataPreviewPanel dataset={selectedDataset} sheet={selectedSheet} onClose={() => setShowPreview(false)} />
@@ -2140,8 +2184,8 @@ export default function QueryPage() {
       </div>
 
       {/* Center: Chat */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
+      <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
+        <div className="shrink-0 space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
               <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Dataset" /></SelectTrigger>
@@ -2184,7 +2228,7 @@ export default function QueryPage() {
             </Button>
           </div>
         </div>
-        <div className="flex-1 overflow-auto p-3 space-y-4 scrollbar-thin sm:p-4">
+        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-4 scrollbar-thin sm:p-4">
           {messages.length === 0 && !isRunning && (
             <div className="flex h-full flex-col items-center justify-center gap-4 rounded-[28px] border border-dashed border-border/70 bg-card/45 px-6 py-10 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
@@ -2215,8 +2259,10 @@ export default function QueryPage() {
               <div key={i}>
                 {msg.role === "user" ? (
                   <div className="flex justify-end">
-                    <div className="max-w-[85%] rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
-                      <p className="text-sm text-foreground">{msg.content}</p>
+                    <div className="max-w-[85%] min-w-0 rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
+                      <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                        {msg.content}
+                      </p>
                     </div>
                   </div>
                 ) : (
@@ -2224,8 +2270,10 @@ export default function QueryPage() {
                     {msg.steps && msg.steps.length > 0 ? (
                       <StepsTimeline steps={msg.steps} />
                     ) : (
-                      <div className="bg-destructive/10 rounded-lg px-4 py-2.5 border border-destructive/20">
-                        <p className="text-sm text-destructive">{msg.content}</p>
+                      <div className="max-w-full min-w-0 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2.5 sm:max-w-[85%]">
+                        <p className="text-sm text-destructive whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                          {msg.content}
+                        </p>
                       </div>
                     )}
                     {msg.steps && msg.steps.length > 0 && (
@@ -2284,7 +2332,7 @@ export default function QueryPage() {
           <div ref={chatEndRef} />
         </div>
 
-        <div className="border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
+        <div className="shrink-0 border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
           {apiWarning && (
             <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:flex-row sm:items-center sm:justify-between">
               <span>{apiWarning}</span>

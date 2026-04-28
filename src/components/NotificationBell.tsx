@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Bell, Check, CheckCheck, Database, Trash2, X, Sparkles, Shield, AlertTriangle, BellOff } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNotificationsStore, type Notification } from "@/stores/notifications-store";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   dataset_upload: Database,
@@ -83,105 +84,87 @@ function NotificationItem({ n, onRead, onDismiss }: { n: Notification; onRead: (
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const { notifications, unreadCount, markRead, markAllRead, dismiss, clearAll, fetchNotifications } = useNotificationsStore();
-
-  // Close on outside click
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   // Refetch when opened
   useEffect(() => { if (open) fetchNotifications(); }, [open]);
 
   return (
-    <div ref={ref} className="relative">
-      {/* Bell button */}
-      <button
-        id="notification-bell"
-        onClick={() => setOpen((o) => !o)}
-        className="relative p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
-        title="Notifications"
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          id="notification-bell"
+          className="relative p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
+          title="Notifications"
+        >
+          <Bell size={18} />
+          {unreadCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded-full bg-primary text-primary-foreground">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent
+        align="end"
+        side="bottom"
+        sideOffset={10}
+        className="w-[min(22rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-background-secondary p-0 text-foreground shadow-2xl"
       >
-        <Bell size={18} />
-        {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded-full bg-primary text-primary-foreground">
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </span>
-        )}
-      </button>
+        <div className="flex items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Bell size={14} className="text-foreground" />
+            <span className="text-sm font-semibold text-foreground">Notifications</span>
+            {unreadCount > 0 && (
+              <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
+                {unreadCount} new
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {unreadCount > 0 && (
+              <button
+                onClick={markAllRead}
+                className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-primary"
+                title="Mark all read"
+              >
+                <CheckCheck size={13} />
+              </button>
+            )}
+            {notifications.length > 0 && (
+              <button
+                onClick={clearAll}
+                className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-destructive"
+                title="Clear all"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+          </div>
+        </div>
 
-      {/* Dropdown */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.96 }}
-            transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-background-secondary shadow-2xl max-sm:right-[-0.25rem] sm:w-80"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Bell size={14} className="text-foreground" />
-                <span className="text-sm font-semibold text-foreground">Notifications</span>
-                {unreadCount > 0 && (
-                  <span className="text-xs bg-primary/10 text-primary rounded-full px-1.5 py-0.5 font-medium">
-                    {unreadCount} new
-                  </span>
-                )}
+        <div className="max-h-[min(70dvh,26rem)] overflow-y-auto scrollbar-thin">
+          <AnimatePresence>
+            {notifications.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <BellOff size={28} className="mb-3 text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">No notifications yet</p>
+                <p className="mt-1 text-xs text-muted-foreground/60">You're all caught up!</p>
               </div>
-              <div className="flex items-center gap-1">
-                {unreadCount > 0 && (
-                  <button
-                    onClick={markAllRead}
-                    className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors"
-                    title="Mark all read"
-                  >
-                    <CheckCheck size={13} />
-                  </button>
-                )}
-                {notifications.length > 0 && (
-                  <button
-                    onClick={clearAll}
-                    className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-destructive transition-colors"
-                    title="Clear all"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Notification list */}
-            <div className="max-h-96 overflow-y-auto scrollbar-thin">
-              <AnimatePresence>
-                {notifications.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <BellOff size={28} className="text-muted-foreground/30 mb-3" />
-                    <p className="text-sm text-muted-foreground">No notifications yet</p>
-                    <p className="text-xs text-muted-foreground/60 mt-1">You're all caught up!</p>
-                  </div>
-                ) : (
-                  notifications.map((n) => (
-                    <NotificationItem
-                      key={n.id}
-                      n={n}
-                      onRead={() => markRead(n.id)}
-                      onDismiss={() => dismiss(n.id)}
-                    />
-                  ))
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+            ) : (
+              notifications.map((n) => (
+                <NotificationItem
+                  key={n.id}
+                  n={n}
+                  onRead={() => markRead(n.id)}
+                  onDismiss={() => dismiss(n.id)}
+                />
+              ))
+            )}
+          </AnimatePresence>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
