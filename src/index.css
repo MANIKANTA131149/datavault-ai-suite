@@ -54,6 +54,13 @@
     --sidebar-accent-foreground: 0 0% 98%;
     --sidebar-border: 240 4% 27%;
     --sidebar-ring: 217 91% 60%;
+
+    --scrollbar-track: 240 6% 10%;
+    --scrollbar-track-edge: 240 5% 13%;
+    --scrollbar-thumb: 217 91% 60%;
+    --scrollbar-thumb-accent: 263 70% 58%;
+    --scrollbar-thumb-hover: 199 89% 62%;
+    --scrollbar-thumb-border: 240 6% 8%;
   }
 
   /* ── Light theme ──────────────────────────────────────────────────────── */
@@ -102,6 +109,13 @@
     --sidebar-accent-foreground: 224 71% 4%;
     --sidebar-border: 220 13% 86%;
     --sidebar-ring: 217 91% 50%;
+
+    --scrollbar-track: 220 20% 94%;
+    --scrollbar-track-edge: 220 18% 90%;
+    --scrollbar-thumb: 217 91% 54%;
+    --scrollbar-thumb-accent: 263 70% 52%;
+    --scrollbar-thumb-hover: 199 89% 52%;
+    --scrollbar-thumb-border: 0 0% 100%;
   }
 }
 
@@ -109,10 +123,65 @@
 @layer base {
   * {
     @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--scrollbar-thumb)) hsl(var(--scrollbar-track));
+  }
+
+  *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: linear-gradient(180deg, hsl(var(--scrollbar-track)), hsl(var(--scrollbar-track-edge)));
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, hsl(var(--scrollbar-thumb)), hsl(var(--scrollbar-thumb-accent)));
+    border: 3px solid hsl(var(--scrollbar-thumb-border));
+    border-radius: 999px;
+    box-shadow:
+      inset 0 1px 0 hsl(var(--foreground) / 0.14),
+      0 8px 16px -12px hsl(var(--primary) / 0.55);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, hsl(var(--scrollbar-thumb-hover)), hsl(var(--scrollbar-thumb-accent)));
+  }
+
+  *::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(180deg, hsl(var(--scrollbar-thumb-accent)), hsl(var(--scrollbar-thumb)));
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  html {
+    min-height: 100%;
+    background:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.12), transparent 30%),
+      radial-gradient(circle at top right, hsl(var(--accent) / 0.08), transparent 24%),
+      hsl(var(--background));
   }
 
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    min-width: 320px;
+    background:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.12), transparent 28%),
+      radial-gradient(circle at 85% 10%, hsl(var(--accent) / 0.09), transparent 22%),
+      linear-gradient(180deg, hsl(var(--background-secondary)) 0%, hsl(var(--background)) 18%, hsl(var(--background)) 100%);
+    @apply bg-background text-foreground font-sans antialiased overflow-x-hidden;
+  }
+
+  body,
+  #root {
+    min-height: 100dvh;
+  }
+
+  #root {
+    width: 100%;
   }
 
   :focus-visible {
@@ -121,6 +190,72 @@
 }
 
 @layer components {
+  .page-shell {
+    @apply mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-5 lg:py-6;
+  }
+
+  .page-shell-wide {
+    @apply mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-5 lg:py-6;
+  }
+
+  .page-shell-narrow {
+    @apply mx-auto w-full max-w-4xl px-4 py-4 sm:px-6 sm:py-5 lg:py-6;
+  }
+
+  .page-table-wrap {
+    @apply overflow-x-auto rounded-[24px] border border-border/70 bg-card/80 shadow-[0_18px_40px_-32px_hsl(var(--foreground)/0.65)] backdrop-blur-sm;
+  }
+
+  .page-hero {
+    @apply relative overflow-hidden rounded-[28px] border border-border/70 bg-card/80 px-5 py-4 shadow-[0_24px_60px_-36px_hsl(var(--foreground)/0.75)] backdrop-blur-sm sm:px-6 sm:py-5 lg:px-7 lg:py-5;
+    background-image:
+      radial-gradient(circle at top right, hsl(var(--primary) / 0.16), transparent 30%),
+      linear-gradient(145deg, hsl(var(--card) / 0.98) 0%, hsl(var(--background-secondary) / 0.96) 100%);
+  }
+
+  .page-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -10% -55% auto;
+    height: 11rem;
+    width: 11rem;
+    border-radius: 9999px;
+    background: radial-gradient(circle, hsl(var(--accent) / 0.16), transparent 70%);
+    pointer-events: none;
+  }
+
+  .page-kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.24em] text-primary/80 sm:text-xs;
+  }
+
+  .page-title {
+    @apply mt-1.5 text-2xl font-semibold leading-tight text-foreground sm:text-[2rem] lg:text-[2.5rem];
+  }
+
+  .page-copy {
+    @apply mt-2 max-w-2xl text-sm leading-5 text-muted-foreground sm:text-[15px] sm:leading-6;
+  }
+
+  .toolbar-panel {
+    @apply rounded-[24px] border border-border/70 bg-card/80 p-3 shadow-[0_18px_40px_-34px_hsl(var(--foreground)/0.7)] backdrop-blur-sm sm:p-4;
+  }
+
+  .metric-strip {
+    @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-4;
+  }
+
+  .metric-card {
+    @apply rounded-[22px] border border-border/70 bg-card/75 p-4 shadow-[0_18px_36px_-30px_hsl(var(--foreground)/0.7)] backdrop-blur-sm;
+  }
+
+  .inline-stat {
+    @apply rounded-2xl border border-border/60 bg-background/55 px-3 py-1.5 backdrop-blur-sm;
+  }
+
+  .empty-panel {
+    @apply rounded-[28px] border border-dashed border-border/70 bg-card/45 px-6 py-14 text-center shadow-[inset_0_1px_0_hsl(var(--foreground)/0.03)];
+  }
+
   .result-action-button:hover {
     background-color: hsl(var(--primary) / 0.1) !important;
     border-color: hsl(var(--primary) / 0.22) !important;
@@ -131,20 +266,29 @@
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border)) transparent;
+    scrollbar-color: hsl(var(--scrollbar-thumb)) hsl(var(--scrollbar-track));
   }
 
   .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
+    background: linear-gradient(180deg, hsl(var(--scrollbar-track)), hsl(var(--scrollbar-track-edge)));
+    border-radius: 999px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--border));
-    border-radius: 3px;
+    background: linear-gradient(180deg, hsl(var(--scrollbar-thumb)), hsl(var(--scrollbar-thumb-accent)));
+    border: 2px solid hsl(var(--scrollbar-thumb-border));
+    border-radius: 999px;
+    box-shadow:
+      inset 0 1px 0 hsl(var(--foreground) / 0.14),
+      0 8px 16px -12px hsl(var(--primary) / 0.55);
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, hsl(var(--scrollbar-thumb-hover)), hsl(var(--scrollbar-thumb-accent)));
   }
 }

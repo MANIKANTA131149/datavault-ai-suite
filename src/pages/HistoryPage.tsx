@@ -189,24 +189,41 @@ export default function HistoryPage() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">Query History</h1>
-          <p className="text-sm text-muted-foreground mt-1">{entries.length} queries total</p>
+    <div className="page-shell space-y-6">
+      <div className="page-hero">
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="page-kicker">Query archive</p>
+            <h1 className="page-title">Review past questions and results</h1>
+            <p className="page-copy">
+              Search, compare, replay, and export your query history in a layout that stays readable across smaller
+              phones and wider analytical workstations.
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Queries</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{entries.length}</p>
+            </div>
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Favorites</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{favoriteIds.length}</p>
+            </div>
+            <Button variant="outline" className="col-span-2 sm:col-span-1 sm:w-auto" onClick={exportCSV} disabled={entries.length === 0}>
+              <Download size={14} className="mr-2" /> Export
+            </Button>
+          </div>
         </div>
-        <Button variant="outline" className="border-border" onClick={exportCSV} disabled={entries.length === 0}>
-          <Download size={14} className="mr-2" /> Export
-        </Button>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
+      <div className="toolbar-panel">
+        <div className="flex gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Search queries, datasets, or models..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
         </div>
         <Select value={datasetFilter} onValueChange={setDatasetFilter}>
-          <SelectTrigger className="w-[170px] bg-background-secondary border-border">
+          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[170px]">
             <Filter size={12} className="mr-1" /><SelectValue />
           </SelectTrigger>
           <SelectContent className="bg-popover border-border">
@@ -215,7 +232,7 @@ export default function HistoryPage() {
           </SelectContent>
         </Select>
         <Select value={dateFilter} onValueChange={setDateFilter}>
-          <SelectTrigger className="w-[140px] bg-background-secondary border-border"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[140px]"><SelectValue /></SelectTrigger>
           <SelectContent className="bg-popover border-border">
             <SelectItem value="all">All dates</SelectItem>
             <SelectItem value="today">Today</SelectItem>
@@ -224,7 +241,7 @@ export default function HistoryPage() {
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[130px] bg-background-secondary border-border"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]"><SelectValue /></SelectTrigger>
           <SelectContent className="bg-popover border-border">
             <SelectItem value="all">All status</SelectItem>
             <SelectItem value="success">Success</SelectItem>
@@ -232,16 +249,18 @@ export default function HistoryPage() {
           </SelectContent>
         </Select>
         <Select value={providerFilter} onValueChange={setProviderFilter}>
-          <SelectTrigger className="w-[150px] bg-background-secondary border-border"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[150px]"><SelectValue /></SelectTrigger>
           <SelectContent className="bg-popover border-border">
             <SelectItem value="all">All providers</SelectItem>
             {Object.entries(PROVIDER_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
+      </div>
 
       {filtered.length > 0 && (
-        <div className="flex flex-col gap-3 rounded-md border border-border bg-background-secondary px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="toolbar-panel">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
             Showing {pageStart + 1}-{Math.min(pageStart + pageEntries.length, filtered.length)} of {filtered.length} quer{filtered.length === 1 ? "y" : "ies"}
           </p>
@@ -281,10 +300,11 @@ export default function HistoryPage() {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {compareIds.length > 0 && (
-        <div className="rounded-md border border-border bg-background-secondary p-3">
+        <div className="toolbar-panel">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
             <GitCompare size={14} /> Compare queries
           </div>
@@ -309,7 +329,7 @@ export default function HistoryPage() {
       )}
 
       {filtered.length === 0 ? (
-        <div className="text-center py-16">
+        <div className="empty-panel">
           <MessageSquare size={48} className="mx-auto text-muted-foreground/30 mb-4" />
           <p className="text-muted-foreground">{entries.length === 0 ? "No queries yet" : "No matching queries"}</p>
           {entries.length === 0 && (
@@ -317,8 +337,8 @@ export default function HistoryPage() {
           )}
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="page-table-wrap">
+          <table className="min-w-[920px] w-full text-sm">
             <thead className="bg-background-secondary">
               <tr>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Query</th>

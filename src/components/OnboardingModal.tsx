@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { Upload, Settings, ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth-store";
@@ -33,10 +33,10 @@ export function OnboardingModal() {
   const current = STEPS[step];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />
       <motion.div
-        className="relative w-full max-w-md bg-background-secondary border border-border rounded-xl p-6 shadow-2xl"
+        className="relative w-full max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-background-secondary p-5 shadow-2xl sm:max-w-md sm:p-6"
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
       >
@@ -59,16 +59,17 @@ export function OnboardingModal() {
           <p className="text-sm text-muted-foreground mt-2">{current.description}</p>
         </div>
 
-        <div className="flex items-center justify-between">
-          <Button variant="ghost" className="text-muted-foreground" onClick={setFirstLoginDone}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Button variant="ghost" className="text-muted-foreground sm:order-1" onClick={setFirstLoginDone}>
             Skip
           </Button>
-          <div className="flex gap-1.5">
+          <div className="flex justify-center gap-1.5 sm:order-2">
             {STEPS.map((_, i) => (
               <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === step ? "bg-primary" : "bg-border"}`} />
             ))}
           </div>
           <Button
+            className="sm:order-3"
             onClick={() => {
               if (step < STEPS.length - 1) setStep(step + 1);
               else setFirstLoginDone();

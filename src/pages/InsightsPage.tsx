@@ -30,7 +30,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
 
   return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="min-w-0">
-      <Card className={`min-w-0 overflow-hidden p-5 bg-background-secondary border-border hover:${colors.border} transition-all group`}>
+      <Card className={`min-w-0 overflow-hidden p-5 transition-all group hover:-translate-y-0.5 ${colors.border}`}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2 min-w-0">
             <div className={`w-8 h-8 rounded-lg ${colors.bg} flex items-center justify-center shrink-0`}>
@@ -41,7 +41,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
               <p className="text-xs text-muted-foreground truncate">{insight.query}</p>
             </div>
           </div>
-          <div className="flex shrink-0 gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex shrink-0 gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
             <button onClick={onTogglePin} className={`p-1.5 rounded hover:bg-primary/10 ${pinned ? "text-primary" : "text-muted-foreground hover:text-primary"}`} title="Pin">
               <Pin size={12} fill={pinned ? "currentColor" : "none"} />
             </button>
@@ -71,7 +71,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
           </pre>
         </div>
 
-        <div className="flex items-center justify-between gap-3 min-w-0">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 gap-1.5 flex-wrap">
             {insight.tags.map((tag) => (
               <Badge key={tag} variant="outline" className="border-border text-xs">
@@ -79,7 +79,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
               </Badge>
             ))}
           </div>
-          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="flex min-w-0 items-center gap-1">
               <Database size={9} className="shrink-0" />
               <span className="truncate">{insight.datasetName}</span>
@@ -172,21 +172,42 @@ export default function InsightsPage() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">Saved Insights</h1>
-          <p className="text-sm text-muted-foreground mt-1">{insights.length} bookmarked results</p>
+    <div className="page-shell space-y-6">
+      <div className="page-hero">
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="page-kicker">Insight library</p>
+            <h1 className="page-title">Keep the best results close</h1>
+            <p className="page-copy">
+              Collect notable findings, annotate them, and revisit them from any device in a cleaner, presentation-ready
+              layout.
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Saved</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{insights.length}</p>
+            </div>
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Pinned</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{pinnedIds.length}</p>
+            </div>
+            <div className="inline-stat col-span-2 sm:col-span-1">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Tags</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{allTags.length}</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
+      <div className="toolbar-panel">
+        <div className="flex gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Search insights..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
         </div>
         <Select value={colorFilter} onValueChange={setColorFilter}>
-          <SelectTrigger className="w-[130px] bg-background-secondary border-border">
+          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]">
             <Filter size={12} className="mr-1" /><SelectValue />
           </SelectTrigger>
           <SelectContent className="bg-popover border-border">
@@ -195,7 +216,7 @@ export default function InsightsPage() {
           </SelectContent>
         </Select>
         <Select value={tagFilter} onValueChange={setTagFilter}>
-          <SelectTrigger className="w-[140px] bg-background-secondary border-border">
+          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[140px]">
             <Tag size={12} className="mr-1" /><SelectValue />
           </SelectTrigger>
           <SelectContent className="bg-popover border-border">
@@ -204,9 +225,10 @@ export default function InsightsPage() {
           </SelectContent>
         </Select>
       </div>
+      </div>
 
       {filtered.length === 0 ? (
-        <div className="text-center py-16">
+        <div className="empty-panel">
           <Bookmark size={48} className="mx-auto text-muted-foreground/30 mb-4" />
           <p className="text-muted-foreground">{insights.length === 0 ? "No saved insights yet" : "No matching insights"}</p>
           <p className="text-xs text-muted-foreground mt-1">Save query results as insights from the Query page</p>

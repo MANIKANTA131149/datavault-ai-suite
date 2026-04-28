@@ -221,20 +221,45 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Manage your account, appearance and API configuration</p>
+    <div className="page-shell-narrow space-y-6">
+      <div className="page-hero">
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="page-kicker">Workspace controls</p>
+            <h1 className="page-title">Manage your account, appearance, and providers</h1>
+            <p className="page-copy">
+              Tune your profile, LLM providers, theme, and workspace usage with controls that stay organized and touch
+              friendly across compact and wide screens.
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Providers ready</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{configuredCount}</p>
+            </div>
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Queries run</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{entries.length}</p>
+            </div>
+            <div className="inline-stat col-span-2 sm:col-span-1">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Current plan</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{currentPlan.name}</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="flex flex-col gap-2 sm:flex-row">
+
+      <div className="toolbar-panel">
+        <div className="flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input value={settingsSearch} onChange={(e) => setSettingsSearch(e.target.value)} placeholder="Search settings or providers..." className="pl-9 bg-background-secondary border-border" />
         </div>
       </div>
+      </div>
 
       <Tabs defaultValue="profile">
-        <TabsList className="bg-background-secondary">
+        <TabsList className="inline-flex h-auto w-full flex-wrap justify-start gap-1 bg-background-secondary p-1">
           <TabsTrigger value="profile" className="flex items-center gap-2"><User size={13} />Profile</TabsTrigger>
           <TabsTrigger value="apikeys" className="flex items-center gap-2"><Cpu size={13} />Providers</TabsTrigger>
 
@@ -244,8 +269,8 @@ export default function SettingsPage() {
 
         {/* ─── Profile ─────────────────────────────────────────────────────────── */}
         <TabsContent value="profile" className="mt-6 space-y-6">
-          <Card className="p-6 bg-background-secondary border-border">
-            <div className="flex items-center gap-4 mb-6">
+          <Card className="p-4 bg-background-secondary border-border sm:p-6">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center">
               <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/30 to-accent/30 text-primary flex items-center justify-center text-xl font-bold ring-2 ring-primary/20">
                 {user?.avatarInitials}
               </div>
@@ -285,14 +310,14 @@ export default function SettingsPage() {
 
         {/* ─── API Keys (Providers) ────────────────────────────────────────────────── */}
         <TabsContent value="apikeys" className="mt-6 space-y-4">
-          <div className="flex items-center justify-between mb-2">
+          <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-foreground">{configuredCount} of {Object.keys(PROVIDER_LABELS).length} providers configured</p>
               <p className="text-xs text-muted-foreground">Provider keys are used for running queries via DataVault UI</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Select value={activeProvider} onValueChange={(value) => setActiveProvider(value as Provider)}>
-                <SelectTrigger className="w-[170px] bg-card border-border">
+                <SelectTrigger className="w-full bg-card border-border sm:w-[170px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
@@ -314,7 +339,7 @@ export default function SettingsPage() {
             const secretVisible = showKeys[`${provider}-secret`];
             return (
               <Card key={provider} className="p-4 bg-background-secondary border-border">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
                     <ProviderLogo provider={provider} />
                     <div>
@@ -394,7 +419,7 @@ export default function SettingsPage() {
                       </button>
                     </div>
                   )}
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -511,7 +536,7 @@ export default function SettingsPage() {
         {/* ─── Appearance ──────────────────────────────────────────────────────── */}
         <TabsContent value="appearance" className="mt-6 space-y-4">
           <Card className="p-6 bg-background-secondary border-border space-y-5">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {(["dark", "light", "system"] as Theme[]).map((option) => (
                 <button
                   key={option}
@@ -546,13 +571,13 @@ export default function SettingsPage() {
               ))}
             </div>
             <Separator className="bg-border" />
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Theme</p>
                 <p className="text-xs text-muted-foreground">Choose your preferred color scheme</p>
               </div>
               <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
-                <SelectTrigger className="w-32 bg-card border-border">
+                <SelectTrigger className="w-full bg-card border-border sm:w-32">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
@@ -563,7 +588,7 @@ export default function SettingsPage() {
               </Select>
             </div>
             <Separator className="bg-border" />
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Compact Mode</p>
                 <p className="text-xs text-muted-foreground">Reduce spacing for denser layouts</p>
@@ -571,13 +596,13 @@ export default function SettingsPage() {
               <Switch checked={compactMode} onCheckedChange={setCompactMode} />
             </div>
             <Separator className="bg-border" />
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Code Font</p>
                 <p className="text-xs text-muted-foreground">Font used in code blocks and queries</p>
               </div>
               <Select value={codeFont} onValueChange={(v) => setCodeFont(v as CodeFont)}>
-                <SelectTrigger className="w-44 bg-card border-border">
+                <SelectTrigger className="w-full bg-card border-border sm:w-44">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
@@ -596,8 +621,8 @@ export default function SettingsPage() {
 
         {/* ─── Usage/Billing ───────────────────────────────────────────────────── */}
         <TabsContent value="billing" className="mt-6 space-y-4">
-          <Card className="p-6 bg-background-secondary border-border">
-            <div className="flex items-center justify-between mb-5">
+          <Card className="p-4 bg-background-secondary border-border sm:p-6">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Current Plan</p>
                 <p className="text-xs text-muted-foreground">Usage resets monthly. Plans are managed manually by an administrator.</p>
@@ -644,7 +669,7 @@ export default function SettingsPage() {
                       <Badge variant="outline" className="border-border text-muted-foreground">Managed</Badge>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs mb-4">
+                  <div className="mb-4 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                     <div className="rounded-md border border-border bg-card p-2">Queries: {formatPlanLimit(plan.monthlyQueries)}</div>
                     <div className="rounded-md border border-border bg-card p-2">Tokens: {formatPlanLimit(plan.monthlyTokens)}</div>
                     <div className="rounded-md border border-border bg-card p-2">Datasets: {formatPlanLimit(plan.datasets)}</div>

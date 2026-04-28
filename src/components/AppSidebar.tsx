@@ -1,12 +1,22 @@
 import { useState } from "react";
-import { NavLink as RouterNavLink, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Database, MessageSquare, Clock, Settings, ChevronLeft, ChevronRight, LogOut, User, CreditCard, Bookmark, Shield } from "lucide-react";
+import { NavLink as RouterNavLink, useLocation } from "react-router-dom";
+import {
+  LayoutDashboard,
+  Database,
+  MessageSquare,
+  Clock,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+  Bookmark,
+  Shield,
+} from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { canAccessAdmin, getPlanDefinition } from "@/lib/plans";
+import { canAccessAdmin } from "@/lib/plans";
+import { AccountMenu } from "@/components/AccountMenu";
 
 const ROLE_BADGE_COLORS: Record<string, string> = {
   admin: "bg-amber-500/10 text-amber-400",
@@ -14,18 +24,21 @@ const ROLE_BADGE_COLORS: Record<string, string> = {
   viewer: "bg-muted/60 text-muted-foreground",
 };
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  className?: string;
+  mobile?: boolean;
+  onNavigate?: () => void;
+}
+
+export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
-  const navigate = useNavigate();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
 
-  // Read role directly from user object so Zustand re-renders when role changes
   const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
-  const plan = getPlanDefinition(user?.planTier);
+  const isCollapsed = mobile ? false : collapsed;
 
-  // Build nav items dynamically based on role
-  const NAV_ITEMS = [
+  const navItems = [
     { to: "/app/dashboard", icon: LayoutDashboard, label: "Dashboard", visible: true },
     { to: "/app/datasets", icon: Database, label: "Datasets", visible: true },
     { to: "/app/query", icon: MessageSquare, label: "Query", visible: true },
@@ -38,53 +51,80 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "h-screen sticky top-0 flex flex-col bg-background-secondary border-r border-border transition-all duration-200 shrink-0",
-        collapsed ? "w-[60px]" : "w-[240px]"
+        "relative min-h-0 flex flex-col border-r border-border/70 bg-background-secondary",
+        mobile
+          ? "h-full w-full max-w-xs"
+          : cn(
+              "sticky top-0 h-full shrink-0 overflow-hidden transition-all duration-200",
+              isCollapsed ? "w-[72px]" : "w-[248px]",
+            ),
+        className,
       )}
     >
-      <div className={cn("flex items-center h-14 px-3 border-b border-border", collapsed ? "justify-center" : "justify-between")}>
-        {!collapsed && (
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-sm font-semibold text-primary-foreground shrink-0">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.1),_transparent_34%)]" />
+
+      <div
+        className={cn(
+          "relative flex min-h-16 items-center border-b border-border/70 px-3",
+          isCollapsed ? "justify-center" : "justify-between",
+        )}
+      >
+        {!isCollapsed ? (
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-sm font-semibold text-primary-foreground shadow-[0_18px_34px_-18px_hsl(var(--primary)/0.95)]">
               DV
             </div>
-            <span className="text-sm font-semibold text-foreground truncate">DataVault Agent</span>
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-foreground">DataVault Agent</span>
+              {mobile && <span className="text-[11px] text-muted-foreground">Workspace navigation</span>}
+            </div>
           </div>
-        )}
-        {collapsed && (
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-sm font-semibold text-primary-foreground">
+        ) : (
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary text-sm font-semibold text-primary-foreground shadow-[0_18px_34px_-18px_hsl(var(--primary)/0.95)]">
             DV
           </div>
         )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className={cn("text-muted-foreground hover:text-foreground transition-colors", collapsed && "absolute -right-3 top-4 bg-background-secondary border border-border rounded-full p-0.5 z-10")}
-        >
-          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-        </button>
+
+        {!mobile && (
+          <button
+            type="button"
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setCollapsed((value) => !value)}
+            className={cn(
+              "text-muted-foreground transition-colors hover:text-foreground",
+              isCollapsed &&
+                "absolute left-[60px] top-4 z-10 rounded-full border border-border/70 bg-background-secondary p-0.5 shadow-sm",
+            )}
+          >
+            {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 py-2 px-2 space-y-0.5">
-        {NAV_ITEMS.map((item) => {
+      <nav className="relative flex-1 space-y-1 overflow-y-auto px-2 py-3">
+        {navItems.map((item) => {
           const isActive = location.pathname === item.to;
           const link = (
             <RouterNavLink
               key={item.to}
               to={item.to}
+              onClick={() => onNavigate?.()}
               className={cn(
-                "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors relative",
+                "relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-[background-color,color,transform] duration-200",
                 isActive
-                  ? "text-primary bg-primary/10"
-                  : "text-muted-foreground hover:text-foreground hover:bg-card"
+                  ? "bg-primary/10 text-primary shadow-[0_14px_28px_-24px_hsl(var(--primary)/0.95)]"
+                  : "text-muted-foreground hover:bg-card/80 hover:text-foreground",
               )}
             >
-              {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r" />}
+              {isActive && (
+                <div className="absolute left-1 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-primary/90" />
+              )}
               <item.icon size={18} className="shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
+              {!isCollapsed && <span className="truncate">{item.label}</span>}
             </RouterNavLink>
           );
 
-          if (collapsed) {
+          if (isCollapsed) {
             return (
               <Tooltip key={item.to} delayDuration={0}>
                 <TooltipTrigger asChild>{link}</TooltipTrigger>
@@ -92,54 +132,42 @@ export function AppSidebar() {
               </Tooltip>
             );
           }
+
           return link;
         })}
       </nav>
 
-      <div className="border-t border-border p-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className={cn("flex items-center gap-3 w-full px-3 py-2 rounded-md hover:bg-card transition-colors", collapsed && "justify-center")}>
-              <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-semibold shrink-0">
+      <div className="relative border-t border-border/70 p-2">
+        <AccountMenu
+          side={isCollapsed ? "right" : "top"}
+          onNavigate={onNavigate}
+          trigger={
+            <button
+              type="button"
+              className={cn(
+                "flex w-full items-center gap-3 rounded-[20px] border border-transparent bg-card/60 px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-card/90",
+                isCollapsed && "justify-center",
+              )}
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/20 text-xs font-semibold text-primary">
                 {user?.avatarInitials || "U"}
               </div>
-              {!collapsed && (
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
-                    <Badge className={`${ROLE_BADGE_COLORS[user?.role || "viewer"]} border-0 text-[10px] px-1.5 py-0 capitalize`}>
+              {!isCollapsed && (
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="truncate text-sm font-medium text-foreground">{user?.name}</p>
+                    <Badge
+                      className={`${ROLE_BADGE_COLORS[user?.role || "viewer"]} border-0 px-1.5 py-0 text-[10px] capitalize`}
+                    >
                       {user?.role || "viewer"}
                     </Badge>
-                    <Badge className="bg-primary/10 text-primary border-0 text-[10px] px-1.5 py-0">
-                      {plan.name}
-                    </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                  <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
                 </div>
               )}
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side={collapsed ? "right" : "top"} className="w-56">
-            <DropdownMenuItem onClick={() => navigate("/app/settings")}>
-              <User size={14} className="mr-2" /> Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/app/settings")}>
-              <CreditCard size={14} className="mr-2" /> Billing
-            </DropdownMenuItem>
-            {adminUser && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/app/admin")}>
-                  <Shield size={14} className="mr-2" /> Admin Panel
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={async () => { await logout(); navigate("/auth"); }} className="text-destructive focus:text-destructive">
-              <LogOut size={14} className="mr-2" /> Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          }
+        />
       </div>
     </aside>
   );

@@ -1,7 +1,7 @@
 import { memo, useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { List } from "react-window";
+import { List, type RowComponentProps } from "react-window";
 import {
   Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
@@ -526,7 +527,7 @@ interface ResultRowProps {
   density: ResultDensity;
 }
 
-const ResultTableRow = memo(function ResultTableRow({
+function ResultTableRow({
   index,
   style,
   ariaAttributes,
@@ -534,11 +535,7 @@ const ResultTableRow = memo(function ResultTableRow({
   headers,
   gridTemplateColumns,
   density,
-}: {
-  index: number;
-  style: CSSProperties;
-  ariaAttributes: Record<string, any>;
-} & ResultRowProps) {
+}: RowComponentProps<ResultRowProps>) {
   const row = rows[index];
   return (
     <div
@@ -560,7 +557,7 @@ const ResultTableRow = memo(function ResultTableRow({
       })}
     </div>
   );
-});
+}
 
 const VirtualizedResultTable = memo(function VirtualizedResultTable({
   rows,
@@ -858,7 +855,7 @@ const ResultPanel = memo(function ResultPanel({
     left: chartType === "pie" ? 20 : 4,
     bottom: chartType === "pie" ? 12 : rotateXAxisTicks ? 70 : 30,
   }), [chartType, rotateXAxisTicks]);
-  const chartControlsGridClass = fullscreen ? "grid-cols-2" : "grid-cols-1";
+  const chartControlsGridClass = fullscreen ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1";
   const chartTitleText = chartTitle || query || "Chart";
   const chartSummaryText = [
     labelKey && valueKey ? `${labelKey} vs ${valueKey}` : "",
@@ -924,13 +921,13 @@ const ResultPanel = memo(function ResultPanel({
   };
 
   return (
-    <div className={fullscreen ? "fixed inset-4 z-[60] rounded-lg border border-border bg-background-secondary shadow-2xl flex flex-col" : "h-full flex flex-col"}>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+    <div className={fullscreen ? "fixed inset-2 z-[60] flex flex-col rounded-lg border border-border bg-background-secondary shadow-2xl sm:inset-4" : "h-full flex flex-col"}>
+      <div className="flex flex-col gap-2 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-foreground">Result</h3>
           {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1 sm:justify-end">
 
           <button onClick={onBookmark} title="Save as Insight" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
             <BookmarkPlus size={14} />
@@ -977,7 +974,7 @@ const ResultPanel = memo(function ResultPanel({
               <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
             </div>
             {result.highlights?.length > 0 && (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {result.highlights.map((h: any, i: number) => (
                   <div key={i} className="bg-card rounded-md p-2.5 border border-border">
                     <p className="text-xs text-muted-foreground">{h.label}</p>
@@ -1007,15 +1004,15 @@ const ResultPanel = memo(function ResultPanel({
 
         {isChartable && (
           <div>
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <div className="flex gap-1">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap gap-1">
                 {(["bar", "line", "area", "pie"] as const).map((t) => (
                   <button key={t} onClick={() => setChartType(t)} title={`${t} chart`} className={`text-xs px-2.5 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
                     {t}
                   </button>
                 ))}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1">
                 <Palette size={12} className="text-muted-foreground" />
                 {["hsl(var(--primary))", "hsl(160, 84%, 39%)", "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)"].map((color) => (
                   <button
@@ -1083,7 +1080,7 @@ const ResultPanel = memo(function ResultPanel({
                 <p className="truncate text-sm font-medium text-foreground">{chartTitleText}</p>
                 <p className="text-xs text-muted-foreground">{chartSummaryText}</p>
               </div>
-              <div className={fullscreen ? "h-[54vh]" : "h-72"}>
+              <div className={fullscreen ? "h-[48vh] sm:h-[54vh]" : "h-64 sm:h-72"}>
               <ResponsiveContainer width="100%" height="100%">
                 {chartType === "pie" ? (
                   <PieChart margin={chartMargin}>
@@ -1523,9 +1520,9 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
   const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
-    <motion.div className="absolute inset-0 z-50 bg-background flex flex-col" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }} transition={{ duration: 0.18 }}>
-      <div className="flex items-center justify-between px-5 h-12 border-b border-border bg-background-secondary shrink-0">
-        <div className="flex items-center gap-2">
+    <motion.div className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-background" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }} transition={{ duration: 0.18 }}>
+      <div className="flex flex-col gap-2 border-b border-border bg-background-secondary px-4 py-3 shrink-0 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Database size={14} className="text-primary" />
           <span className="font-medium text-sm text-foreground">{dataset.fileName}</span>
           <span className="text-muted-foreground">·</span>
@@ -1537,11 +1534,11 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative flex-1 sm:flex-none">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
-              className="pl-7 pr-3 h-7 text-xs bg-card border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-44"
+              className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:w-44"
               placeholder="Search rows..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(0); }}
@@ -1578,7 +1575,8 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
       ) : (
         <>
           <div className="flex-1 overflow-auto scrollbar-thin">
-            <table className="w-full text-xs border-collapse">
+            <div className="min-w-full overflow-x-auto">
+            <table className="min-w-[720px] w-full text-xs border-collapse">
               <thead className="sticky top-0 bg-background-secondary z-10">
                 <tr>
                   <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border">#</th>
@@ -1598,9 +1596,10 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-5 py-2.5 border-t border-border bg-background-secondary shrink-0">
+            <div className="flex flex-col gap-2 border-t border-border bg-background-secondary px-4 py-2.5 shrink-0 sm:flex-row sm:items-center sm:justify-between sm:px-5">
               <span className="text-xs text-muted-foreground">
                 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()} rows
               </span>
@@ -1718,6 +1717,8 @@ export default function QueryPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSaveInsight, setShowSaveInsight] = useState(false);
+  const [showMobileSettings, setShowMobileSettings] = useState(false);
+  const [showMobileAdvanced, setShowMobileAdvanced] = useState(false);
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
   const [queryExpanded, setQueryExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -1954,7 +1955,7 @@ export default function QueryPage() {
   const bedrockRegionForProvider = activeProviderConfig.region || "us-east-1";
 
   return (
-    <div className="flex h-[calc(100vh-56px)] relative">
+    <div className="relative flex min-h-[calc(100dvh-3.5rem)] flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] xl:h-[calc(100dvh-3.5rem)] xl:flex-row">
       <AnimatePresence>
         {showPreview && selectedDataset && (
           <DataPreviewPanel dataset={selectedDataset} sheet={selectedSheet} onClose={() => setShowPreview(false)} />
@@ -1962,7 +1963,7 @@ export default function QueryPage() {
       </AnimatePresence>
 
       {/* Left: Context Panel */}
-      <div className="w-[280px] border-r border-border bg-background-secondary flex flex-col shrink-0 overflow-auto hidden lg:flex">
+      <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-auto border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
         <div className="p-4 space-y-4">
           <div>
             <Label className="text-xs text-muted-foreground">Dataset</Label>
@@ -2140,8 +2141,8 @@ export default function QueryPage() {
 
       {/* Center: Chat */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="lg:hidden border-b border-border bg-background-secondary p-3 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
               <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Dataset" /></SelectTrigger>
               <SelectContent className="bg-popover border-border">
@@ -2166,18 +2167,38 @@ export default function QueryPage() {
               ))}
             </div>
           )}
+          <div className="flex flex-wrap gap-2">
+            {selectedDataset && (
+              <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowPreview(true)}>
+                <Eye size={12} className="mr-1" /> Preview
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowMobileSettings(true)}>
+              <Settings2 size={12} className="mr-1" /> Provider
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowTemplates(true)}>
+              <LayoutTemplate size={12} className="mr-1" /> Templates
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowShortcuts(true)}>
+              <Keyboard size={12} className="mr-1" /> Shortcuts
+            </Button>
+          </div>
         </div>
-        <div className="flex-1 overflow-auto p-4 space-y-4 scrollbar-thin">
+        <div className="flex-1 overflow-auto p-3 space-y-4 scrollbar-thin sm:p-4">
           {messages.length === 0 && !isRunning && (
-            <div className="flex flex-col items-center justify-center h-full gap-4">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+            <div className="flex h-full flex-col items-center justify-center gap-4 rounded-[28px] border border-dashed border-border/70 bg-card/45 px-6 py-10 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
                 <Sparkles size={24} className="text-primary" />
               </div>
-              <p className="text-muted-foreground text-sm">Ask anything about your data</p>
-              <div className="flex flex-wrap gap-2 justify-center max-w-lg">
+              <p className="text-sm font-medium text-foreground">Ask anything about your data</p>
+              <p className="max-w-xl text-sm text-muted-foreground">
+                Use smart suggestions, prompt templates, or your own question. The workspace stays optimized for both
+                handheld and desktop query sessions.
+              </p>
+              <div className="flex max-w-lg flex-wrap justify-center gap-2">
                 {smartSuggestions.map((p) => (
                   <button key={p} onClick={() => { setInput(p); textareaRef.current?.focus(); }}
-                    className="text-xs px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors">
+                    className="rounded-full border border-border/70 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground">
                     {p}
                   </button>
                 ))}
@@ -2194,7 +2215,7 @@ export default function QueryPage() {
               <div key={i}>
                 {msg.role === "user" ? (
                   <div className="flex justify-end">
-                    <div className="bg-card rounded-lg px-4 py-2.5 max-w-md border border-border">
+                    <div className="max-w-[85%] rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
                       <p className="text-sm text-foreground">{msg.content}</p>
                     </div>
                   </div>
@@ -2208,7 +2229,7 @@ export default function QueryPage() {
                       </div>
                     )}
                     {msg.steps && msg.steps.length > 0 && (
-                      <div className="flex gap-3 text-xs text-muted-foreground pl-10 pt-1">
+                      <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground sm:pl-10">
                         <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
                         <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
                         {finalStep && (
@@ -2244,7 +2265,7 @@ export default function QueryPage() {
             <div className="space-y-1">
               {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
               {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
-              <div className="flex flex-wrap items-center gap-2 pl-10">
+              <div className="flex flex-wrap items-center gap-2 sm:pl-10">
                 <div className="flex gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0s" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
@@ -2263,23 +2284,23 @@ export default function QueryPage() {
           <div ref={chatEndRef} />
         </div>
 
-        <div className="p-4 border-t border-border bg-background">
+        <div className="border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
           {apiWarning && (
-            <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:flex-row sm:items-center sm:justify-between">
               <span>{apiWarning}</span>
               <Button variant="outline" size="sm" className="h-7 border-warning/30 text-xs" onClick={() => navigate("/app/settings")}>Settings</Button>
             </div>
           )}
           {lastFailedQuery && !isRunning && (
-            <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground">
+            <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <span>Last query failed.</span>
               <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={() => handleSend(lastFailedQuery)}>
                 <RefreshCw size={12} className="mr-1" /> Retry
               </Button>
             </div>
           )}
-          <div className="flex gap-2 items-end max-w-3xl mx-auto">
-            <div className="relative flex-1">
+          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm">
+            <div className="relative min-w-0 flex-1">
               <Textarea
                 ref={textareaRef}
                 value={input}
@@ -2302,18 +2323,20 @@ export default function QueryPage() {
                 </button>
               )}
             </div>
-            <Button
-              variant="outline"
-              onClick={() => setQueryExpanded((prev) => !prev)}
-              size="icon"
-              title={queryExpanded ? "Collapse query box" : "Expand query box"}
-              className="shrink-0 h-[44px] w-[44px] border-border"
-            >
-              {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </Button>
-            <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="shrink-0 h-[44px] w-[44px]">
-              {isRunning ? <X size={16} /> : <Send size={16} />}
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setQueryExpanded((prev) => !prev)}
+                size="icon"
+                title={queryExpanded ? "Collapse query box" : "Expand query box"}
+                className="h-[44px] w-[44px] shrink-0 border-border"
+              >
+                {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </Button>
+              <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
+                {isRunning ? <X size={16} /> : <Send size={16} />}
+              </Button>
+            </div>
           </div>
           {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
           {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-0.5">{input.length.toLocaleString()} characters</p>}
@@ -2322,7 +2345,7 @@ export default function QueryPage() {
 
       {/* Right: Result Panel */}
       {finalResult !== null && showResult && (
-        <div className="w-[380px] 2xl:w-[420px] border-l border-border bg-background-secondary shrink-0 hidden xl:block">
+        <div className="hidden w-[clamp(20rem,28vw,26rem)] shrink-0 border-l border-border/70 bg-background-secondary/90 backdrop-blur-sm xl:block">
           <ResultPanel
             result={finalResult}
             query={lastQuery}
@@ -2338,6 +2361,179 @@ export default function QueryPage() {
           <PanelRightOpen size={16} />
         </button>
       )}
+
+      <Sheet open={showMobileSettings} onOpenChange={setShowMobileSettings}>
+        <SheetContent side="bottom" className="h-[88dvh] overflow-y-auto border-t border-border bg-background-secondary px-4 pb-6 pt-10 lg:hidden">
+          <SheetHeader className="text-left">
+            <SheetTitle className="flex items-center gap-2">
+              <Settings2 size={16} className="text-primary" /> Query settings
+            </SheetTitle>
+            <SheetDescription>
+              Manage provider, model, API key, and query runtime options on mobile.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-6 space-y-4">
+            <div>
+              <Label className="text-xs text-muted-foreground">Dataset</Label>
+              <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
+                <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
+                  <SelectValue placeholder="Select dataset" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedDataset && selectedDataset.sheetNames.length > 1 && (
+              <div>
+                <Label className="text-xs text-muted-foreground">Sheet</Label>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {selectedDataset.sheetNames.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setSelectedSheet(s)}
+                      className={`rounded px-2 py-1 text-xs ${s === selectedSheet ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <Label className="text-xs text-muted-foreground">LLM Provider</Label>
+              <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
+                <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+                    <SelectItem key={p} value={p}>
+                      <span className="flex items-center gap-2">
+                        <ProviderLogo provider={p} size="sm" />
+                        {PROVIDER_LABELS[p]}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {activeProvider === "bedrock" ? (
+              <>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Access Key ID</Label>
+                  <Input
+                    type="password"
+                    placeholder="Enter AWS access key ID"
+                    value={apiKeyForProvider}
+                    onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })}
+                    className="mt-1.5 bg-card border-border text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Secret Access Key</Label>
+                  <Input
+                    type="password"
+                    placeholder="Enter AWS secret access key"
+                    value={secretAccessKeyForProvider}
+                    onChange={(e) => setProviderConfig(activeProvider, { secretAccessKey: e.target.value })}
+                    className="mt-1.5 bg-card border-border text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Region</Label>
+                  <Input
+                    placeholder="us-east-1"
+                    value={bedrockRegionForProvider}
+                    onChange={(e) => setProviderConfig(activeProvider, { region: e.target.value })}
+                    className="mt-1.5 bg-card border-border text-xs font-mono"
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <Label className="text-xs text-muted-foreground">API Key</Label>
+                <Input
+                  type="password"
+                  placeholder="Enter API key"
+                  value={apiKeyForProvider}
+                  onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })}
+                  className="mt-1.5 bg-card border-border text-xs font-mono"
+                />
+              </div>
+            )}
+
+            <div>
+              <Label className="text-xs text-muted-foreground">Model</Label>
+              {activeProvider === "bedrock" ? (
+                <Input
+                  value={activeModel}
+                  onChange={(e) => {
+                    setActiveModel(e.target.value);
+                    setProviderConfig(activeProvider, { model: e.target.value });
+                  }}
+                  placeholder="Enter Bedrock model ID"
+                  className="mt-1.5 bg-card border-border text-xs font-mono"
+                />
+              ) : (
+                <Select value={activeModel} onValueChange={setActiveModel}>
+                  <SelectTrigger className="mt-1.5 bg-card border-border min-w-0 text-xs [&>span]:truncate">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
+                    {PROVIDER_MODELS[activeProvider]?.map((m) => (
+                      <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
+                        <span className="min-w-0 whitespace-normal break-words leading-snug">
+                          {getModelDisplayName(m)}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div>
+              <div className="flex justify-between">
+                <Label className="text-xs text-muted-foreground">Temperature</Label>
+                <span className="text-xs font-mono text-muted-foreground">{temperature.toFixed(1)}</span>
+              </div>
+              <Slider value={[temperature]} onValueChange={([v]) => setTemperature(v)} min={0} max={1} step={0.1} className="mt-2" />
+            </div>
+
+            <div>
+              <Label className="text-xs text-muted-foreground">Max Tokens</Label>
+              <Select value={String(maxTokens)} onValueChange={(v) => setMaxTokens(Number(v))}>
+                <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  {[256, 512, 1024, 2048, 4096].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Collapsible open={showMobileAdvanced} onOpenChange={setShowMobileAdvanced}>
+              <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                <Settings2 size={12} /> Advanced {showMobileAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2">
+                <Textarea
+                  placeholder="System prompt override..."
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  className="bg-card border-border text-xs min-h-[96px]"
+                />
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Templates Library Dialog */}
       <Dialog open={showTemplates} onOpenChange={setShowTemplates}>

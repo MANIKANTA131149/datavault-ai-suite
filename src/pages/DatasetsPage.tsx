@@ -299,11 +299,11 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
 
   return (
     <motion.div
-      className="fixed inset-y-0 right-0 w-full max-w-lg bg-background-secondary border-l border-border z-50 flex flex-col"
+      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-full flex-col border-l border-border bg-background-secondary sm:max-w-lg"
       initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div>
+      <div className="flex items-start justify-between gap-3 border-b border-border p-4">
+        <div className="min-w-0">
           <h3 className="font-semibold text-foreground">{displayName || dataset.fileName}</h3>
           <p className="text-xs text-muted-foreground">Owner: {dataset.ownerEmail || dataset.createdBy || "You"}</p>
           <p className="text-xs text-muted-foreground">{dataset.sheetNames.length} sheet(s) · uploaded {new Date(dataset.uploadDate).toLocaleDateString()}</p>
@@ -311,7 +311,7 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
         <button aria-label="Close dataset details" title="Close" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 p-4 pb-1">
+      <div className="grid grid-cols-2 gap-2 p-4 pb-1 sm:grid-cols-4">
         {[
           { label: "Rows", value: totals.rows.toLocaleString(), icon: Rows3 },
           { label: "Columns", value: totals.columns.toLocaleString(), icon: Columns3 },
@@ -352,7 +352,7 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
         </div>
       )}
       <Tabs defaultValue="preview" className="flex-1 flex flex-col overflow-hidden" style={{ display: localData ? undefined : 'none' }}>
-        <TabsList className="mx-4 mt-3 bg-card">
+        <TabsList className="mx-4 mt-3 inline-flex h-auto w-auto flex-wrap justify-start gap-1 bg-card p-1">
           <TabsTrigger value="preview">Preview</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
           <TabsTrigger value="statistics">Intelligence</TabsTrigger>
@@ -360,7 +360,7 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
 
         {sheet && (
           <div className="mx-4 mt-3 rounded-md border border-border bg-card p-3 space-y-3">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div className="relative">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input value={columnSearch} onChange={(e) => setColumnSearch(e.target.value)} placeholder="Search columns..." className="h-8 pl-8 bg-background-secondary border-border text-xs" />
@@ -386,8 +386,8 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
         )}
 
         <TabsContent value="preview" className="flex-1 overflow-auto px-4 pb-4">
-          <div className="overflow-x-auto mt-3 rounded-md border border-border">
-            <table className="w-full text-xs">
+          <div className="mt-3 overflow-x-auto rounded-md border border-border">
+            <table className="min-w-[640px] w-full text-xs">
               <thead className="sticky top-0 bg-card">
                 <tr>
                   {visibleColumns.map((col) => (
@@ -409,8 +409,8 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
         </TabsContent>
 
         <TabsContent value="schema" className="flex-1 overflow-auto px-4 pb-4">
-          <div className="mt-3 rounded-md border border-border overflow-hidden">
-            <table className="w-full text-xs">
+          <div className="mt-3 overflow-x-auto rounded-md border border-border">
+            <table className="min-w-[640px] w-full text-xs">
               <thead className="bg-card">
                 <tr>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Column</th>
@@ -458,11 +458,11 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
         </TabsContent>
       </Tabs>
 
-      <div className="p-4 border-t border-border flex gap-2">
+      <div className="flex flex-col gap-2 border-t border-border p-4 sm:flex-row">
         <Button className="flex-1" onClick={() => navigate(`/app/query?dataset=${dataset.id}`)}>
           <MessageSquare size={14} className="mr-2" /> Query this dataset
         </Button>
-        <Button variant="outline" className="border-border text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)}>
+        <Button variant="outline" className="border-border text-destructive hover:bg-destructive/10 sm:w-auto" onClick={() => setDeleteOpen(true)}>
           <Trash2 size={14} />
         </Button>
       </div>
@@ -722,16 +722,40 @@ export default function DatasetsPage() {
   const isRecentlyUsed = (dataset: StoredDataset) => entries.some((entry) => entry.datasetName === dataset.fileName);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Datasets</h1>
-        <p className="text-sm text-muted-foreground mt-1">Upload and manage your data files.</p>
+    <div className="page-shell space-y-6">
+      <div className="page-hero">
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="page-kicker">Dataset studio</p>
+            <h1 className="page-title">Upload and manage your data files</h1>
+            <p className="page-copy">
+              Keep CSV and spreadsheet imports organized with flexible list and grid views that stay usable on mobile,
+              tablet, laptop, and wide desktop layouts.
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Datasets</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{datasets.length}</p>
+            </div>
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Recent use</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{datasets.filter(isRecentlyUsed).length}</p>
+            </div>
+            <div className="inline-stat col-span-2 sm:col-span-1">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Size limit</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{fileSizeLimitLabel}</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-          isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/50"
+        className={`cursor-pointer rounded-[28px] border-2 border-dashed p-6 text-center transition-colors sm:p-8 ${
+          isDragActive
+            ? "border-primary bg-primary/10 shadow-[0_20px_48px_-34px_hsl(var(--primary)/0.95)]"
+            : "border-border/80 bg-card/70 hover:border-primary/30"
         }`}
       >
         <input {...getInputProps()} />
@@ -747,7 +771,7 @@ export default function DatasetsPage() {
             <p className="text-xs text-muted-foreground mt-1">
               Supports .csv, .xlsx, .xls · {fileSizeLimitLabel}
             </p>
-            <div className="flex gap-2 justify-center mt-3">
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
               {["CSV", "XLSX", "XLS"].map((t) => (
                 <Badge key={t} variant="outline" className="border-border text-xs text-muted-foreground">{t}</Badge>
               ))}
@@ -757,7 +781,7 @@ export default function DatasetsPage() {
       </div>
 
       {uploadQueue.length > 0 && (
-        <Card className="p-3 bg-background-secondary border-border space-y-2">
+        <Card className="p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-foreground">Upload queue</p>
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setUploadQueue((prev) => prev.filter((item) => item.status === "uploading"))}>
@@ -795,7 +819,8 @@ export default function DatasetsPage() {
       )}
 
       {datasets.length > 0 && (
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="toolbar-panel">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="relative flex-1 min-w-[220px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -810,9 +835,9 @@ export default function DatasetsPage() {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
             <Select value={sortBy} onValueChange={(value) => setSortBy(value as DatasetSort)}>
-              <SelectTrigger className="w-[160px] bg-background-secondary border-border">
+              <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[160px]">
                 <ArrowUpDown size={13} className="mr-2" />
                 <SelectValue />
               </SelectTrigger>
@@ -855,10 +880,12 @@ export default function DatasetsPage() {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {selectedIds.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background-secondary px-3 py-2">
+        <div className="toolbar-panel">
+          <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <button
               type="button"
@@ -882,12 +909,13 @@ export default function DatasetsPage() {
             )}
           </div>
         </div>
+        </div>
       )}
 
       {loading && datasets.length === 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, index) => (
-            <Card key={index} className="p-4 bg-background-secondary border-border space-y-3">
+            <Card key={index} className="p-4 space-y-3">
               <Skeleton className="h-5 w-3/4" />
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-full" />
@@ -895,20 +923,20 @@ export default function DatasetsPage() {
           ))}
         </div>
       ) : datasets.length === 0 ? (
-        <div className="text-center py-16">
+        <div className="empty-panel">
           <FileSpreadsheet size={48} className="mx-auto text-muted-foreground/30 mb-4" />
           <p className="text-muted-foreground">No datasets uploaded yet</p>
           <p className="text-xs text-muted-foreground mt-1">Upload a CSV or Excel file to get started</p>
         </div>
       ) : visibleDatasets.length === 0 ? (
-        <div className="text-center py-16">
+        <div className="empty-panel">
           <Search size={48} className="mx-auto text-muted-foreground/30 mb-4" />
           <p className="text-muted-foreground">No matching datasets</p>
           <p className="text-xs text-muted-foreground mt-1">Try a different name, sheet, or file type.</p>
         </div>
       ) : viewMode === "list" ? (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="page-table-wrap">
+          <table className="min-w-[760px] w-full text-sm">
             <thead className="bg-background-secondary">
               <tr>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Dataset</th>
@@ -1042,7 +1070,7 @@ export default function DatasetsPage() {
                         aria-label="Copy dataset name"
                         title="Copy dataset name"
                         onClick={(event) => { event.stopPropagation(); copyDatasetName(ds.fileName); }}
-                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-card text-muted-foreground hover:text-foreground transition-opacity"
+                        className="p-1 text-muted-foreground transition-opacity hover:bg-card hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
                       >
                         <Copy size={12} />
                       </button>
@@ -1051,7 +1079,7 @@ export default function DatasetsPage() {
                         aria-label="Duplicate dataset"
                         title="Duplicate dataset"
                         onClick={(event) => { event.stopPropagation(); handleDuplicateDataset(ds); }}
-                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-card text-muted-foreground hover:text-foreground transition-opacity"
+                        className="p-1 text-muted-foreground transition-opacity hover:bg-card hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
                       >
                         <Copy size={12} />
                       </button>
@@ -1060,7 +1088,7 @@ export default function DatasetsPage() {
                         aria-label="Edit dataset details"
                         title="Edit dataset details"
                         onClick={(event) => { event.stopPropagation(); openEditDataset(ds); }}
-                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-card text-muted-foreground hover:text-foreground transition-opacity"
+                        className="p-1 text-muted-foreground transition-opacity hover:bg-card hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
                       >
                         <Pencil size={12} />
                       </button>
@@ -1069,7 +1097,7 @@ export default function DatasetsPage() {
                         aria-label="Pin dataset"
                         title="Pin dataset"
                         onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { pinned: !meta.pinned }); }}
-                        className={`p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-card transition-opacity ${meta.pinned ? "text-primary opacity-100" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`p-1 transition-opacity hover:bg-card md:opacity-0 md:group-hover:opacity-100 ${meta.pinned ? "text-primary opacity-100" : "text-muted-foreground hover:text-foreground"}`}
                       >
                         <Pin size={12} fill={meta.pinned ? "currentColor" : "none"} />
                       </button>
@@ -1078,7 +1106,7 @@ export default function DatasetsPage() {
                         aria-label="Favorite dataset"
                         title="Favorite dataset"
                         onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { favorite: !meta.favorite }); }}
-                        className={`p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-card transition-opacity ${meta.favorite ? "text-warning opacity-100" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`p-1 transition-opacity hover:bg-card md:opacity-0 md:group-hover:opacity-100 ${meta.favorite ? "text-warning opacity-100" : "text-muted-foreground hover:text-foreground"}`}
                       >
                         <Star size={12} fill={meta.favorite ? "currentColor" : "none"} />
                       </button>
@@ -1087,7 +1115,7 @@ export default function DatasetsPage() {
                         aria-label="Delete dataset"
                         title="Delete dataset"
                         onClick={(event) => { event.stopPropagation(); setDatasetToDelete(ds); }}
-                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-opacity"
+                        className="p-1 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive md:opacity-0 md:group-hover:opacity-100"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -1112,9 +1140,9 @@ export default function DatasetsPage() {
                   <div className="text-xs text-muted-foreground mb-3">
                     {formatBytes(ds.fileSize)}
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-xs text-muted-foreground">{ds.ownerEmail || ds.createdBy || "You"} - {new Date(ds.uploadDate).toLocaleDateString()}</span>
-                    <span className="text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                    <span className="flex items-center gap-1 text-xs text-primary transition-opacity md:opacity-0 md:group-hover:opacity-100">
                       View <ChevronRight size={12} />
                     </span>
                   </div>
@@ -1188,7 +1216,7 @@ export default function DatasetsPage() {
             </DialogDescription>
           </DialogHeader>
           {datasetToDelete && (
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
               <div className="rounded-md border border-border bg-card p-2">Rows: {getDatasetTotals(datasetToDelete).rows.toLocaleString()}</div>
               <div className="rounded-md border border-border bg-card p-2">Columns: {getDatasetTotals(datasetToDelete).columns.toLocaleString()}</div>
               <div className="rounded-md border border-border bg-card p-2">Type: {datasetToDelete.fileType.toUpperCase()}</div>

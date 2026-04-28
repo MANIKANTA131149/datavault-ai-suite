@@ -257,7 +257,7 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div className="p-6 max-w-6xl mx-auto flex items-center justify-center h-[60vh]">
+      <div className="page-shell flex min-h-[50vh] items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">Loading admin panel...</p>
@@ -267,26 +267,42 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground flex items-center gap-2">
-            <Shield size={20} className="text-primary" /> Admin Panel
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {fullAdminAccess ? "Manage users, roles, plans, and system-wide settings" : "Manage manual plan assignments"}
-          </p>
+    <div className="page-shell space-y-6">
+      <div className="page-hero">
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="page-kicker">Admin console</p>
+            <h1 className="page-title flex items-center gap-3">
+              <Shield size={24} className="text-primary" /> Admin Panel
+            </h1>
+            <p className="page-copy">
+              {fullAdminAccess
+                ? "Manage users, roles, plans, and workspace-wide activity from a cleaner responsive admin surface."
+                : "Review plan assignments and workspace access from a simplified administrative view."}
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Access</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{fullAdminAccess ? "Full" : "Limited"}</p>
+            </div>
+            <div className="inline-stat">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Plan</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{currentPlan.name}</p>
+            </div>
+            <Button
+              onClick={() => fullAdminAccess ? setShowInvite(true) : toast.info("Invites require Standard, Professional, or Enterprise")}
+              disabled={!fullAdminAccess}
+              className="col-span-2 sm:col-span-1"
+            >
+              <UserPlus size={14} className="mr-2" /> Invite User
+            </Button>
+          </div>
         </div>
-        <Button
-          onClick={() => fullAdminAccess ? setShowInvite(true) : toast.info("Invites require Standard, Professional, or Enterprise")}
-          disabled={!fullAdminAccess}
-        >
-          <UserPlus size={14} className="mr-2" /> Invite User
-        </Button>
       </div>
 
       {!fullAdminAccess && (
-        <Card className="p-4 bg-background-secondary border-border">
+        <Card className="p-4">
           <div className="flex items-start gap-3">
             <AlertTriangle size={16} className="text-warning mt-0.5" />
             <div>
@@ -301,7 +317,7 @@ export default function AdminPage() {
 
       {/* Stats + Role Distribution */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "Total Users", value: stats.userCount, icon: Users, color: "text-primary", bg: "bg-primary/10" },
             { label: "Datasets", value: stats.datasetCount, icon: Database, color: "text-blue-400", bg: "bg-blue-500/10" },
@@ -309,7 +325,7 @@ export default function AdminPage() {
             { label: "Insights", value: stats.insightCount, icon: Activity, color: "text-green-400", bg: "bg-green-500/10" },
           ].map((s) => (
             <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <Card className="p-4 bg-background-secondary border-border">
+              <Card className="metric-card">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-muted-foreground uppercase tracking-wide">{s.label}</span>
                   <div className={`w-8 h-8 rounded-lg ${s.bg} flex items-center justify-center`}>
@@ -325,7 +341,7 @@ export default function AdminPage() {
 
       {/* Tabs: Users | Audit Log */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-card">
+        <TabsList className="inline-flex h-auto w-full flex-wrap justify-start gap-1 bg-card p-1">
           <TabsTrigger value="users" className="flex items-center gap-1.5">
             <Users size={13} /> Users
           </TabsTrigger>
@@ -341,7 +357,7 @@ export default function AdminPage() {
         <TabsContent value="users" className="space-y-4 mt-4">
           {/* Role distribution */}
           {stats && (
-            <Card className="p-4 bg-background-secondary border-border">
+            <Card className="p-4">
               <h3 className="text-sm font-semibold text-foreground mb-3">Role & Workspace Plan</h3>
               <div className="flex gap-4 flex-wrap">
                 {Object.entries(stats.roleDistribution).map(([role, count]) => {
@@ -374,22 +390,23 @@ export default function AdminPage() {
           )}
 
           {/* User Filters */}
+        <div className="toolbar-panel">
           <div className="flex gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
-            </div>
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-[130px] bg-background-secondary border-border"><SelectValue /></SelectTrigger>
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
+          </div>
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]"><SelectValue /></SelectTrigger>
               <SelectContent className="bg-popover border-border">
                 <SelectItem value="all">All roles</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="analyst">Analyst</SelectItem>
                 <SelectItem value="viewer">Viewer</SelectItem>
               </SelectContent>
-            </Select>
-            <Select value={planFilter} onValueChange={setPlanFilter}>
-              <SelectTrigger className="w-[150px] bg-background-secondary border-border"><SelectValue /></SelectTrigger>
+          </Select>
+          <Select value={planFilter} onValueChange={setPlanFilter}>
+            <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[150px]"><SelectValue /></SelectTrigger>
               <SelectContent className="bg-popover border-border">
                 <SelectItem value="all">All plans</SelectItem>
                 {PLAN_TIERS.map((tier) => (
@@ -398,9 +415,10 @@ export default function AdminPage() {
               </SelectContent>
             </Select>
           </div>
+        </div>
 
           {planContext && fullAdminAccess && (
-            <Card className="p-3 bg-background-secondary border-border">
+            <Card className="p-3">
               <p className="text-xs text-muted-foreground">
                 Member sharing on {planContext.plan.name}: {planContext.usage.members.toLocaleString()} / {formatPlanLimit(planContext.plan.members)}
               </p>
@@ -408,8 +426,8 @@ export default function AdminPage() {
           )}
 
           {/* Users Table */}
-          <div className="rounded-lg border border-border overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="page-table-wrap">
+            <table className="min-w-[980px] w-full text-sm">
               <thead className="bg-background-secondary">
                 <tr>
                   <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">User</th>
@@ -517,7 +535,8 @@ export default function AdminPage() {
 
         {/* ─ Audit Log Tab ─ */}
         <TabsContent value="audit" className="space-y-4 mt-4">
-          <div className="flex gap-3 flex-wrap items-center">
+          <div className="toolbar-panel">
+            <div className="flex gap-3 flex-wrap items-center">
             <div className="relative flex-1 min-w-[200px]">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -528,7 +547,7 @@ export default function AdminPage() {
               />
             </div>
             <Select value={auditSeverity} onValueChange={setAuditSeverity}>
-              <SelectTrigger className="w-[130px] bg-background-secondary border-border">
+              <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]">
                 <Filter size={12} className="mr-1" /><SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-popover border-border">
@@ -546,14 +565,15 @@ export default function AdminPage() {
               <FileDown size={13} /> Export CSV
             </button>
           </div>
+          </div>
 
           {auditLoading ? (
             <div className="flex items-center justify-center py-12">
               <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <table className="w-full text-xs">
+            <div className="page-table-wrap">
+              <table className="min-w-[820px] w-full text-xs">
                 <thead className="bg-background-secondary">
                   <tr>
                     <th className="text-left px-4 py-3 text-muted-foreground font-medium">Timestamp</th>
@@ -592,7 +612,7 @@ export default function AdminPage() {
 
           {/* Pagination */}
           {auditTotal > AUDIT_PAGE_SIZE && (
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <span>{auditTotal} total events</span>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" disabled={auditPage <= 1} onClick={() => fetchAuditLogs(auditPage - 1)} className="h-7 text-xs border-border">

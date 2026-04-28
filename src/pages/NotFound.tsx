@@ -12,15 +12,15 @@ const NotFound = () => {
   }, [location.pathname]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
-      <div className="text-center max-w-md">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4 sm:p-6">
+      <div className="max-w-md text-center">
         <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <LayoutDashboard size={24} />
         </div>
         <h1 className="mb-2 text-4xl font-bold text-foreground">404</h1>
         <p className="text-xl text-foreground">Page not found</p>
         <p className="mt-2 text-sm text-muted-foreground">The route you opened does not exist in this workspace.</p>
-        <div className="mt-6 flex justify-center gap-2">
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
           <Button variant="outline" className="border-border" onClick={() => navigate(-1)}>
             <ArrowLeft size={14} className="mr-2" /> Back
           </Button>

@@ -86,9 +86,9 @@ export function CommandPalette() {
 
   return (
     <AnimatePresence>
-      <motion.div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-16 sm:pt-[20vh]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setOpen(false)} />
-        <motion.div className="relative w-full max-w-lg bg-background-secondary border border-border rounded-xl shadow-2xl overflow-hidden" initial={{ scale: 0.95, y: -10 }} animate={{ scale: 1, y: 0 }}>
+        <motion.div className="relative w-full max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border border-border bg-background-secondary shadow-2xl sm:max-w-lg" initial={{ scale: 0.95, y: -10 }} animate={{ scale: 1, y: 0 }}>
           <div className="flex items-center gap-3 px-4 border-b border-border">
             <Search size={16} className="text-muted-foreground shrink-0" />
             <input
@@ -101,7 +101,7 @@ export function CommandPalette() {
             />
             <kbd className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5">ESC</kbd>
           </div>
-          <div className="max-h-72 overflow-auto scrollbar-thin p-2">
+          <div className="max-h-[min(70dvh,24rem)] overflow-auto scrollbar-thin p-2">
             {filtered.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">No results found</p>
             ) : (
