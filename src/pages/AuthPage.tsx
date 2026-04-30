@@ -107,7 +107,11 @@ export default function AuthPage() {
         try {
           const claims = await getIdTokenClaims();
           const idToken = claims?.__raw;
-          if (!idToken) throw new Error("No ID token available");
+          if (!idToken) {
+            // Stale Auth0 session (e.g. after logout) — clear silently
+            auth0Logout({ logoutParams: { returnTo: window.location.origin + "/auth" } });
+            return;
+          }
           await loginWithAuth0(idToken);
           toast.success("Welcome!");
           navigate("/app/dashboard");
