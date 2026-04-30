@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth0 } from "@auth0/auth0-react";
 import { motion } from "framer-motion";
-import { ArrowRight, Eye, EyeOff } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -75,9 +76,19 @@ function GitHubIcon() {
 
 export default function AuthPage() {
   const navigate = useNavigate();
-  const { login, signup } = useAuthStore();
+  const { login, signup, loginWithAuth0, user: storeUser } = useAuthStore();
+  const {
+    isAuthenticated: auth0Authenticated,
+    user: auth0User,
+    getIdTokenClaims,
+    isLoading: auth0Loading,
+    loginWithRedirect,
+    logout: auth0Logout,
+  } = useAuth0();
   const [isLoading, setIsLoading] = useState(false);
+  const [auth0Syncing, setAuth0Syncing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const auth0SyncedRef = useRef(false);
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -86,6 +97,44 @@ export default function AuthPage() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // ─── Auth0 callback: detect when Auth0 login completes, sync with backend ──
+  useEffect(() => {
+    if (auth0Authenticated && auth0User && !storeUser && !auth0SyncedRef.current) {
+      auth0SyncedRef.current = true;
+      (async () => {
+        setAuth0Syncing(true);
+        try {
+          const claims = await getIdTokenClaims();
+          const idToken = claims?.__raw;
+          if (!idToken) throw new Error("No ID token available");
+          await loginWithAuth0(idToken);
+          toast.success("Welcome!");
+          navigate("/app/dashboard");
+        } catch (err: any) {
+          console.error("Auth0 sync error:", err);
+          toast.error(err?.message || "Social login failed. Please try again.");
+          auth0SyncedRef.current = false;
+        } finally {
+          setAuth0Syncing(false);
+        }
+      })();
+    }
+  }, [auth0Authenticated, auth0User, storeUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If already logged in (store user), redirect to dashboard
+  useEffect(() => {
+    if (storeUser) navigate("/app/dashboard");
+  }, [storeUser, navigate]);
+
+  const handleAuth0Social = (connection: string) => {
+    loginWithRedirect({
+      authorizationParams: {
+        connection,
+        redirect_uri: `${window.location.origin}/auth`,
+      },
+    });
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -135,6 +184,22 @@ export default function AuthPage() {
       setIsLoading(false);
     }
   };
+
+  // Show loading spinner while Auth0 processes the callback or syncs with backend
+  if (auth0Loading || auth0Syncing) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center gap-4"
+        >
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Signing you in…</p>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
@@ -333,14 +398,16 @@ export default function AuthPage() {
                 <Button
                   variant="outline"
                   className="border-border bg-background-secondary hover:bg-card"
-                  onClick={() => toast.info("Google OAuth not configured")}
+                  onClick={() => handleAuth0Social("google-oauth2")}
+                  disabled={isLoading}
                 >
                   <GoogleIcon /> Google
                 </Button>
                 <Button
                   variant="outline"
                   className="border-border bg-background-secondary hover:bg-card"
-                  onClick={() => toast.info("GitHub OAuth not configured")}
+                  onClick={() => handleAuth0Social("github")}
+                  disabled={isLoading}
                 >
                   <GitHubIcon /> GitHub
                 </Button>

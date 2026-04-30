@@ -28,6 +28,7 @@ interface AuthState {
   isFirstLogin: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
+  loginWithAuth0: (accessToken: string) => Promise<void>;
   logout: () => Promise<void>;
   setFirstLoginDone: () => void;
   updateUserName: (name: string) => void;
@@ -68,6 +69,38 @@ export const useAuthStore = create<AuthState>()(
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: "Login failed" }));
           throw new Error(err.error ?? "Login failed");
+        }
+        const { token, user } = await res.json();
+        set({
+          token,
+          user: {
+            name: user.name,
+            email: user.email,
+            id: user.id || "",
+            avatarInitials: buildInitials(user.name),
+            role: user.role || "viewer",
+            planTier: user.planTier || "free",
+            planStatus: user.planStatus || "active",
+            ownPlanTier: user.ownPlanTier || user.planTier || "free",
+            organizationId: user.organizationId || user.id || "",
+            organizationOwnerId: user.organizationOwnerId || user.id || "",
+            planOwnerId: user.planOwnerId || user.organizationOwnerId || user.id || "",
+            isPlanOwner: Boolean(user.isPlanOwner ?? true),
+          },
+          isFirstLogin: false,
+        });
+      },
+
+      // ─── Auth0 Social Login ─────────────────────────────────────────────────
+      loginWithAuth0: async (idToken: string) => {
+        const res = await fetch(`${API}/auth/auth0-login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Auth0 login failed" }));
+          throw new Error(err.error ?? "Auth0 login failed");
         }
         const { token, user } = await res.json();
         set({

@@ -128,6 +128,125 @@ router.post("/signin", async (req, res) => {
   }
 });
 
+// ─── Auth0 Social Login ───────────────────────────────────────────────────────
+router.post("/auth0-login", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken)
+      return res.status(400).json({ error: "idToken is required" });
+
+    const auth0Domain = process.env.AUTH0_DOMAIN;
+    if (!auth0Domain)
+      return res.status(500).json({ error: "Auth0 is not configured on the server" });
+
+    // Verify the ID token using Auth0's JWKS public keys
+    const jwksRsa = require("jwks-rsa");
+    const jwksClient = jwksRsa({
+      jwksUri: `https://${auth0Domain}/.well-known/jwks.json`,
+      cache: true,
+      rateLimit: true,
+    });
+
+    // Decode the token header to get the key id (kid)
+    const tokenHeader = JSON.parse(
+      Buffer.from(idToken.split(".")[0], "base64url").toString()
+    );
+    const signingKey = await jwksClient.getSigningKey(tokenHeader.kid);
+    const publicKey = signingKey.getPublicKey();
+
+    // Verify the ID token signature and claims
+    const decoded = jwt.verify(idToken, publicKey, {
+      algorithms: ["RS256"],
+      issuer: `https://${auth0Domain}/`,
+    });
+
+    // Extract user info from the verified token
+    const auth0User = {
+      sub: decoded.sub,
+      email: decoded.email,
+      name: decoded.name || decoded.nickname || decoded.email?.split("@")[0],
+      picture: decoded.picture || null,
+    };
+
+    if (!auth0User.email) {
+      return res.status(400).json({ error: "Auth0 profile does not include an email address" });
+    }
+
+    const db = await getDb();
+    let user = await db.collection("users").findOne({ email: auth0User.email });
+
+    if (!user) {
+      // New user — create account automatically
+      const result = await db.collection("users").insertOne({
+        name: auth0User.name,
+        email: auth0User.email,
+        auth0Sub: auth0User.sub,
+        authProvider: auth0User.sub?.split("|")[0] || "auth0",
+        picture: auth0User.picture,
+        role: "viewer",
+        status: "active",
+        ...defaultPlanFields("auth0"),
+        createdAt: new Date().toISOString(),
+        lastLogin: new Date().toISOString(),
+      });
+      await db.collection("users").updateOne(
+        { _id: result.insertedId },
+        {
+          $set: {
+            organizationId: result.insertedId.toString(),
+            organizationOwnerId: result.insertedId.toString(),
+          },
+        }
+      );
+      user = await db.collection("users").findOne({ _id: result.insertedId });
+    } else {
+      // Existing user — update last login and link Auth0 identity
+      await db.collection("users").updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            lastLogin: new Date().toISOString(),
+            auth0Sub: auth0User.sub,
+            authProvider: auth0User.sub?.split("|")[0] || user.authProvider || "password",
+            ...(auth0User.picture && !user.picture ? { picture: auth0User.picture } : {}),
+          },
+        }
+      );
+    }
+
+    const hydratedUser = await ensureUserPlan(db, user._id.toString());
+    const planContext = await getPlanContext(db, user._id.toString());
+    const role = hydratedUser.role || "viewer";
+
+    const token = jwt.sign(
+      { userId: user._id.toString(), email: user.email, name: hydratedUser.name, role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      token,
+      user: {
+        name: hydratedUser.name,
+        email: hydratedUser.email,
+        id: hydratedUser._id.toString(),
+        role,
+        planTier: planContext.plan.tier,
+        planStatus: planContext.planOwner.planStatus || "active",
+        ownPlanTier: hydratedUser.planTier || "free",
+        organizationId: hydratedUser.organizationId,
+        organizationOwnerId: hydratedUser.organizationOwnerId,
+        planOwnerId: planContext.planOwner._id.toString(),
+        isPlanOwner: planContext.planOwner._id.toString() === hydratedUser._id.toString(),
+      },
+    });
+    logAudit(user._id.toString(), user.email, "auth.login", { method: "auth0", provider: auth0User.sub?.split("|")[0] }, "info");
+  } catch (err) {
+    console.error("auth0 login error:", err);
+    res.status(500).json({ error: "Auth0 token verification failed" });
+  }
+});
+
 // ─── Get current user info (for role hydration after page reload) ────────────
 router.get("/me", authMiddleware, async (req, res) => {
   try {

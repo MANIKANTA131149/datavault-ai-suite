@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth0 } from "@auth0/auth0-react";
 import { CreditCard, LogOut, Shield, User } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { canAccessAdmin } from "@/lib/plans";
@@ -34,6 +35,7 @@ export function AccountMenu({
 }: AccountMenuProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  const { logout: auth0Logout, isAuthenticated: auth0Authenticated } = useAuth0();
   const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
 
   const handleRoute = (to: string) => {
@@ -92,7 +94,12 @@ export function AccountMenu({
           onClick={async () => {
             await logout();
             onNavigate?.();
-            navigate("/auth");
+            // If the user signed in via Auth0, clear that session too
+            if (auth0Authenticated) {
+              auth0Logout({ logoutParams: { returnTo: window.location.origin + "/auth" } });
+            } else {
+              navigate("/auth");
+            }
           }}
           className="text-destructive focus:text-destructive"
         >
