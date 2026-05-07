@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Bookmark,
   Shield,
+  Cable,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -41,6 +42,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
   const navItems = [
     { to: "/app/dashboard", icon: LayoutDashboard, label: "Dashboard", visible: true },
     { to: "/app/datasets", icon: Database, label: "Datasets", visible: true },
+    { to: "/app/connections", icon: Cable, label: "Connections", visible: true },
     { to: "/app/query", icon: MessageSquare, label: "Query", visible: true },
     { to: "/app/history", icon: Clock, label: "History", visible: true },
     { to: "/app/insights", icon: Bookmark, label: "Insights", visible: true },
