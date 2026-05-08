@@ -465,6 +465,52 @@ describe("runDatabaseAgent", () => {
     expect(steps[2].result).toEqual({ result: 510 });
   });
 
+  it("executes database-native SQL through the SQL tool", async () => {
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetSchema","args":{}}',
+        inputTokens: 10,
+        outputTokens: 5,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteSQL","args":{"sql":"SELECT status, SUM(total_amount) AS total_amount FROM orders GROUP BY status LIMIT 10"}}',
+        inputTokens: 18,
+        outputTokens: 10,
+      });
+
+    const executeSql = vi.fn().mockResolvedValueOnce({
+      data: [{ status: "paid", total_amount: 360 }],
+      sql: "SELECT status, SUM(total_amount) AS total_amount FROM orders GROUP BY status LIMIT 10",
+    });
+
+    const steps = [];
+    for await (const step of runDatabaseAgent(
+      "Show revenue by order status",
+      databaseTables,
+      "orders",
+      "PostgreSQL",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512,
+      undefined,
+      undefined,
+      {},
+      { executeSql }
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps.map((step) => step.command)).toEqual(["GetSchema", "ExecuteSQL"]);
+    expect(executeSql).toHaveBeenCalledWith({
+      sql: "SELECT status, SUM(total_amount) AS total_amount FROM orders GROUP BY status LIMIT 10",
+      isFinal: true,
+    });
+    expect(steps[1].sql).toBe("SELECT status, SUM(total_amount) AS total_amount FROM orders GROUP BY status LIMIT 10");
+    expect(steps[1].result).toEqual([{ status: "paid", total_amount: 360 }]);
+  });
+
   it("includes DB-specific context in the first model message", async () => {
     vi.mocked(callLLM).mockResolvedValueOnce({
       content: '{"command":"Answer","args":{"value":"done"}}',

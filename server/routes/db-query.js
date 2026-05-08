@@ -10,6 +10,7 @@ const {
   executeLiveSql,
 } = require("../lib/live-db");
 const { buildSqlFromOperation } = require("../lib/sql-builder");
+const { SQL_NATIVE_DB_TYPES, validateReadOnlySql } = require("../lib/sql-validator");
 
 const router = express.Router();
 const SQL_OPERATION_DB_TYPES = new Set([
@@ -101,7 +102,23 @@ router.post("/:connectionId/execute", authMiddleware, async (req, res) => {
     let executedSql = sql;
     
     if (sql) {
-      result = await executeLiveSql(conn, sql);
+      if (!SQL_NATIVE_DB_TYPES.has(conn.dbType)) {
+        return res.status(400).json({
+          error: `${conn.dbType} does not support database-native SQL mode. Use a SQL database connection.`,
+        });
+      }
+
+      const validated = validateReadOnlySql(sql, conn.dbType);
+      executedSql = validated.sql;
+      result = await executeLiveSql(conn, executedSql);
+      result = {
+        ...result,
+        sql: executedSql,
+        executionTime: 0,
+        message: `Executed read-only SQL against ${conn.name}.`,
+        dbType: conn.dbType,
+        connectionName: conn.name,
+      };
     } else {
       const tableName = params.tableName || params.table_name || params.table || params.collection;
       if (!tableName) {

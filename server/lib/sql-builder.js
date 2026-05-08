@@ -190,9 +190,22 @@ function buildWhereFromParams(params = {}, dbType = "postgresql", inheritedWhere
   return parts.filter(Boolean).join(" AND ");
 }
 
+function buildSelectItem(column, dbType = "postgresql") {
+  const text = String(column ?? "").trim();
+  if (!text || text === "*") return "*";
+
+  const parts = splitQualifiedName(text);
+  if (parts.length > 1 && parts[parts.length - 1] === "*") {
+    return `${parts.slice(0, -1).map((part) => quoteIdentifierPart(part, dbType)).join(".")}.*`;
+  }
+
+  return escapeIdentifier(text, dbType);
+}
+
 function buildSelectClause(columns, dbType = "postgresql") {
   if (!Array.isArray(columns) || columns.length === 0) return "*";
-  return columns.map((column) => escapeIdentifier(column, dbType)).join(", ");
+  if (columns.some((column) => String(column ?? "").trim() === "*")) return "*";
+  return columns.map((column) => buildSelectItem(column, dbType)).join(", ");
 }
 
 function buildLimitClause(limit, offset = 0, dbType = "postgresql") {
