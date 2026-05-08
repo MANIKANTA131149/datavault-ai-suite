@@ -31,6 +31,10 @@ interface DatabaseAgentTools {
     params: Record<string, any>;
     isFinal: boolean;
   }) => Promise<any>;
+  executeSql?: (input: {
+    sql: string;
+    isFinal: boolean;
+  }) => Promise<any>;
   loadTableSchema?: (tableName: string) => Promise<DatabaseTableData | null>;
 }
 
@@ -1768,7 +1772,8 @@ Examples:
 const DEFAULT_DATABASE_AGENT_PROMPT = `You are a database analysis agent. Work one step at a time and request only the information you need.
 
 You are working with database tables, not workbook sheets.
-The operation JSON is a safe command protocol, not an Excel formula language. For live databases, QueryTable and ExecuteFinalQuery are translated by the backend into SQL or native database queries and executed inside the database.
+For SQL databases, prefer writing database-native SQL with QuerySQL and ExecuteSQL. The backend validates that SQL is read-only, executes it against the selected database, and shows the exact executed SQL.
+The operation JSON commands are still available as a safe fallback, but database-native SQL is preferred for joins, subqueries, CTEs, window functions, and any multi-table or dialect-specific work.
 
 You have access to these commands:
 
@@ -1778,14 +1783,28 @@ You have access to these commands:
 2. GetColumns(table_name)
    Returns detailed column info and sample values for a table.
 
-3. QueryTable(table_name, operation, params)
+3. QuerySQL(sql)
+   Runs one intermediate read-only SQL query.
+
+4. ExecuteSQL(sql)
+   Runs the final read-only SQL query that answers the question.
+
+5. QueryTable(table_name, operation, params)
    Runs one intermediate data operation on a table.
 
-4. ExecuteFinalQuery(table_name, operation, params)
+6. ExecuteFinalQuery(table_name, operation, params)
    Runs the final data operation that answers the question.
 
-5. Answer(value)
+7. Answer(value)
    Use only for clarification questions or schema-only final answers.
+
+SQL mode rules:
+- Use QuerySQL/ExecuteSQL for SQL databases whenever possible.
+- Only generate a single read-only SELECT or WITH query.
+- Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, MERGE, CALL, EXEC, GRANT, REVOKE, COPY, VACUUM, PRAGMA, transaction, or multi-statement SQL.
+- For detail/listing queries, include a sensible LIMIT/TOP/FETCH FIRST cap, usually 50 or 100. Aggregates and counts do not need a row limit.
+- Use exact table and column names from GetSchema/GetColumns.
+- Quote qualified identifiers according to the selected database dialect.
 
 Supported operations:
 - count {}
@@ -1824,17 +1843,17 @@ Rules:
 - GetSchema does not load table rows. Use GetColumns(table_name) to inspect exact column details before querying a specific table.
 - If the user explicitly names an identifier column, such as upi, urs, urs_taxid, taxid, accession, rna_id, or id, filter that exact column when it exists. Do not substitute a similarly named column just because the value looks compatible.
 - Example: a request like "details of upi URS..." must filter column "upi" on a table containing "upi"; do not filter "urs" unless no "upi" column exists.
-- For identifier/detail lookups, prefer ExecuteFinalQuery with a select operation and an exact filter on the identifier column.
+- For identifier/detail lookups, prefer ExecuteSQL with an exact WHERE filter on the identifier column.
 - If QueryTable finds rows with a filter, either answer from that result or include the same filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
 - If the request needs a join across multiple tables and the target table is unclear, ask one concise clarification question.
-- Use QueryTable for intermediate work and ExecuteFinalQuery only for the final answer.
+- Use QuerySQL for intermediate SQL checks and ExecuteSQL for the final database answer.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
 {"command":"GetSchema","args":{}}
 {"command":"GetColumns","args":{"table_name":"orders"}}
-{"command":"QueryTable","args":{"table_name":"orders","operation":"groupby","params":{"groupColumn":"status","aggColumn":"total_amount","aggFunction":"sum"}}}
-{"command":"ExecuteFinalQuery","args":{"table_name":"orders","operation":"select","params":{"columns":["id","amount"],"filter":{"column":"status","operator":"==","value":"completed"},"limit":10}}}
+{"command":"QuerySQL","args":{"sql":"SELECT status, SUM(total_amount) AS total_amount FROM orders GROUP BY status LIMIT 20"}}
+{"command":"ExecuteSQL","args":{"sql":"SELECT id, amount FROM orders WHERE status = 'completed' LIMIT 10"}}
 {"command":"Answer","args":{"value":"Which table should I use for that metric?"}}`;
 
 function buildDatabaseTableMap(tables: DatabaseTableData[]): DatabaseTables {
@@ -2095,6 +2114,40 @@ function resolveDefaultSheetName(sheets: WorkbookSheets, selectedSheetName: stri
 function resolveDefaultTableName(tables: DatabaseTables, selectedTableName: string) {
   if (selectedTableName && tables[selectedTableName]) return selectedTableName;
   return Object.keys(tables)[0] || "";
+}
+
+function buildSqlDialectGuidance(dbTypeLabel: string) {
+  const label = dbTypeLabel.toLowerCase();
+
+  if (label.includes("postgres") || label.includes("redshift")) {
+    return 'SQL dialect: PostgreSQL/Redshift. Quote schema/table/columns with double quotes when needed, e.g. "schema"."table". Use LIMIT for row caps.';
+  }
+  if (label.includes("mysql") || label.includes("mariadb")) {
+    return "SQL dialect: MySQL/MariaDB. Use backticks for identifiers when needed, e.g. `table`.`column`. Use LIMIT for row caps.";
+  }
+  if (label.includes("sql server")) {
+    return "SQL dialect: SQL Server. Use [schema].[table] or [column] quoting when needed. Use TOP (N) for row caps.";
+  }
+  if (label.includes("oracle")) {
+    return 'SQL dialect: Oracle. Use double quotes only when exact case-sensitive identifiers require it. Use FETCH FIRST N ROWS ONLY for row caps.';
+  }
+  if (label.includes("snowflake")) {
+    return 'SQL dialect: Snowflake. Use double quotes for exact identifiers when needed. Use LIMIT for row caps.';
+  }
+  if (label.includes("bigquery")) {
+    return "SQL dialect: BigQuery Standard SQL. Use backticks for project.dataset.table paths, e.g. `project.dataset.table`. Use LIMIT for row caps.";
+  }
+  if (label.includes("duckdb") || label.includes("sqlite")) {
+    return 'SQL dialect: DuckDB/SQLite style. Use double quotes for identifiers when needed. Use LIMIT for row caps.';
+  }
+  if (label.includes("databricks")) {
+    return "SQL dialect: Databricks SQL/Spark SQL. Use backticks for catalog.schema.table identifiers when needed. Use LIMIT for row caps.";
+  }
+  if (label.includes("clickhouse")) {
+    return "SQL dialect: ClickHouse. Use backticks for identifiers when needed. Use LIMIT for row caps.";
+  }
+
+  return "SQL dialect: Use the selected database's read-only SELECT/WITH syntax and include a sensible row cap for detail queries.";
 }
 
 function formatSampleValue(value: any) {
@@ -2535,6 +2588,8 @@ function normalizeDatabaseCommand(parsed: { command: string; args?: Record<strin
 
   if (command === "GetSheetDescription") command = "GetSchema";
   if (command === "QuerySheet") command = "QueryTable";
+  if (command === "RunSQL" || command === "ExecuteFinalSQL") command = "ExecuteSQL";
+  if (command === "SqlQuery" || command === "SQLQuery") command = "QuerySQL";
   if (typeof args.sheet_name === "string" && !args.table_name) {
     args.table_name = args.sheet_name;
   }
@@ -2615,6 +2670,11 @@ function unwrapDatabaseExecutionResult(result: any) {
   }
 
   return { rows: result, sql: undefined };
+}
+
+function getSqlFromArgs(args: Record<string, any> = {}) {
+  const sql = args.sql ?? args.query ?? args.statement;
+  return typeof sql === "string" ? sql.trim() : "";
 }
 
 const SHEET_FILTER_CARRY_TARGET_OPERATIONS = new Set([
@@ -2768,6 +2828,7 @@ export async function* runDatabaseAgent(
   const introParts = [
     `Question: ${question}`,
     `Database type: ${dbTypeLabel}`,
+    buildSqlDialectGuidance(dbTypeLabel),
     `Current selected table: "${defaultTableName}"`,
     `Available tables: ${Object.keys(tables).length} (${Object.keys(tables).slice(0, 5).join(", ")}${Object.keys(tables).length > 5 ? ", ..." : ""})`,
   ];
@@ -2895,6 +2956,31 @@ export async function* runDatabaseAgent(
         inspectedTables.add(requestedTableName);
         result = buildDatabaseColumnsDescription(tables, requestedTableName);
         break;
+      case "QuerySQL":
+      case "ExecuteSQL": {
+        const sql = getSqlFromArgs(rawArgs);
+        normalizedArgs = { sql };
+        if (!sql) {
+          result = "ERROR: SQL command requires args.sql.";
+          break;
+        }
+
+        if (!tools.executeSql) {
+          result = "ERROR: Native SQL execution is not available for this database connection.";
+          break;
+        }
+
+        const toolResult = await tools.executeSql({
+          sql,
+          isFinal: command === "ExecuteSQL",
+        });
+        const unwrapped = unwrapDatabaseExecutionResult(toolResult);
+        result = command === "QuerySQL" && Array.isArray(unwrapped.rows)
+          ? unwrapped.rows.slice(0, 20)
+          : unwrapped.rows;
+        executedSql = unwrapped.sql || sql;
+        break;
+      }
       case "QueryTable":
       case "ExecuteFinalQuery": {
         const normalizedTableName = requestedTableName || defaultTableName;
@@ -2939,6 +3025,7 @@ export async function* runDatabaseAgent(
 
     const isFinal =
       command === "ExecuteFinalQuery" ||
+      command === "ExecuteSQL" ||
       command === "Answer" ||
       command === "FinalAnswer" ||
       command === "NarrativeAnswer";
