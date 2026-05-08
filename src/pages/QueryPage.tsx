@@ -4,7 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { List, type RowComponentProps } from "react-window";
 import {
-  Send, ChevronDown, ChevronRight, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
+  Send, Check, ChevronDown, ChevronRight, ChevronsUpDown, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
@@ -19,9 +19,12 @@ import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
+import { useConnectionStore, DB_TYPE_LABELS, DB_TYPE_ICONS } from "@/stores/connection-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -29,9 +32,11 @@ import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
-import { runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
 import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
+import { executeDatabaseQuery, fetchDatabaseSchema, type DatabaseSchema, type DatabaseTableData } from "@/lib/db-query-client";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { generatePDF } from "@/lib/pdf-report";
 import html2canvas from "html2canvas";
@@ -42,13 +47,16 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const COMMAND_COLORS: Record<string, string> = {
+  GetSchema: "bg-primary/10 text-primary",
   GetSheetDescription: "bg-primary/10 text-primary",
   GetColumns: "bg-accent/10 text-accent",
+  QueryTable: "bg-warning/10 text-warning",
   QuerySheet: "bg-warning/10 text-warning",
   ExecuteFinalQuery: "bg-success/10 text-success",
   FinalAnswer: "bg-success/10 text-success",
   NarrativeAnswer: "bg-purple-500/10 text-purple-400",
   Answer: "bg-success/10 text-success",
+  MaxTurnsReached: "bg-destructive/10 text-destructive",
   Error: "bg-destructive/10 text-destructive",
 };
 
@@ -315,12 +323,12 @@ function getChartMeta(result: any) {
   const dateKeys = keys.filter((key) => keyStats[key].isMostlyDate || keyStats[key].isMostlyYearLike || CHART_TEMPORAL_KEY_PATTERN.test(keyStats[key].lowerKey));
   const chartRows = valueKey
     ? chartSourceRows
-        .map((row) => {
-          const numeric = toChartNumber(row[valueKey]);
-          if (numeric === null) return null;
-          return { ...row, [valueKey]: numeric };
-        })
-        .filter((row): row is Record<string, any> => row !== null)
+      .map((row) => {
+        const numeric = toChartNumber(row[valueKey]);
+        if (numeric === null) return null;
+        return { ...row, [valueKey]: numeric };
+      })
+      .filter((row): row is Record<string, any> => row !== null)
     : [];
   // Chartable = at least 2 data points, a valid numeric key, and ideally a label key
   const isChartable = chartRows.length >= 2 && Boolean(valueKey) && Boolean(labelKey) && labelKey !== valueKey;
@@ -395,6 +403,9 @@ function formatOperationLabel(operation?: string) {
 function describeAgentStep(step: AgentStep) {
   const args = (step.args || {}) as Record<string, any>;
   const sheetName = typeof args.sheet_name === "string" && args.sheet_name.trim() ? args.sheet_name.trim() : "";
+  const tableName = typeof args.table_name === "string" && args.table_name.trim() ? args.table_name.trim() : "";
+  const targetName = tableName || sheetName;
+  const targetLabel = tableName ? "table" : "sheet";
   const operation = typeof args.operation === "string" && args.operation.trim()
     ? formatOperationLabel(args.operation.trim())
     : typeof args.pandas_query === "string" && args.pandas_query.trim()
@@ -402,14 +413,24 @@ function describeAgentStep(step: AgentStep) {
       : "";
 
   switch (step.command) {
+    case "GetSchema":
+      return "Checked which tables are available in the database.";
     case "GetSheetDescription":
       return "Checked which sheets are available in the workbook.";
     case "GetColumns":
-      return `Inspected the schema${sheetName ? ` for "${sheetName}"` : ""}.`;
+      return `Inspected the schema${targetName ? ` for ${targetLabel} "${targetName}"` : ""}.`;
+    case "QueryTable":
+      if (step.sql) {
+        return `Ran an intermediate SQL query${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
+      }
+      return `Ran an intermediate ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
     case "QuerySheet":
-      return `Ran an intermediate ${operation || "query"}${sheetName ? ` on "${sheetName}"` : ""}.`;
+      return `Ran an intermediate ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
     case "ExecuteFinalQuery":
-      return `Ran the final ${operation || "query"}${sheetName ? ` on "${sheetName}"` : ""}.`;
+      if (step.sql) {
+        return `Ran the final SQL query${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
+      }
+      return `Ran the final ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
     case "Answer":
     case "FinalAnswer":
       return "Returned a direct answer.";
@@ -417,6 +438,8 @@ function describeAgentStep(step: AgentStep) {
       return "Returned a written explanation.";
     case "PARSE_ERROR":
       return "Retried because the model response was not valid JSON.";
+    case "MaxTurnsReached":
+      return "Stopped because the agent hit its step limit.";
     case "Error":
       return "Stopped because the query hit an error.";
     default:
@@ -429,7 +452,7 @@ function getFinalStep(steps?: AgentStep[]) {
   for (let i = steps.length - 1; i >= 0; i--) {
     const step = steps[i];
     if (step.isFinal || step.command === "ExecuteFinalQuery" || step.command === "Answer" ||
-        step.command === "FinalAnswer" || step.command === "NarrativeAnswer") {
+      step.command === "FinalAnswer" || step.command === "NarrativeAnswer") {
       return step;
     }
   }
@@ -697,6 +720,23 @@ const StepCard = memo(function StepCard({
                 </div>
                 <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground [overflow-wrap:anywhere]">
                   {argsStr}
+                </pre>
+              </div>
+            )}
+            {step.sql && (
+              <div className="bg-card rounded-md p-3 border border-border">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-muted-foreground font-medium">Executed SQL</p>
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(step.sql || ""); toast.success("SQL copied"); }}
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                  >
+                    <Copy size={10} /> Copy SQL
+                  </button>
+                </div>
+                <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground [overflow-wrap:anywhere]">
+                  {step.sql}
                 </pre>
               </div>
             )}
@@ -1100,122 +1140,122 @@ const ResultPanel = memo(function ResultPanel({
                 <p className="text-xs text-muted-foreground">{chartSummaryText}</p>
               </div>
               <div className={fullscreen ? "h-[48vh] sm:h-[54vh]" : "h-64 sm:h-72"}>
-              <ResponsiveContainer width="100%" height="100%">
-                {chartType === "pie" ? (
-                  <PieChart margin={chartMargin}>
-                    <Pie
-                      data={pieChartRows}
-                      dataKey={valueKey}
-                      nameKey={labelKey}
-                      cx="50%"
-                      cy={showLegend ? "42%" : "50%"}
-                      outerRadius={showLegend ? 78 : 96}
-                      innerRadius={pieChartRows.length > 4 ? 22 : 0}
-                      label={canShowValueLabels ? ({ name, percent }) => `${truncateChartLabel(name, 12)} ${Math.round((percent || 0) * 100)}%` : false}
-                      labelLine={false}
-                    >
-                      {pieChartRows.map((_: any, i: number) => <Cell key={i} fill={i === 0 ? chartColor : CHART_COLORS[i % CHART_COLORS.length]} />)}
-                    </Pie>
-                    {showLegend && <RechartsLegend verticalAlign="bottom" wrapperStyle={{ fontSize: 11, paddingTop: 12 }} formatter={(value) => truncateChartLabel(value, 16)} />}
-                    <RechartsTooltip
-                      formatter={(value: any) => formatChartValue(value)}
-                      contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
-                    />
-                  </PieChart>
-                ) : chartType === "line" ? (
-                  <LineChart data={visibleChartRows} margin={chartMargin}>
-                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-                    <XAxis
-                      dataKey={labelKey}
-                      label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
-                      tickLine={false}
-                      axisLine={false}
-                      angle={rotateXAxisTicks ? -35 : 0}
-                      textAnchor={rotateXAxisTicks ? "end" : "middle"}
-                      height={rotateXAxisTicks ? 72 : 32}
-                      tickMargin={10}
-                      interval={xAxisInterval}
-                    />
-                    <YAxis
-                      label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tickFormatter={(value) => formatChartValue(value)}
-                      tickLine={false}
-                      axisLine={false}
-                      width={60}
-                    />
-                    {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
-                    <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Line type="monotone" dataKey={valueKey} stroke={chartColor} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2.5, strokeWidth: 0, fill: chartColor } : false} activeDot={{ r: 4 }} />
-                  </LineChart>
-                ) : chartType === "area" ? (
-                  <AreaChart data={visibleChartRows} margin={chartMargin}>
-                    <defs>
-                      <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-                    <XAxis
-                      dataKey={labelKey}
-                      label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
-                      tickLine={false}
-                      axisLine={false}
-                      angle={rotateXAxisTicks ? -35 : 0}
-                      textAnchor={rotateXAxisTicks ? "end" : "middle"}
-                      height={rotateXAxisTicks ? 72 : 32}
-                      tickMargin={10}
-                      interval={xAxisInterval}
-                    />
-                    <YAxis
-                      label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tickFormatter={(value) => formatChartValue(value)}
-                      tickLine={false}
-                      axisLine={false}
-                      width={60}
-                    />
-                    {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
-                    <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2, strokeWidth: 0, fill: chartColor } : false} />
-                  </AreaChart>
-                ) : (
-                  <BarChart data={visibleChartRows} margin={chartMargin}>
-                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-                    <XAxis
-                      dataKey={labelKey}
-                      label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
-                      tickLine={false}
-                      axisLine={false}
-                      angle={rotateXAxisTicks ? -35 : 0}
-                      textAnchor={rotateXAxisTicks ? "end" : "middle"}
-                      height={rotateXAxisTicks ? 72 : 32}
-                      tickMargin={10}
-                      interval={xAxisInterval}
-                    />
-                    <YAxis
-                      label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                      tickFormatter={(value) => formatChartValue(value)}
-                      tickLine={false}
-                      axisLine={false}
-                      width={60}
-                    />
-                    {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
-                    <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Bar dataKey={valueKey} fill={chartColor} radius={[6, 6, 0, 0]} maxBarSize={36}>
-                      {canShowValueLabels && <LabelList dataKey={valueKey} position="top" formatter={(value: any) => formatChartValue(value)} fill="hsl(var(--muted-foreground))" fontSize={10} />}
-                    </Bar>
-                  </BarChart>
-                )}
-              </ResponsiveContainer>
+                <ResponsiveContainer width="100%" height="100%">
+                  {chartType === "pie" ? (
+                    <PieChart margin={chartMargin}>
+                      <Pie
+                        data={pieChartRows}
+                        dataKey={valueKey}
+                        nameKey={labelKey}
+                        cx="50%"
+                        cy={showLegend ? "42%" : "50%"}
+                        outerRadius={showLegend ? 78 : 96}
+                        innerRadius={pieChartRows.length > 4 ? 22 : 0}
+                        label={canShowValueLabels ? ({ name, percent }) => `${truncateChartLabel(name, 12)} ${Math.round((percent || 0) * 100)}%` : false}
+                        labelLine={false}
+                      >
+                        {pieChartRows.map((_: any, i: number) => <Cell key={i} fill={i === 0 ? chartColor : CHART_COLORS[i % CHART_COLORS.length]} />)}
+                      </Pie>
+                      {showLegend && <RechartsLegend verticalAlign="bottom" wrapperStyle={{ fontSize: 11, paddingTop: 12 }} formatter={(value) => truncateChartLabel(value, 16)} />}
+                      <RechartsTooltip
+                        formatter={(value: any) => formatChartValue(value)}
+                        contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
+                      />
+                    </PieChart>
+                  ) : chartType === "line" ? (
+                    <LineChart data={visibleChartRows} margin={chartMargin}>
+                      <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                      <XAxis
+                        dataKey={labelKey}
+                        label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
+                        tickLine={false}
+                        axisLine={false}
+                        angle={rotateXAxisTicks ? -35 : 0}
+                        textAnchor={rotateXAxisTicks ? "end" : "middle"}
+                        height={rotateXAxisTicks ? 72 : 32}
+                        tickMargin={10}
+                        interval={xAxisInterval}
+                      />
+                      <YAxis
+                        label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tickFormatter={(value) => formatChartValue(value)}
+                        tickLine={false}
+                        axisLine={false}
+                        width={60}
+                      />
+                      {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                      <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                      <Line type="monotone" dataKey={valueKey} stroke={chartColor} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2.5, strokeWidth: 0, fill: chartColor } : false} activeDot={{ r: 4 }} />
+                    </LineChart>
+                  ) : chartType === "area" ? (
+                    <AreaChart data={visibleChartRows} margin={chartMargin}>
+                      <defs>
+                        <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                      <XAxis
+                        dataKey={labelKey}
+                        label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
+                        tickLine={false}
+                        axisLine={false}
+                        angle={rotateXAxisTicks ? -35 : 0}
+                        textAnchor={rotateXAxisTicks ? "end" : "middle"}
+                        height={rotateXAxisTicks ? 72 : 32}
+                        tickMargin={10}
+                        interval={xAxisInterval}
+                      />
+                      <YAxis
+                        label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tickFormatter={(value) => formatChartValue(value)}
+                        tickLine={false}
+                        axisLine={false}
+                        width={60}
+                      />
+                      {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                      <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                      <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2, strokeWidth: 0, fill: chartColor } : false} />
+                    </AreaChart>
+                  ) : (
+                    <BarChart data={visibleChartRows} margin={chartMargin}>
+                      <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                      <XAxis
+                        dataKey={labelKey}
+                        label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
+                        tickLine={false}
+                        axisLine={false}
+                        angle={rotateXAxisTicks ? -35 : 0}
+                        textAnchor={rotateXAxisTicks ? "end" : "middle"}
+                        height={rotateXAxisTicks ? 72 : 32}
+                        tickMargin={10}
+                        interval={xAxisInterval}
+                      />
+                      <YAxis
+                        label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                        tickFormatter={(value) => formatChartValue(value)}
+                        tickLine={false}
+                        axisLine={false}
+                        width={60}
+                      />
+                      {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                      <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                      <Bar dataKey={valueKey} fill={chartColor} radius={[6, 6, 0, 0]} maxBarSize={36}>
+                        {canShowValueLabels && <LabelList dataKey={valueKey} position="top" formatter={(value: any) => formatChartValue(value)} fill="hsl(var(--muted-foreground))" fontSize={10} />}
+                      </Bar>
+                    </BarChart>
+                  )}
+                </ResponsiveContainer>
               </div>
             </div>
             {chartNotes && <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">{chartNotes}</p>}
@@ -1296,29 +1336,29 @@ const ResultPanel = memo(function ResultPanel({
               />
             )}
             <div className={displayedRows.length > 200 ? "hidden" : "max-h-[50vh] overflow-auto rounded-md border border-border"}>
-            <table className="w-full text-xs">
-              <thead className="bg-card">
-                <tr>
-                  {Object.keys(rows[0] || {}).map((k) => (
-                    <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">
-                      <button type="button" onClick={() => handleSort(k)} className="hover:text-foreground">
-                        {k}{sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => (
-                  <tr key={i} className="border-t border-border/50">
-                    {Object.values(row).map((v: any, j) => (
-                      <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>{String(v ?? "")}</td>
+              <table className="w-full text-xs">
+                <thead className="bg-card">
+                  <tr>
+                    {Object.keys(rows[0] || {}).map((k) => (
+                      <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">
+                        <button type="button" onClick={() => handleSort(k)} className="hover:text-foreground">
+                          {k}{sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                        </button>
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {displayedRows.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching rows</p>}
+                </thead>
+                <tbody>
+                  {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => (
+                    <tr key={i} className="border-t border-border/50">
+                      {Object.values(row).map((v: any, j) => (
+                        <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>{String(v ?? "")}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {displayedRows.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching rows</p>}
             </div>
           </div>
         )}
@@ -1485,28 +1525,28 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
 
       {isArray && rows.length > 0 && (
         <>
-        {rows.length > 200 && (
-          <VirtualizedResultTable
-            rows={rows}
-            headers={Object.keys(rows[0] || {})}
-            density="compact"
-            maxHeight={320}
-          />
-        )}
-        <div className={rows.length > 200 ? "hidden" : "max-h-80 overflow-auto rounded-md border border-border"}>
-          <table className="w-full text-xs">
-            <thead className="bg-background-secondary">
-              <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
-            </thead>
-            <tbody>
-              {(rows.length > 200 ? [] : rows).map((row: any, i: number) => (
-                <tr key={i} className="border-t border-border/50">
-                  {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          {rows.length > 200 && (
+            <VirtualizedResultTable
+              rows={rows}
+              headers={Object.keys(rows[0] || {})}
+              density="compact"
+              maxHeight={320}
+            />
+          )}
+          <div className={rows.length > 200 ? "hidden" : "max-h-80 overflow-auto rounded-md border border-border"}>
+            <table className="w-full text-xs">
+              <thead className="bg-background-secondary">
+                <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
+              </thead>
+              <tbody>
+                {(rows.length > 200 ? [] : rows).map((row: any, i: number) => (
+                  <tr key={i} className="border-t border-border/50">
+                    {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
@@ -1615,26 +1655,26 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
         <>
           <div className="flex-1 overflow-auto scrollbar-thin">
             <div className="min-w-full overflow-x-auto">
-            <table className="min-w-[720px] w-full text-xs border-collapse">
-              <thead className="sticky top-0 bg-background-secondary z-10">
-                <tr>
-                  <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border">#</th>
-                  {sheetData.columns.map((col: any) => (
-                    <th key={col.name} className="px-4 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-b border-border">{col.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((row: any, i: number) => (
-                  <tr key={i} className="hover:bg-card/50 transition-colors">
-                    <td className="px-4 py-2 text-muted-foreground border-b border-border/40">{page * PAGE_SIZE + i + 1}</td>
+              <table className="min-w-[720px] w-full text-xs border-collapse">
+                <thead className="sticky top-0 bg-background-secondary z-10">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border">#</th>
                     {sheetData.columns.map((col: any) => (
-                      <td key={col.name} className="px-4 py-2 text-foreground max-w-[240px] truncate border-b border-border/40">{String(row[col.name] ?? "")}</td>
+                      <th key={col.name} className="px-4 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-b border-border">{col.name}</th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pageRows.map((row: any, i: number) => (
+                    <tr key={i} className="hover:bg-card/50 transition-colors">
+                      <td className="px-4 py-2 text-muted-foreground border-b border-border/40">{page * PAGE_SIZE + i + 1}</td>
+                      {sheetData.columns.map((col: any) => (
+                        <td key={col.name} className="px-4 py-2 text-foreground max-w-[240px] truncate border-b border-border/40">{String(row[col.name] ?? "")}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
           {totalPages > 1 && (
@@ -1656,6 +1696,386 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
 }
 
 // ─── Save Insight Dialog ──────────────────────────────────────────────────────
+function getDatabaseTableNameParts(tableName: string) {
+  const parts = tableName.split(".").filter(Boolean);
+  if (parts.length <= 1) {
+    return {
+      shortName: tableName,
+      namespace: "",
+    };
+  }
+
+  return {
+    shortName: parts[parts.length - 1],
+    namespace: parts.slice(0, -1).join("."),
+  };
+}
+
+function formatDatabaseTableStat(table: DatabaseTableData) {
+  if (table.rowCount != null) return `${table.rowCount.toLocaleString()} rows`;
+  if (table.columns.length > 0) return `${table.columns.length} cols`;
+  return "Metadata pending";
+}
+
+function buildDatabaseTableGroups(tables: DatabaseTableData[]) {
+  const grouped = new Map<string, DatabaseTableData[]>();
+
+  for (const table of tables) {
+    const { namespace } = getDatabaseTableNameParts(table.name);
+    const key = namespace || "";
+    const existing = grouped.get(key);
+    if (existing) existing.push(table);
+    else grouped.set(key, [table]);
+  }
+
+  return Array.from(grouped.entries())
+    .sort(([left], [right]) => {
+      if (!left && right) return -1;
+      if (left && !right) return 1;
+      return left.localeCompare(right);
+    })
+    .map(([namespace, entries]) => ({
+      key: namespace || "__default__",
+      label: namespace || "Tables",
+      tables: [...entries].sort((left, right) => {
+        const leftParts = getDatabaseTableNameParts(left.name);
+        const rightParts = getDatabaseTableNameParts(right.name);
+        return leftParts.shortName.localeCompare(rightParts.shortName) || left.name.localeCompare(right.name);
+      }),
+    }));
+}
+
+function DatabaseTablePicker({
+  tables,
+  value,
+  onChange,
+  placeholder = "Select table",
+  triggerClassName,
+  contentClassName,
+}: {
+  tables: DatabaseTableData[];
+  value: string;
+  onChange: (tableName: string) => void;
+  placeholder?: string;
+  triggerClassName?: string;
+  contentClassName?: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const selectedTable = useMemo(
+    () => tables.find((table) => table.name === value) ?? tables[0] ?? null,
+    [tables, value]
+  );
+  const groupedTables = useMemo(() => buildDatabaseTableGroups(tables), [tables]);
+
+  const selectedParts = selectedTable ? getDatabaseTableNameParts(selectedTable.name) : null;
+  const pickerSubtitle = selectedTable
+    ? [
+        selectedParts?.namespace || "",
+        selectedTable.kind?.toUpperCase() || "",
+        formatDatabaseTableStat(selectedTable),
+      ].filter(Boolean).join(" | ")
+    : `${tables.length.toLocaleString()} tables available`;
+  const selectedSubtitle = selectedTable
+    ? [
+        selectedParts?.namespace || "",
+        selectedTable.kind?.toUpperCase() || "",
+        formatDatabaseTableStat(selectedTable),
+      ].filter(Boolean).join(" • ")
+    : `${tables.length.toLocaleString()} tables available`;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={tables.length === 0}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-left transition-colors hover:border-primary/30 hover:bg-card/80 disabled:cursor-not-allowed disabled:opacity-60",
+            triggerClassName,
+          )}
+        >
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium leading-5 text-foreground">
+              {selectedParts?.shortName || placeholder}
+            </p>
+            <p className="truncate text-[10px] leading-4 text-muted-foreground">
+              {pickerSubtitle}
+            </p>
+          </div>
+          <ChevronsUpDown size={13} className="shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className={cn("w-[min(30rem,calc(100vw-1.5rem))] p-0", contentClassName)}
+      >
+        <Command>
+          <CommandInput placeholder="Search tables or schemas..." className="h-10 text-xs" />
+          <CommandList className="max-h-[20rem]">
+            <CommandEmpty>No matching tables found.</CommandEmpty>
+            {groupedTables.map((group) => (
+              <CommandGroup key={group.key} heading={`${group.label} (${group.tables.length})`}>
+                {group.tables.map((table) => {
+                  const parts = getDatabaseTableNameParts(table.name);
+                  const isSelected = table.name === selectedTable?.name;
+
+                  return (
+                    <CommandItem
+                      key={table.name}
+                      value={`${table.name} ${parts.shortName} ${parts.namespace} ${table.kind || ""}`}
+                      onSelect={() => {
+                        onChange(table.name);
+                        setOpen(false);
+                      }}
+                      className="gap-2 px-2.5 py-1.5"
+                    >
+                      <Check
+                        size={12}
+                        className={cn("mt-0.5 shrink-0", isSelected ? "text-primary opacity-100" : "opacity-0")}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium leading-5 text-foreground" title={table.name}>
+                          {parts.shortName}
+                        </p>
+                        <p className="truncate text-[10px] leading-4 text-muted-foreground" title={table.name}>
+                          {parts.namespace || table.name}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground">
+                          {table.kind}
+                        </p>
+                        <p className="text-[10px] leading-4 text-muted-foreground">
+                          {formatDatabaseTableStat(table)}
+                        </p>
+                      </div>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function DatabasePreviewPanel({ connectionId, schema, tableName, onSelectTable, onClose }: {
+  connectionId: string;
+  schema: DatabaseSchema;
+  tableName: string;
+  onSelectTable: (tableName: string) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [previewRows, setPreviewRows] = useState<Record<string, any>[]>([]);
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const PAGE_SIZE = 100;
+
+  const activeTable = useMemo(
+    () => schema.tables.find((table) => table.name === tableName) ?? schema.tables[0] ?? null,
+    [schema.tables, tableName]
+  );
+  const displayColumns = useMemo<ColumnInfo[]>(() => {
+    if (!activeTable) return [];
+    if (activeTable.columns.length > 0) return activeTable.columns;
+
+    const firstRow = previewRows[0];
+    if (!firstRow || typeof firstRow !== "object") return [];
+
+    return Object.keys(firstRow).map((name) => ({
+      name,
+      dtype: "string",
+      nonNullCount: 0,
+      uniqueCount: 0,
+      sampleValues: [],
+    }));
+  }, [activeTable, previewRows]);
+
+  useEffect(() => {
+    if (activeTable && activeTable.name !== tableName) {
+      onSelectTable(activeTable.name);
+    }
+  }, [activeTable, tableName, onSelectTable]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [search, tableName]);
+
+  useEffect(() => {
+    if (!activeTable) {
+      setPreviewRows([]);
+      return;
+    }
+
+    let alive = true;
+    setLoadingRows(true);
+    setPreviewError("");
+    executeDatabaseQuery(connectionId, {
+      operation: "preview_table",
+      params: {
+        tableName: activeTable.name,
+        limit: 500,
+      },
+    }).then((result) => {
+      if (!alive) return;
+      setPreviewRows(Array.isArray(result.data) ? result.data : []);
+    }).catch((err: any) => {
+      if (!alive) return;
+      setPreviewRows([]);
+      setPreviewError(err.message || "Failed to load preview rows");
+    }).finally(() => {
+      if (!alive) return;
+      setLoadingRows(false);
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeTable, connectionId]);
+
+  const filtered = useMemo(() => {
+    if (!activeTable) return [];
+    if (!search.trim()) return previewRows;
+    const query = search.toLowerCase();
+    return previewRows.filter((row) => Object.values(row).some((value) => String(value).toLowerCase().includes(query)));
+  }, [activeTable, previewRows, search]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const activeTableParts = activeTable ? getDatabaseTableNameParts(activeTable.name) : null;
+
+  return (
+    <motion.div className="absolute inset-0 z-50 flex flex-col overflow-hidden bg-background" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }} transition={{ duration: 0.18 }}>
+      <div className="flex flex-col gap-2 border-b border-border bg-background-secondary px-4 py-3 shrink-0 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Database size={14} className="text-primary" />
+          <span className="font-medium text-sm text-foreground">{schema.connectionName}</span>
+          {activeTable && (
+            <>
+              <span className="text-muted-foreground">.</span>
+              <span className="text-sm text-muted-foreground">{activeTableParts?.shortName}</span>
+              {activeTableParts?.namespace && (
+                <span className="max-w-[14rem] truncate text-xs text-muted-foreground/80" title={activeTable.name}>
+                  {activeTableParts.namespace}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground bg-card border border-border px-2 py-0.5 rounded uppercase">{activeTable.kind}</span>
+              <span className="text-xs text-muted-foreground bg-card border border-border px-2 py-0.5 rounded">
+                {activeTable.rowCount != null ? `${activeTable.rowCount.toLocaleString()} rows` : `${previewRows.length.toLocaleString()} preview rows`}
+              </span>
+              <span className="text-xs text-muted-foreground bg-card border border-border px-2 py-0.5 rounded">{displayColumns.length} cols</span>
+            </>
+          )}
+        </div>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative flex-1 sm:flex-none">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:w-44"
+              placeholder="Search rows..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+
+      {schema.tables.length > 1 && (
+        <div className="border-b border-border bg-card/40 px-4 py-2.5 shrink-0 sm:px-5">
+          <DatabaseTablePicker
+            tables={schema.tables}
+            value={activeTable?.name || tableName}
+            onChange={onSelectTable}
+            placeholder="Choose a table"
+            triggerClassName="bg-background-secondary"
+          />
+        </div>
+      )}
+
+      {activeTable && (
+        <div className="flex gap-3 px-4 py-1.5 border-b border-border bg-card/40 overflow-x-auto shrink-0 sm:px-5">
+          {displayColumns.map((col: ColumnInfo) => (
+            <div key={col.name} className="flex flex-col gap-0.5 shrink-0">
+              <span className="text-[11px] font-medium leading-4 text-foreground">{col.name}</span>
+              <span className={["text-[10px] px-1.5 py-0.5 rounded font-mono leading-4", col.dtype === "number" ? "bg-blue-500/10 text-blue-400" : col.dtype === "date" ? "bg-purple-500/10 text-purple-400" : col.dtype === "boolean" ? "bg-amber-500/10 text-amber-400" : "bg-muted/60 text-muted-foreground"].join(" ")}>{col.dtype}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!activeTable ? (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-muted-foreground text-sm">No table preview is available for this connection</p>
+        </div>
+      ) : loadingRows ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground">Loading live preview rows...</p>
+          </div>
+        </div>
+      ) : previewError ? (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-muted-foreground text-sm">{previewError}</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex-1 overflow-auto scrollbar-thin">
+            <div className="min-w-full overflow-x-auto">
+              <table className="min-w-[680px] w-full border-collapse text-[11px] leading-4">
+                <thead className="sticky top-0 bg-background-secondary z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border">#</th>
+                    {displayColumns.map((col: ColumnInfo) => (
+                      <th key={col.name} className="px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground whitespace-nowrap border-b border-border">{col.name}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((row: Record<string, any>, index: number) => (
+                    <tr key={index} className="hover:bg-card/50 transition-colors">
+                      <td className="px-3 py-1.5 font-mono text-[10px] text-muted-foreground border-b border-border/40">{page * PAGE_SIZE + index + 1}</td>
+                      {displayColumns.map((col: ColumnInfo) => (
+                        <td
+                          key={col.name}
+                          className="max-w-[180px] truncate px-3 py-1.5 text-[11px] leading-4 text-foreground border-b border-border/40"
+                          title={String(row[col.name] ?? "")}
+                        >
+                          {String(row[col.name] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex flex-col gap-2 border-t border-border bg-background-secondary px-4 py-2.5 shrink-0 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <span className="text-xs text-muted-foreground">
+                {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, filtered.length).toLocaleString()} of {filtered.length.toLocaleString()} rows
+              </span>
+              <div className="flex gap-1.5">
+                <button onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page === 0} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">Previous</button>
+                <span className="px-2 h-7 text-xs flex items-center text-muted-foreground">{page + 1} / {totalPages}</span>
+                <button onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))} disabled={page >= totalPages - 1} className="px-3 h-7 text-xs border border-border rounded hover:bg-card disabled:opacity-40 text-foreground">Next</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </motion.div>
+  );
+}
+
 function SaveInsightDialog({
   open, onClose, query, result, datasetName,
 }: {
@@ -1733,12 +2153,22 @@ export default function QueryPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { datasets, getDataset } = useDatasetStore();
+  const { connections } = useConnectionStore();
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
   const { addEntry, entries } = useHistoryStore();
   const { checkMetric, checkExport, fetchPlan } = usePlanStore();
 
   const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
   const [selectedSheet, setSelectedSheet] = useState("");
+  const [selectedTable, setSelectedTable] = useState("");
+  const [dbSchema, setDbSchema] = useState<DatabaseSchema | null>(null);
+  const [loadingDbSchema, setLoadingDbSchema] = useState(false);
+
+  // Determine if the selected source is a DB connection (prefixed with "conn:") or a dataset
+  const isDbConnection = selectedDatasetId.startsWith("conn:");
+  const selectedConnectionId = isDbConnection ? selectedDatasetId.slice(5) : null;
+  const selectedConnection = selectedConnectionId ? connections.find((c) => c._id === selectedConnectionId) : null;
+  const connectedDbs = connections.filter((c) => c.status === "connected");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<{
     role: "user" | "agent";
@@ -1773,11 +2203,83 @@ export default function QueryPage() {
   const cancelRequestedRef = useRef(false);
   const queryStartRef = useRef(0);
 
-  const selectedDataset = getDataset(selectedDatasetId) ?? datasets.find((d) => d.id === selectedDatasetId);
+  const selectedDataset = isDbConnection ? undefined : (getDataset(selectedDatasetId) ?? datasets.find((d) => d.id === selectedDatasetId));
+  const selectedDbTableData = useMemo(
+    () => dbSchema?.tables.find((table) => table.name === selectedTable) ?? dbSchema?.tables[0] ?? null,
+    [dbSchema, selectedTable]
+  );
+  const sourceName = selectedConnection?.name || selectedDataset?.fileName || "Unknown source";
+  const defaultPromptLabel = isDbConnection && selectedConnection
+    ? `${DB_TYPE_LABELS[selectedConnection.dbType]} database agent`
+    : "CSV/Excel workbook agent";
+
+  const loadDbSchema = useCallback(async (connectionId: string, options: { refresh?: boolean } = {}) => {
+    setLoadingDbSchema(true);
+    try {
+      const response = await fetchDatabaseSchema(connectionId, undefined, options);
+      setDbSchema(response.schema);
+      setSelectedTable((current) => {
+        if (current && response.schema.tables.some((table) => table.name === current)) return current;
+        return response.schema.tables[0]?.name || "";
+      });
+      return response.schema;
+    } catch (err: any) {
+      setDbSchema(null);
+      toast.error(err.message || "Failed to load database schema");
+      return null;
+    } finally {
+      setLoadingDbSchema(false);
+    }
+  }, []);
+
+  const loadDbTableSchema = useCallback(async (connectionId: string, tableName: string) => {
+    if (!tableName.trim()) return null;
+
+    try {
+      const response = await fetchDatabaseSchema(connectionId, tableName, { refresh: true });
+      const detailedTable = response.schema.tables[0] ?? null;
+      if (!detailedTable) return null;
+
+      setDbSchema((current) => {
+        if (!current) return response.schema;
+
+        const existingTables = current.tables.some((table) => table.name === detailedTable.name)
+          ? current.tables.map((table) => table.name === detailedTable.name ? { ...table, ...detailedTable } : table)
+          : [...current.tables, detailedTable];
+
+        return {
+          ...current,
+          ...response.schema,
+          tables: existingTables,
+        };
+      });
+
+      return detailedTable;
+    } catch (err: any) {
+      toast.error(err.message || `Failed to load schema for ${tableName}`);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     if (selectedDataset && !selectedSheet) setSelectedSheet(selectedDataset.sheetNames[0]);
   }, [selectedDataset, selectedSheet]);
+
+  useEffect(() => {
+    if (!isDbConnection || !selectedConnectionId) {
+      setDbSchema(null);
+      setSelectedTable("");
+      return;
+    }
+    void loadDbSchema(selectedConnectionId);
+  }, [isDbConnection, selectedConnectionId, loadDbSchema]);
+
+  useEffect(() => {
+    if (!isDbConnection || !selectedConnectionId || !selectedTable) return;
+    const table = dbSchema?.tables.find((entry) => entry.name === selectedTable);
+    if (table?.columns.length) return;
+    void loadDbTableSchema(selectedConnectionId, selectedTable);
+  }, [dbSchema, isDbConnection, loadDbTableSchema, selectedConnectionId, selectedTable]);
 
   useEffect(() => {
     const replayQuestion = searchParams.get("q");
@@ -1809,8 +2311,27 @@ export default function QueryPage() {
     setFavoritePrompts((prev) => prev.includes(prompt) ? prev.filter((item) => item !== prompt) : [prompt, ...prev].slice(0, 20));
   };
 
+  const handleSourceChange = (value: string) => {
+    setSelectedDatasetId(value);
+    setSelectedSheet("");
+    setSelectedTable("");
+    setDbSchema(null);
+  };
+
   // Smart suggestions based on dataset columns
   const smartSuggestions = useMemo(() => {
+    if (isDbConnection && selectedConnection) {
+      if (selectedDbTableData?.columns.length) {
+        return generateSmartSuggestions(selectedDbTableData.columns).slice(0, 5);
+      }
+      return [
+        "Show all tables in this database",
+        "What is the total row count?",
+        "Describe the schema",
+        "Show the first 10 rows",
+        "What columns are available?",
+      ];
+    }
     const sheet = selectedDataset?.data?.sheets[selectedSheet];
     if (sheet) return generateSmartSuggestions(sheet.columns);
     return [
@@ -1820,7 +2341,7 @@ export default function QueryPage() {
       "Find rows where value > 1000",
       "What is the average order value?",
     ];
-  }, [selectedDataset, selectedSheet]);
+  }, [selectedDataset, selectedSheet, isDbConnection, selectedConnection, selectedDbTableData]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1839,17 +2360,17 @@ export default function QueryPage() {
     toast.success("Conversation context cleared");
   };
 
-  const handleSend = async (overrideQuestion?: string) => {
+  const handleSendLegacy = async (overrideQuestion?: string) => {
     const question = (overrideQuestion ?? input).trim();
     if (!question || isRunning) return;
-    if (!selectedDatasetId) { toast.error("Select a dataset first"); return; }
+    if (!selectedDatasetId) { toast.error("Select a data source first"); return; }
     const apiKey = getApiKey(activeProvider);
     const activeProviderConfig = providerConfigs[activeProvider] || {};
     const providerOptions = activeProvider === "bedrock"
       ? {
-          secretAccessKey: activeProviderConfig.secretAccessKey || "",
-          region: activeProviderConfig.region || "us-east-1",
-        }
+        secretAccessKey: activeProviderConfig.secretAccessKey || "",
+        region: activeProviderConfig.region || "us-east-1",
+      }
       : {};
     if (!apiKey && activeProvider !== "ollama") {
       const message = activeProvider === "bedrock"
@@ -1887,6 +2408,33 @@ export default function QueryPage() {
     setCurrentSteps([]);
     setFinalResult(null);
     setLastQuery(question);
+
+    // Handle DB connection source — show info message that actual DB querying is coming soon
+    if (isDbConnection && selectedConnection) {
+      const steps: AgentStep[] = [{
+        turn: 1,
+        command: "Answer",
+        args: {},
+        result: {
+          narrative: `🔗 **Connected to ${selectedConnection.name}** (${DB_TYPE_LABELS[selectedConnection.dbType]})\n\nYour question: "${question}"\n\nThe database connection is configured and ready. In the next release, this will execute real SQL queries against your ${DB_TYPE_LABELS[selectedConnection.dbType]} database.\n\n**Connection Details:**\n- Type: ${DB_TYPE_LABELS[selectedConnection.dbType]}\n- Host: ${selectedConnection.config.host || selectedConnection.config.url || selectedConnection.config.account || "configured"}\n- Database: ${selectedConnection.config.database || selectedConnection.config.projectId || "configured"}\n- Status: ✅ ${selectedConnection.status}`,
+          highlights: [
+            { label: "Database", value: DB_TYPE_LABELS[selectedConnection.dbType] },
+            { label: "Connection", value: selectedConnection.name },
+            { label: "Status", value: selectedConnection.status },
+          ],
+        },
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - queryStartRef.current,
+        isFinal: true,
+      }];
+      setCurrentSteps([]);
+      setFinalResult(steps[0].result);
+      setShowResult(true);
+      setMessages((prev) => [...prev, { role: "agent", content: "", steps, query: question }]);
+      setConversationContext((prev) => [...prev, { question, answer: steps[0].result }]);
+      setIsRunning(false);
+      return;
+    }
 
     let workbookSheets = selectedDataset?.data?.sheets;
     if (!workbookSheets) {
@@ -1967,6 +2515,207 @@ export default function QueryPage() {
     }
   };
 
+  const handleSend = async (overrideQuestion?: string) => {
+    const question = (overrideQuestion ?? input).trim();
+    if (!question || isRunning) return;
+    if (!selectedDatasetId) { toast.error("Select a data source first"); return; }
+
+    const apiKey = getApiKey(activeProvider);
+    const activeProviderConfig = providerConfigs[activeProvider] || {};
+    const providerOptions = activeProvider === "bedrock"
+      ? {
+        secretAccessKey: activeProviderConfig.secretAccessKey || "",
+        region: activeProviderConfig.region || "us-east-1",
+      }
+      : {};
+
+    if (!apiKey && activeProvider !== "ollama") {
+      const message = activeProvider === "bedrock"
+        ? "AWS Bedrock access key is missing. Add it in Settings or paste it in the left provider fields."
+        : `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
+      setApiWarning(message);
+      toast.error(message);
+      return;
+    }
+    if (activeProvider === "bedrock" && !activeProviderConfig.secretAccessKey) {
+      const message = "AWS Bedrock secret access key is missing. Add it in Settings or paste it in the left provider fields.";
+      setApiWarning(message);
+      toast.error(message);
+      return;
+    }
+
+    setIsRunning(true);
+    cancelRequestedRef.current = false;
+
+    try {
+      await checkMetric("monthlyQueries", 1);
+      await checkMetric("monthlyTokens", maxTokens);
+    } catch (err: any) {
+      toast.error(err.message || "Query limit reached for your plan");
+      setIsRunning(false);
+      return;
+    }
+    if (cancelRequestedRef.current) return;
+
+    setInput(overrideQuestion ? input : "");
+    setApiWarning("");
+    setLastFailedQuery("");
+    queryStartRef.current = Date.now();
+    setMessages((prev) => [...prev, { role: "user", content: question, query: question }]);
+    setCurrentSteps([]);
+    setFinalResult(null);
+    setLastQuery(question);
+
+    const steps: AgentStep[] = [];
+    const startTime = Date.now();
+    let runner: AsyncGenerator<AgentStep>;
+
+    if (isDbConnection) {
+      if (!selectedConnection || !selectedConnectionId) {
+        toast.error("Select a connected database first");
+        setIsRunning(false);
+        return;
+      }
+
+      const schema = await loadDbSchema(selectedConnectionId, { refresh: true });
+      if (cancelRequestedRef.current) return;
+      if (!schema || schema.tables.length === 0) {
+        toast.error("Database schema is unavailable for this connection.");
+        setIsRunning(false);
+        return;
+      }
+
+      const activeTableName = selectedTable || schema.tables[0]?.name || "";
+      let databaseTables = schema.tables;
+      const selectedTableSchema = activeTableName
+        ? await loadDbTableSchema(selectedConnectionId, activeTableName)
+        : null;
+      if (cancelRequestedRef.current) return;
+      if (selectedTableSchema) {
+        databaseTables = databaseTables.map((table) =>
+          table.name === selectedTableSchema.name ? { ...table, ...selectedTableSchema } : table
+        );
+      }
+
+      runner = runDatabaseAgent(
+        question,
+        databaseTables,
+        activeTableName,
+        DB_TYPE_LABELS[selectedConnection.dbType],
+        activeProvider,
+        activeModel,
+        apiKey,
+        temperature,
+        maxTokens,
+        systemPrompt || undefined,
+        conversationContext,
+        providerOptions,
+        {
+          loadTableSchema: (tableName) => loadDbTableSchema(selectedConnectionId, tableName),
+          executeTableOperation: async ({ tableName, operation, params }) => {
+            const response = await executeDatabaseQuery(selectedConnectionId, {
+              operation,
+              params: {
+                ...params,
+                tableName,
+              },
+            });
+            return response;
+          },
+        }
+      );
+    } else {
+      let workbookSheets = selectedDataset?.data?.sheets;
+      if (!workbookSheets) {
+        toast.info("Loading dataset from storage...");
+        const { loadDatasetData } = useDatasetStore.getState();
+        const fetched = await loadDatasetData(selectedDatasetId);
+        workbookSheets = fetched?.sheets;
+      }
+      if (cancelRequestedRef.current) return;
+      if (!workbookSheets || !workbookSheets[selectedSheet]) {
+        toast.error("Dataset data unavailable. Please re-upload the file.");
+        setIsRunning(false);
+        return;
+      }
+
+      runner = runLegacyAgent(
+        question,
+        workbookSheets,
+        selectedSheet,
+        activeProvider,
+        activeModel,
+        apiKey,
+        temperature,
+        maxTokens,
+        systemPrompt || undefined,
+        conversationContext,
+        providerOptions
+      );
+    }
+
+    try {
+      for await (const step of runner) {
+        if (cancelRequestedRef.current) {
+          steps.push({
+            turn: steps.length + 1,
+            command: "Error",
+            args: {},
+            result: "Query stopped by user",
+            durationMs: Date.now() - startTime,
+            tokens: { input: 0, output: 0 },
+            isFinal: true,
+          });
+          break;
+        }
+
+        steps.push(step);
+        setCurrentSteps([...steps]);
+        if (step.isFinal) {
+          setFinalResult(step.result);
+          setShowResult(true);
+        }
+      }
+
+      const totalTokens = steps.reduce((sum, step) => sum + step.tokens.input + step.tokens.output, 0);
+      const finalStep = getFinalStep(steps);
+
+      if (finalStep) {
+        setConversationContext((prev) => [...prev, { question, answer: finalStep.result }]);
+      }
+
+      setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps], query: question }]);
+      setCurrentSteps([]);
+
+      try {
+        await addEntry({
+          query: question,
+          datasetName: sourceName,
+          provider: activeProvider,
+          model: activeModel,
+          turns: steps.length,
+          totalTokens,
+          durationMs: Date.now() - startTime,
+          status: steps.some((step) => step.command === "Error") ? "error" : "success",
+          steps: [...steps],
+          finalResult: steps[steps.length - 1]?.result,
+        });
+      } catch (err: any) {
+        toast.error(err.message || "Query usage could not be saved for your plan");
+      } finally {
+        fetchPlan();
+      }
+    } catch (err: any) {
+      toast.error(err.message);
+      setLastFailedQuery(question);
+      setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  void handleSendLegacy;
+
   const handleStopQuery = () => {
     cancelRequestedRef.current = true;
     setIsRunning(false);
@@ -2004,17 +2753,35 @@ export default function QueryPage() {
         {showPreview && selectedDataset && (
           <DataPreviewPanel dataset={selectedDataset} sheet={selectedSheet} onClose={() => setShowPreview(false)} />
         )}
+        {showPreview && selectedConnection && dbSchema && (
+          <DatabasePreviewPanel connectionId={selectedConnection._id} schema={dbSchema} tableName={selectedTable} onSelectTable={setSelectedTable} onClose={() => setShowPreview(false)} />
+        )}
       </AnimatePresence>
 
       {/* Left: Context Panel */}
       <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-auto border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
         <div className="p-4 space-y-4">
           <div>
-            <Label className="text-xs text-muted-foreground">Dataset</Label>
-            <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
-              <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue placeholder="Select dataset" /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.fileName}</SelectItem>)}
+            <Label className="text-xs text-muted-foreground">Data Source</Label>
+            <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
+              <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue placeholder="Select data source" /></SelectTrigger>
+              <SelectContent className="bg-popover border-border max-h-72">
+                {datasets.length > 0 && (
+                  <>
+                    <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Uploaded Files</div>
+                    {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.fileName}</SelectItem>)}
+                  </>
+                )}
+                {connectedDbs.length > 0 && (
+                  <>
+                    <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Database Connections</div>
+                    {connectedDbs.map((c) => (
+                      <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
+                        <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
+                      </SelectItem>
+                    ))}
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -2030,6 +2797,35 @@ export default function QueryPage() {
             </div>
           )}
 
+          {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
+            <div>
+              <Label className="text-xs text-muted-foreground">Table</Label>
+              <div className="mt-1.5">
+                <DatabaseTablePicker
+                  tables={dbSchema.tables}
+                  value={selectedDbTableData?.name || selectedTable}
+                  onChange={setSelectedTable}
+                  placeholder="Choose a table"
+                />
+              </div>
+            </div>
+          )}
+
+          {selectedConnection && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{DB_TYPE_ICONS[selectedConnection.dbType]}</span>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">{selectedConnection.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{DB_TYPE_LABELS[selectedConnection.dbType]}</p>
+                </div>
+              </div>
+              {selectedConnection.config.host && <p className="text-[10px] text-muted-foreground">Host: <span className="font-mono text-foreground">{selectedConnection.config.host}</span></p>}
+              {selectedConnection.config.database && <p className="text-[10px] text-muted-foreground">DB: <span className="font-mono text-foreground">{selectedConnection.config.database}</span></p>}
+              {loadingDbSchema && <p className="text-[10px] text-muted-foreground">Loading table schema...</p>}
+            </div>
+          )}
+
           {selectedDataset && selectedSheet && (
             <div className="flex gap-2 flex-wrap">
               <Badge variant="outline" className="border-border text-xs">{selectedDataset.rowCounts[selectedSheet]} rows</Badge>
@@ -2037,7 +2833,19 @@ export default function QueryPage() {
             </div>
           )}
 
-          {selectedDataset && (
+          {selectedConnection && selectedDbTableData && (
+            <div className="flex gap-2 flex-wrap">
+              <Badge variant="outline" className="border-border text-xs">
+                {selectedDbTableData.rowCount != null ? `${selectedDbTableData.rowCount} rows` : "Rows pending"}
+              </Badge>
+              <Badge variant="outline" className="border-border text-xs">
+                {selectedDbTableData.columns.length > 0 ? `${selectedDbTableData.columns.length} cols` : "Cols pending"}
+              </Badge>
+              <Badge variant="outline" className="border-border text-xs uppercase">{selectedDbTableData.kind}</Badge>
+            </div>
+          )}
+
+          {(selectedDataset || selectedConnection) && (
             <button onClick={() => setShowPreview(true)} className="flex items-center gap-2 w-full text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-card/80 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
               <Table2 size={12} /> Preview data <Eye size={11} className="ml-auto" />
             </button>
@@ -2167,7 +2975,8 @@ export default function QueryPage() {
               <Settings2 size={12} /> Advanced {showAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              <Textarea placeholder="System prompt override..." value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
+              <Textarea placeholder={`Override the ${defaultPromptLabel} prompt...`} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
+              <p className="mt-1 text-[10px] text-muted-foreground">Default mode: {defaultPromptLabel}</p>
             </CollapsibleContent>
           </Collapsible>
 
@@ -2187,10 +2996,17 @@ export default function QueryPage() {
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
         <div className="shrink-0 space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
-              <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Dataset" /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
+            <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
+              <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Data source" /></SelectTrigger>
+              <SelectContent className="bg-popover border-border max-h-72">
+                {datasets.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Files</div>}
                 {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
+                {connectedDbs.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Databases</div>}
+                {connectedDbs.map((c) => (
+                  <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
+                    <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
@@ -2211,8 +3027,19 @@ export default function QueryPage() {
               ))}
             </div>
           )}
+          {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
+            <div className="w-full">
+              <DatabaseTablePicker
+                tables={dbSchema.tables}
+                value={selectedDbTableData?.name || selectedTable}
+                onChange={setSelectedTable}
+                placeholder="Choose a table"
+                triggerClassName="py-1.5"
+              />
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
-            {selectedDataset && (
+            {(selectedDataset || selectedConnection) && (
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowPreview(true)}>
                 <Eye size={12} className="mr-1" /> Preview
               </Button>
@@ -2399,7 +3226,7 @@ export default function QueryPage() {
             query={lastQuery}
             onClose={() => setShowResult(false)}
             onBookmark={() => setShowSaveInsight(true)}
-            datasetName={selectedDataset?.fileName || "Unknown dataset"}
+            datasetName={sourceName}
           />
         </div>
       )}
@@ -2423,13 +3250,20 @@ export default function QueryPage() {
 
           <div className="mt-6 space-y-4">
             <div>
-              <Label className="text-xs text-muted-foreground">Dataset</Label>
-              <Select value={selectedDatasetId} onValueChange={(v) => { setSelectedDatasetId(v); setSelectedSheet(""); }}>
+              <Label className="text-xs text-muted-foreground">Data Source</Label>
+              <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
                 <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
-                  <SelectValue placeholder="Select dataset" />
+                  <SelectValue placeholder="Select data source" />
                 </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
+                <SelectContent className="bg-popover border-border max-h-72">
+                  {datasets.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Files</div>}
                   {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
+                  {connectedDbs.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Databases</div>}
+                  {connectedDbs.map((c) => (
+                    <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
+                      <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -2448,6 +3282,20 @@ export default function QueryPage() {
                       {s}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
+              <div>
+                <Label className="text-xs text-muted-foreground">Table</Label>
+                <div className="mt-1.5">
+                  <DatabaseTablePicker
+                    tables={dbSchema.tables}
+                    value={selectedDbTableData?.name || selectedTable}
+                    onChange={setSelectedTable}
+                    placeholder="Choose a table"
+                  />
                 </div>
               </div>
             )}
@@ -2572,11 +3420,12 @@ export default function QueryPage() {
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2">
                 <Textarea
-                  placeholder="System prompt override..."
+                  placeholder={`Override the ${defaultPromptLabel} prompt...`}
                   value={systemPrompt}
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   className="bg-card border-border text-xs min-h-[96px]"
                 />
+                <p className="mt-1 text-[10px] text-muted-foreground">Default mode: {defaultPromptLabel}</p>
               </CollapsibleContent>
             </Collapsible>
           </div>
@@ -2637,7 +3486,7 @@ export default function QueryPage() {
         onClose={() => setShowSaveInsight(false)}
         query={lastQuery}
         result={finalResult}
-        datasetName={selectedDataset?.fileName || ""}
+        datasetName={selectedConnection?.name || selectedDataset?.fileName || ""}
       />
     </div>
   );

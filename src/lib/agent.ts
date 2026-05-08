@@ -6,6 +6,7 @@ export interface AgentStep {
   command: string;
   args: Record<string, any>;
   result: any;
+  sql?: string;
   tokens: { input: number; output: number };
   durationMs: number;
   isFinal: boolean;
@@ -14,6 +15,23 @@ export interface AgentStep {
 export interface ConversationContext {
   question: string;
   answer: any;
+}
+
+export interface DatabaseTableData extends SheetData {
+  name: string;
+  kind?: string;
+  description?: string;
+  rowCount?: number;
+}
+
+interface DatabaseAgentTools {
+  executeTableOperation?: (input: {
+    tableName: string;
+    operation: string;
+    params: Record<string, any>;
+    isFinal: boolean;
+  }) => Promise<any>;
+  loadTableSchema?: (tableName: string) => Promise<DatabaseTableData | null>;
 }
 
 // ─── Enterprise System Prompt ─────────────────────────────────────────────────
@@ -850,7 +868,16 @@ function repairCommandForQuestion(
 function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
   switch (operation) {
     case "filter": {
-      const { column, operator, value } = params;
+      let normalizedParams = params;
+      if (params && typeof params === "object" && !params.column && !params.filters) {
+        const entries = Object.entries(params);
+        if (entries.length === 1) {
+          const [column, value] = entries[0];
+          normalizedParams = { column, operator: "==", value };
+        }
+      }
+
+      const { column, operator = "==", value } = normalizedParams;
       return data.filter((row) => {
         const v = row[column];
         switch (operator) {
@@ -1047,8 +1074,16 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       return limit ? result.slice(0, Number(limit)) : result;
     }
     case "select": {
-      const { columns, limit = 50 } = params;
-      return data.slice(0, limit).map((row) => {
+      const { columns, filter: filterParam, filters, logic = "AND", limit = 50 } = params;
+      let rows = data;
+      if (filterParam) {
+        rows = executeOperation(rows, "filter", filterParam);
+      }
+      if (Array.isArray(filters) && filters.length > 0) {
+        rows = executeOperation(rows, "multi_filter", { filters, logic });
+      }
+
+      return rows.slice(0, limit).map((row) => {
         const obj: Record<string, any> = {};
         for (const c of columns) obj[c] = row[c];
         return obj;
@@ -1516,6 +1551,7 @@ export async function* runAgent(
 
   messages.push({ role: "user", content: firstMessage });
   let schemaInspected = false;
+  let currentData = sheetData.rows; // Track current data state for intermediate operations
 
   while (turn < maxTurns) {
     turn++;
@@ -1619,8 +1655,11 @@ export async function* runAgent(
         schemaInspected = true;
         break;
       case "QuerySheet":
+        result = executeOperation(currentData, args.operation, args.params || {});
+        currentData = Array.isArray(result) ? result : [result]; // Update current data for next intermediate step
+        break;
       case "ExecuteFinalQuery":
-        result = executeOperation(sheetData.rows, args.operation, args.params || {});
+        result = executeOperation(currentData, args.operation, args.params || {});
         break;
       default:
         result = { error: `Unknown command: ${command}` };
@@ -1665,6 +1704,7 @@ export async function* runAgent(
 }
 
 type WorkbookSheets = Record<string, SheetData>;
+type DatabaseTables = Record<string, DatabaseTableData>;
 
 const DEFAULT_AGENT_PROMPT = `You are a data analyst agent. Work one step at a time and request only the information you need.
 
@@ -1694,7 +1734,7 @@ Supported operations:
 - filter {"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}
 - multi_filter {"filters":[...],"logic":"AND|OR"}
 - sort {"column":"col","order":"asc|desc","limit":N}
-- select {"columns":["col1","col2"],"limit":N}
+- select {"columns":["col1","col2"],"limit":N,"filter":{"column":"col","operator":"==","value":X}}
 - unique {"column":"col"}
 - aggregate {"column":"col","function":"sum|count|count_distinct|mean|min|max|median|std|variance"}
 - groupby {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"asc|desc"}
@@ -1712,6 +1752,8 @@ Rules:
 - Use exact column names from the returned schema.
 - If GetColumns says a column contains delimited lists/tags/names inside one cell, use split_frequency to count the individual items.
 - Do not group by or aggregate the whole cell when the question is about items inside a multi-value text column.
+- For "which row has the max/min/highest/lowest value" questions, prefer a single sort+select pipeline, or include the same filter in ExecuteFinalQuery after QuerySheet finds the matching row.
+- If QuerySheet returns the exact row(s), either Answer from that result or preserve that subset/filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
 - Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer.
 - Respond with exactly one JSON object and no extra text.
 
@@ -1720,11 +1762,339 @@ Examples:
 {"command":"GetColumns","args":{"sheet_name":"sales"}}
 {"command":"QuerySheet","args":{"sheet_name":"sales","operation":"groupby","params":{"groupColumn":"region","aggColumn":"amount","aggFunction":"sum"}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"amount","function":"sum"}}}
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"cars","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"Horsepower","order":"desc","limit":1}},{"operation":"select","params":{"columns":["Car"],"limit":1}}]}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"split_frequency","params":{"column":"cast","delimiter":",","limit":10,"order":"desc"}}}`;
+
+const DEFAULT_DATABASE_AGENT_PROMPT = `You are a database analysis agent. Work one step at a time and request only the information you need.
+
+You are working with database tables, not workbook sheets.
+The operation JSON is a safe command protocol, not an Excel formula language. For live databases, QueryTable and ExecuteFinalQuery are translated by the backend into SQL or native database queries and executed inside the database.
+
+You have access to these commands:
+
+1. GetSchema()
+   Returns the database table inventory with column names and any cheap row-count estimates. It does not load table rows.
+
+2. GetColumns(table_name)
+   Returns detailed column info and sample values for a table.
+
+3. QueryTable(table_name, operation, params)
+   Runs one intermediate data operation on a table.
+
+4. ExecuteFinalQuery(table_name, operation, params)
+   Runs the final data operation that answers the question.
+
+5. Answer(value)
+   Use only for clarification questions or schema-only final answers.
+
+Supported operations:
+- count {}
+- head {"n": 10}
+- filter {"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}
+- multi_filter {"filters":[...],"logic":"AND|OR"}
+- sort {"column":"col","order":"asc|desc","limit":N}
+- select {"columns":["col1","col2"],"limit":N,"filter":{"column":"col","operator":"==","value":X} OR {"col":X}}
+- unique {"column":"col"}
+- aggregate {"column":"col","function":"sum|count|count_distinct|mean|min|max|median|std|variance"}
+- groupby {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"asc|desc"}
+- split_frequency {"column":"col","delimiter":",","limit":N,"order":"asc|desc","uniquePerRow":true|false}
+- percentile {"column":"col","percentiles":[25,50,75]}
+- correlation {"column1":"col1","column2":"col2"}
+- date_trunc {"dateColumn":"col","period":"day|week|month|quarter|year","aggColumn":"col2","aggFunction":"count|sum|mean"}
+- outlier_detect {"column":"col","method":"zscore|iqr","threshold":2}
+- pivot {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
+- pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
+
+CRITICAL RULES FOR MULTI-TABLE QUERIES:
+- When the user provides an identifier (ID, code, name) without specifying a table, ALWAYS call GetSchema first.
+- After GetSchema, analyze available tables and their purposes to determine which might contain the identifier.
+- Search the most relevant tables in order of likelihood.
+- Call GetColumns for each candidate table before querying.
+- If the identifier is not found in the obvious tables, expand search to other tables.
+
+FILTER FORMAT NOTES (select operation):
+- Full format: {"column":"col","operator":"==","value":"search_term"}
+- Shorthand format: {"col":"search_term"} (automatically converts to ==)
+- Both formats are supported and equivalent for equality checks
+
+Rules:
+- If you are unsure which table to use, call GetSchema first.
+- Call GetColumns before writing a query on a table you have not inspected yet.
+- Use exact table and column names from the returned schema.
+- GetSchema does not load table rows. Use GetColumns(table_name) to inspect exact column details before querying a specific table.
+- If the user explicitly names an identifier column, such as upi, urs, urs_taxid, taxid, accession, rna_id, or id, filter that exact column when it exists. Do not substitute a similarly named column just because the value looks compatible.
+- Example: a request like "details of upi URS..." must filter column "upi" on a table containing "upi"; do not filter "urs" unless no "upi" column exists.
+- For identifier/detail lookups, prefer ExecuteFinalQuery with a select operation and an exact filter on the identifier column.
+- If QueryTable finds rows with a filter, either answer from that result or include the same filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
+- If the request needs a join across multiple tables and the target table is unclear, ask one concise clarification question.
+- Use QueryTable for intermediate work and ExecuteFinalQuery only for the final answer.
+- Respond with exactly one JSON object and no extra text.
+
+Examples:
+{"command":"GetSchema","args":{}}
+{"command":"GetColumns","args":{"table_name":"orders"}}
+{"command":"QueryTable","args":{"table_name":"orders","operation":"groupby","params":{"groupColumn":"status","aggColumn":"total_amount","aggFunction":"sum"}}}
+{"command":"ExecuteFinalQuery","args":{"table_name":"orders","operation":"select","params":{"columns":["id","amount"],"filter":{"column":"status","operator":"==","value":"completed"},"limit":10}}}
+{"command":"Answer","args":{"value":"Which table should I use for that metric?"}}`;
+
+function buildDatabaseTableMap(tables: DatabaseTableData[]): DatabaseTables {
+  const mapped: DatabaseTables = {};
+  for (const table of tables) {
+    mapped[table.name] = {
+      ...table,
+      rowCount: table.rowCount ?? (table.rows.length > 0 ? table.rows.length : undefined),
+    };
+  }
+  return mapped;
+}
+
+const LOW_SIGNAL_DATABASE_COLUMN_NAMES = new Set([
+  "name",
+  "type",
+  "date",
+  "status",
+  "result",
+  "results",
+  "data",
+  "value",
+  "values",
+  "count",
+  "total",
+]);
+
+const DATABASE_DETAIL_COLUMN_PRIORITY = [
+  "upi",
+  "urs",
+  "urs taxid",
+  "rna id",
+  "taxid",
+  "accession",
+  "database",
+  "databases",
+  "description",
+  "short description",
+  "rna type",
+  "ncrna class",
+  "so rna type",
+  "assigned so rna type",
+  "gene",
+  "species",
+  "common name",
+  "is active",
+  "last release",
+  "has coordinates",
+  "id",
+  "len",
+  "seq short",
+  "md5",
+];
+
+function hasPhrase(text: string, phrase: string) {
+  if (!phrase) return false;
+  return new RegExp(`(^|\\s)${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`, "i").test(text);
+}
+
+function getTableColumnByNormalizedName(table: DatabaseTableData | undefined, normalizedColumnName: string) {
+  return table?.columns.find((column) => normalizeColumnName(column.name) === normalizedColumnName);
+}
+
+function isUsefulQuestionColumnMention(normalizedColumnName: string) {
+  return normalizedColumnName.length >= 3 && !LOW_SIGNAL_DATABASE_COLUMN_NAMES.has(normalizedColumnName);
+}
+
+function isIdentifierLikeDatabaseColumn(columnName: string) {
+  const normalized = normalizeColumnName(columnName);
+  return (
+    /\b(upi|urs|urs taxid|rna id|taxid|accession|identifier|code|key)\b/.test(normalized) ||
+    normalized === "id" ||
+    normalized.endsWith(" id")
+  );
+}
+
+function findQuestionMentionedDatabaseColumns(question: string, tables: DatabaseTables) {
+  const normalizedQuestion = normalizeColumnName(question);
+  const columnsByName = new Map<string, { name: string; tables: string[] }>();
+
+  for (const [tableName, table] of Object.entries(tables)) {
+    for (const column of table.columns) {
+      const normalizedColumnName = normalizeColumnName(column.name);
+      if (!isUsefulQuestionColumnMention(normalizedColumnName)) continue;
+      if (!hasPhrase(normalizedQuestion, normalizedColumnName)) continue;
+
+      const existing = columnsByName.get(normalizedColumnName) || { name: column.name, tables: [] };
+      existing.tables.push(tableName);
+      columnsByName.set(normalizedColumnName, existing);
+    }
+  }
+
+  return Array.from(columnsByName.entries()).map(([normalizedName, info]) => ({
+    normalizedName,
+    name: info.name,
+    tables: info.tables,
+  }));
+}
+
+function buildDatabaseQuestionRoutingHints(question: string, tables: DatabaseTables) {
+  const mentions = findQuestionMentionedDatabaseColumns(question, tables)
+    .filter((mention) => isIdentifierLikeDatabaseColumn(mention.name));
+
+  if (!mentions.length) return "";
+
+  const lines = ["Question-aware routing hints:"];
+  for (const mention of mentions.slice(0, 5)) {
+    const candidateTables = mention.tables.slice(0, 12).join(", ");
+    const suffix = mention.tables.length > 12 ? `, ... (${mention.tables.length} total)` : "";
+    lines.push(
+      `- User explicitly mentioned column "${mention.name}". Prefer filtering this exact column. Tables containing it: ${candidateTables}${suffix}.`
+    );
+  }
+  lines.push("- Do not replace an explicitly mentioned identifier column with a similar column unless no exact column exists.");
+
+  return lines.join("\n");
+}
+
+function scoreDatabaseTableForColumn(table: DatabaseTableData, normalizedColumnName: string) {
+  const normalizedTableName = table.name.toLowerCase();
+  const normalizedColumns = new Set(table.columns.map((column) => normalizeColumnName(column.name)));
+  let score = 0;
+
+  for (const detailColumn of DATABASE_DETAIL_COLUMN_PRIORITY) {
+    if (normalizedColumns.has(detailColumn)) score += 4;
+  }
+
+  if (normalizedColumns.size <= 1) score -= 25;
+  if (normalizedTableName.includes("precomputed")) score += 12;
+  if (normalizedTableName.includes("summary") || normalizedTableName.includes("summaries")) score += 8;
+  if (normalizedTableName.includes("tracking") || normalizedTableName.includes("map")) score -= 10;
+
+  if (normalizedColumnName === "upi") {
+    if (normalizedTableName.endsWith(".rnc_rna_precomputed") || normalizedTableName === "rnc_rna_precomputed") score += 80;
+    if (normalizedTableName.endsWith(".rna") || normalizedTableName === "rna") score += 45;
+    if (normalizedTableName.includes("rfam_analyzed_sequences")) score += 15;
+    if (normalizedTableName.includes("pipeline_tracking") || normalizedTableName.includes("xref")) score -= 25;
+  }
+
+  return score;
+}
+
+function pickBestDatabaseTableForColumn(tables: DatabaseTables, normalizedColumnName: string) {
+  const candidates = Object.values(tables)
+    .filter((table) => getTableColumnByNormalizedName(table, normalizedColumnName))
+    .sort((a, b) => scoreDatabaseTableForColumn(b, normalizedColumnName) - scoreDatabaseTableForColumn(a, normalizedColumnName));
+
+  return candidates[0];
+}
+
+function buildPreferredDatabaseDetailColumns(table: DatabaseTableData, identifierColumnName?: string) {
+  const byNormalizedName = new Map(table.columns.map((column) => [normalizeColumnName(column.name), column.name]));
+  const ordered: string[] = [];
+  const addColumn = (columnName?: string) => {
+    if (!columnName) return;
+    const actual = byNormalizedName.get(normalizeColumnName(columnName));
+    if (actual && !ordered.includes(actual)) ordered.push(actual);
+  };
+
+  addColumn(identifierColumnName);
+  for (const preferred of DATABASE_DETAIL_COLUMN_PRIORITY) addColumn(preferred);
+
+  for (const column of table.columns) {
+    if (ordered.length >= 12) break;
+    if (!ordered.includes(column.name)) ordered.push(column.name);
+  }
+
+  return ordered.slice(0, 12);
+}
+
+function getPrimaryDatabaseFilter(operation: string, params: Record<string, any>) {
+  if (operation === "filter") return params;
+  if (params?.filter && typeof params.filter === "object" && !Array.isArray(params.filter)) return params.filter;
+  if (Array.isArray(params?.filters) && params.filters.length > 0) return params.filters[0];
+  return null;
+}
+
+function replacePrimaryDatabaseFilterColumn(operation: string, params: Record<string, any>, columnName: string) {
+  if (operation === "filter") {
+    return { ...params, column: columnName };
+  }
+
+  if (params?.filter && typeof params.filter === "object" && !Array.isArray(params.filter)) {
+    return {
+      ...params,
+      filter: { ...params.filter, column: columnName },
+    };
+  }
+
+  if (Array.isArray(params?.filters) && params.filters.length > 0) {
+    const [first, ...rest] = params.filters;
+    return {
+      ...params,
+      filters: [{ ...first, column: columnName }, ...rest],
+    };
+  }
+
+  return params;
+}
+
+function repairDatabaseLookupForExplicitQuestionColumn(
+  question: string,
+  args: Record<string, any>,
+  tables: DatabaseTables,
+  defaultTableName: string
+) {
+  const operation = typeof args.operation === "string" ? args.operation.trim() : "";
+  if (!operation) return { args, repaired: false };
+
+  const params = args.params || {};
+  const filter = getPrimaryDatabaseFilter(operation, params);
+  if (!filter || !filter.column || filter.value === undefined) return { args, repaired: false };
+
+  const explicitColumn = findQuestionMentionedDatabaseColumns(question, tables)
+    .filter((mention) => isIdentifierLikeDatabaseColumn(mention.name))
+    .find((mention) => normalizeColumnName(filter.column) !== mention.normalizedName);
+
+  if (!explicitColumn) return { args, repaired: false };
+  if (!isIdentifierLikeDatabaseColumn(filter.column)) return { args, repaired: false };
+
+  const requestedTableName = typeof args.table_name === "string" && args.table_name.trim()
+    ? args.table_name.trim()
+    : defaultTableName;
+  const requestedTable = tables[requestedTableName];
+  const requestedTableColumn = getTableColumnByNormalizedName(requestedTable, explicitColumn.normalizedName);
+  const targetTable = requestedTableColumn ? requestedTable : pickBestDatabaseTableForColumn(tables, explicitColumn.normalizedName);
+  if (!targetTable) return { args, repaired: false };
+
+  const targetColumn = getTableColumnByNormalizedName(targetTable, explicitColumn.normalizedName);
+  if (!targetColumn) return { args, repaired: false };
+
+  const tableChanged = targetTable.name !== requestedTableName;
+  const nextParams = replacePrimaryDatabaseFilterColumn(operation, params, targetColumn.name);
+  if (operation === "select" && Array.isArray(nextParams.columns)) {
+    const validColumns = nextParams.columns.filter((column: any) =>
+      typeof column === "string" && getTableColumnByNormalizedName(targetTable, normalizeColumnName(column))
+    );
+    nextParams.columns = tableChanged || validColumns.length <= 1
+      ? buildPreferredDatabaseDetailColumns(targetTable, targetColumn.name)
+      : Array.from(new Set([targetColumn.name, ...validColumns]));
+  }
+
+  return {
+    args: {
+      ...args,
+      table_name: targetTable.name,
+      params: nextParams,
+    },
+    repaired: true,
+  };
+}
 
 function resolveDefaultSheetName(sheets: WorkbookSheets, selectedSheetName: string) {
   if (selectedSheetName && sheets[selectedSheetName]) return selectedSheetName;
   return Object.keys(sheets)[0] || "";
+}
+
+function resolveDefaultTableName(tables: DatabaseTables, selectedTableName: string) {
+  if (selectedTableName && tables[selectedTableName]) return selectedTableName;
+  return Object.keys(tables)[0] || "";
 }
 
 function formatSampleValue(value: any) {
@@ -1852,6 +2222,78 @@ function buildSheetDescription(sheets: WorkbookSheets) {
   });
 
   return "Available sheets:\n" + lines.join("\n");
+}
+
+function buildDatabaseSchemaDescription(tables: DatabaseTables, question = "") {
+  const names = Object.keys(tables);
+  if (names.length === 0) return "No tables available.";
+  const routingHints = buildDatabaseQuestionRoutingHints(question, tables);
+
+  const lines = names.map((name) => {
+    const table = tables[name];
+    const columns = table.columns.length
+      ? table.columns.map((column) => column.name).join(", ")
+      : "columns not loaded yet; call GetColumns(table_name)";
+    const rowLabel = table.rowCount != null
+      ? `~${table.rowCount.toLocaleString()} rows`
+      : table.rows.length > 0
+        ? `${table.rows.length} preview rows`
+        : "row count not loaded";
+    const kind = table.kind ? ` (${table.kind})` : "";
+    return `  Table '${name}'${kind}: ${rowLabel} | Columns: [${columns}]`;
+  });
+
+  return [
+    `Available tables (${names.length}).`,
+    "GetSchema loads table names and column names from database metadata only; it does not load table rows.",
+    "Row counts are approximate/metadata-based when available. Use GetColumns(table_name) before querying a specific table.",
+    ...(routingHints ? [routingHints] : []),
+    ...lines,
+  ].join("\n");
+}
+
+function buildDatabaseColumnsDescription(tables: DatabaseTables, tableName: string) {
+  const table = tables[tableName];
+  if (!table) {
+    return `ERROR: Table '${tableName}' not found. Available: ${Object.keys(tables).join(", ")}`;
+  }
+
+  if (!table.columns.length) {
+    return `Table '${tableName}' exists, but its column metadata is not loaded yet. Inspect another table or request this schema again.`;
+  }
+
+  const lines = [`Table '${tableName}' schema:`];
+  for (const column of table.columns) {
+    const values = getColumnValues(table.rows, column.name);
+    const multiValueProfile = detectMultiValueTextProfile(values, column.name);
+    const nullCount = table.rows.length - column.nonNullCount;
+    const coverage = table.rows.length > 0 ? `${((column.nonNullCount / table.rows.length) * 100).toFixed(1)}% filled` : "0.0% filled";
+    const samples = column.sampleValues.slice(0, 4).map((value) => formatSampleValue(value)).join(", ");
+    const meaning = inferColumnMeaning(column, table.rows.length, values, multiValueProfile);
+
+    const parts = [
+      `- ${column.name} [${column.dtype}]`,
+      `meaning: ${meaning}`,
+      `coverage: ${coverage}`,
+      `unique: ${column.uniqueCount}`,
+    ];
+
+    if (nullCount > 0) {
+      parts.push(`nulls: ${nullCount}`);
+    }
+    if (samples) {
+      parts.push(`samples: ${samples}`);
+    }
+    if (multiValueProfile) {
+      parts.push(`list pattern: "${multiValueProfile.delimiter}"-separated items`);
+      parts.push(`estimated items per row: avg ${multiValueProfile.averageItemsPerCell.toFixed(1)}`);
+      parts.push(`for individual item counts use split_frequency, not groupby on the full cell`);
+    }
+
+    lines.push(parts.join(" | "));
+  }
+
+  return lines.join("\n");
 }
 
 function formatResultForModel(result: any) {
@@ -2020,7 +2462,12 @@ function translateLegacyPandasQuery(pandasQuery: string) {
   return null;
 }
 
-function executeSheetCommand(args: Record<string, any>, sheets: WorkbookSheets, defaultSheetName: string) {
+function executeSheetCommand(
+  args: Record<string, any>,
+  sheets: WorkbookSheets,
+  defaultSheetName: string,
+  sourceRows?: Record<string, any>[]
+) {
   const requestedSheetName = typeof args.sheet_name === "string" && args.sheet_name.trim()
     ? args.sheet_name.trim()
     : defaultSheetName;
@@ -2044,7 +2491,7 @@ function executeSheetCommand(args: Record<string, any>, sheets: WorkbookSheets, 
 
     return {
       args: { ...args, sheet_name: requestedSheetName },
-      result: executeOperation(sheet.rows, translated.operation, translated.params),
+      result: executeOperation(sourceRows || sheet.rows, translated.operation, translated.params),
     };
   }
 
@@ -2057,7 +2504,477 @@ function executeSheetCommand(args: Record<string, any>, sheets: WorkbookSheets, 
 
   return {
     args: { ...args, sheet_name: requestedSheetName },
-    result: executeOperation(sheet.rows, args.operation, args.params || {}),
+    result: executeOperation(sourceRows || sheet.rows, args.operation, args.params || {}),
+  };
+}
+
+function executeDatabaseTableCommand(args: Record<string, any>, tables: DatabaseTables, defaultTableName: string) {
+  const requestedTableName = typeof args.table_name === "string" && args.table_name.trim()
+    ? args.table_name.trim()
+    : typeof args.sheet_name === "string" && args.sheet_name.trim()
+      ? args.sheet_name.trim()
+      : defaultTableName;
+  const table = tables[requestedTableName];
+
+  if (!table) {
+    return {
+      args: { ...args, table_name: requestedTableName },
+      result: `ERROR: Table '${requestedTableName}' not found. Available: ${Object.keys(tables).join(", ")}`,
+    };
+  }
+
+  return {
+    args: { ...args, table_name: requestedTableName },
+    result: executeOperation(table.rows, args.operation, args.params || {}),
+  };
+}
+
+function normalizeDatabaseCommand(parsed: { command: string; args?: Record<string, any> }) {
+  const args = { ...(parsed.args || {}) };
+  let command = parsed.command;
+
+  if (command === "GetSheetDescription") command = "GetSchema";
+  if (command === "QuerySheet") command = "QueryTable";
+  if (typeof args.sheet_name === "string" && !args.table_name) {
+    args.table_name = args.sheet_name;
+  }
+
+  return { command, args };
+}
+
+const FILTER_CARRY_TARGET_OPERATIONS = new Set([
+  "select",
+  "head",
+  "count",
+  "unique",
+  "sort",
+  "aggregate",
+  "groupby",
+  "percentile",
+  "correlation",
+  "date_trunc",
+]);
+
+function hasDatabaseFilter(params: Record<string, any> = {}) {
+  return Boolean(
+    params.filter ||
+    (Array.isArray(params.filters) && params.filters.length > 0)
+  );
+}
+
+function getCarriableDatabaseFilter(operation: string, params: Record<string, any> = {}) {
+  if (operation === "filter" && params.column) {
+    return { operation, params: { ...params } };
+  }
+
+  if (operation === "multi_filter" && Array.isArray(params.filters) && params.filters.length > 0) {
+    return { operation, params: { ...params } };
+  }
+
+  return null;
+}
+
+function carryForwardDatabaseFilter(
+  operation: string,
+  params: Record<string, any> = {},
+  previousFilter?: { operation: string; params: Record<string, any> } | null
+) {
+  if (!previousFilter || hasDatabaseFilter(params) || !FILTER_CARRY_TARGET_OPERATIONS.has(operation)) {
+    return params;
+  }
+
+  if (previousFilter.operation === "filter") {
+    return {
+      ...params,
+      filter: { ...previousFilter.params },
+    };
+  }
+
+  if (previousFilter.operation === "multi_filter") {
+    return {
+      ...params,
+      filters: previousFilter.params.filters,
+      logic: previousFilter.params.logic || "AND",
+    };
+  }
+
+  return params;
+}
+
+function unwrapDatabaseExecutionResult(result: any) {
+  if (
+    result &&
+    typeof result === "object" &&
+    !Array.isArray(result) &&
+    Array.isArray(result.data)
+  ) {
+    return {
+      rows: result.data,
+      sql: typeof result.sql === "string" && result.sql.trim() ? result.sql.trim() : undefined,
+    };
+  }
+
+  return { rows: result, sql: undefined };
+}
+
+const SHEET_FILTER_CARRY_TARGET_OPERATIONS = new Set([
+  ...FILTER_CARRY_TARGET_OPERATIONS,
+  "split_frequency",
+  "outlier_detect",
+  "pivot",
+  "topN_groupby",
+]);
+
+function getCarriableSheetFilter(operation: string, params: Record<string, any> = {}) {
+  if (operation === "filter" && params.column) {
+    return { operation, params: { ...params } };
+  }
+
+  if (operation === "multi_filter" && Array.isArray(params.filters) && params.filters.length > 0) {
+    return { operation, params: { ...params } };
+  }
+
+  return null;
+}
+
+function carryForwardSheetFilter(
+  operation: string,
+  params: Record<string, any> = {},
+  previousFilter?: { operation: string; params: Record<string, any> } | null
+) {
+  if (!previousFilter || hasDatabaseFilter(params) || !SHEET_FILTER_CARRY_TARGET_OPERATIONS.has(operation)) {
+    return params;
+  }
+
+  if (previousFilter.operation === "filter") {
+    return {
+      ...params,
+      filter: { ...previousFilter.params },
+    };
+  }
+
+  if (previousFilter.operation === "multi_filter") {
+    return {
+      ...params,
+      filters: previousFilter.params.filters,
+      logic: previousFilter.params.logic || "AND",
+    };
+  }
+
+  return params;
+}
+
+function getReferencedSheetColumns(operation: string, params: Record<string, any> = {}) {
+  const columns = new Set<string>();
+  const add = (value: any) => {
+    if (typeof value === "string" && value.trim()) columns.add(value.trim());
+  };
+
+  switch (operation) {
+    case "select":
+      (Array.isArray(params.columns) ? params.columns : []).forEach(add);
+      break;
+    case "sort":
+    case "aggregate":
+    case "unique":
+    case "percentile":
+    case "split_frequency":
+    case "outlier_detect":
+      add(params.column);
+      break;
+    case "groupby":
+      add(params.groupColumn);
+      add(params.aggColumn);
+      break;
+    case "correlation":
+      add(params.column1);
+      add(params.column2);
+      break;
+    case "date_trunc":
+      add(params.dateColumn);
+      add(params.aggColumn);
+      break;
+    case "pivot":
+      add(params.rowColumn);
+      add(params.colColumn);
+      add(params.valueColumn);
+      break;
+    case "topN_groupby":
+      add(params.groupColumn);
+      add(params.rankColumn);
+      break;
+  }
+
+  return Array.from(columns);
+}
+
+function canRunOnPreviousSheetRows(
+  operation: string,
+  params: Record<string, any> = {},
+  previousRows?: Record<string, any>[]
+) {
+  if (!Array.isArray(previousRows) || hasDatabaseFilter(params) || operation === "filter" || operation === "multi_filter") {
+    return false;
+  }
+
+  if (!SHEET_FILTER_CARRY_TARGET_OPERATIONS.has(operation)) return false;
+  if (previousRows.length === 0) return true;
+
+  const referencedColumns = getReferencedSheetColumns(operation, params);
+  return referencedColumns.every((column) => Object.prototype.hasOwnProperty.call(previousRows[0], column));
+}
+
+export async function* runDatabaseAgent(
+  question: string,
+  databaseTables: DatabaseTableData[],
+  selectedTableName: string,
+  dbTypeLabel: string,
+  provider: Provider,
+  model: string,
+  apiKey: string,
+  temperature: number,
+  maxTokens: number,
+  systemPromptOverride?: string,
+  conversationHistory?: ConversationContext[],
+  providerOptions: LLMProviderOptions = {},
+  tools: DatabaseAgentTools = {}
+): AsyncGenerator<AgentStep> {
+  const tables = buildDatabaseTableMap(databaseTables);
+  const defaultTableName = resolveDefaultTableName(tables, selectedTableName);
+  if (!defaultTableName) {
+    yield {
+      turn: 1,
+      command: "Error",
+      args: {},
+      result: "No database tables are available for querying.",
+      tokens: { input: 0, output: 0 },
+      durationMs: 0,
+      isFinal: true,
+    };
+    return;
+  }
+
+  const history: { role: string; content: string }[] = [];
+  const prompt = systemPromptOverride || DEFAULT_DATABASE_AGENT_PROMPT;
+  const maxTurns = 8;
+  const inspectedTables = new Set<string>();
+  const lastIntermediateFilterByTable = new Map<string, { operation: string; params: Record<string, any> }>();
+  let turn = 0;
+
+  // Detect if this is an identifier lookup query
+  const identifierPattern = /^(?:give me|show me|details of|find|get|look for|search for|find details?\s+(?:of|for)|what.*(?:id|identifier|code)\s+)/i;
+  const isIdentifierQuery = identifierPattern.test(question.trim());
+  
+  const introParts = [
+    `Question: ${question}`,
+    `Database type: ${dbTypeLabel}`,
+    `Current selected table: "${defaultTableName}"`,
+    `Available tables: ${Object.keys(tables).length} (${Object.keys(tables).slice(0, 5).join(", ")}${Object.keys(tables).length > 5 ? ", ..." : ""})`,
+  ];
+
+  // Add guidance for identifier searches
+  if (isIdentifierQuery) {
+    introParts.push(`NOTE: This appears to be an identifier/lookup query. Start with GetSchema() to understand all available tables, then search the most relevant tables for this identifier.`);
+  }
+
+  if (conversationHistory && conversationHistory.length > 0) {
+    const recent = conversationHistory.slice(-3).map((entry, index) =>
+      `Q${index + 1}: ${entry.question}\nA${index + 1}: ${typeof entry.answer === "string" ? entry.answer : JSON.stringify(entry.answer).slice(0, 300)}`
+    );
+    introParts.push(`Recent conversation:\n${recent.join("\n")}`);
+  }
+
+  introParts.push("Respond with one JSON command only.");
+  let llmInput = introParts.join("\n\n");
+
+  while (turn < maxTurns) {
+    turn++;
+    const startTime = Date.now();
+    history.push({ role: "user", content: llmInput });
+
+    let llmResponse: LLMResponse;
+    try {
+      llmResponse = await callLLM(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
+    } catch (err: any) {
+      yield {
+        turn,
+        command: "Error",
+        args: {},
+        result: err.message,
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+        isFinal: true,
+      };
+      return;
+    }
+
+    history.push({ role: "assistant", content: llmResponse.content });
+
+    let parsed = parseCommand(llmResponse.content);
+    if (!parsed) {
+      yield {
+        turn,
+        command: "PARSE_ERROR",
+        args: {},
+        result: "Could not parse command, retrying...",
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = "Invalid response. Reply ONLY with a JSON command object.";
+      continue;
+    }
+
+    parsed = normalizeDatabaseCommand(parsed);
+
+    let { command, args = {} } = parsed;
+    args = args || {};
+    let rawArgs = args as Record<string, any>;
+    const defaultRawResult = llmResponse.content;
+    let repairedExplicitIdentifierLookup = false;
+    if (command === "QueryTable" || command === "ExecuteFinalQuery") {
+      const repaired = repairDatabaseLookupForExplicitQuestionColumn(question, rawArgs, tables, defaultTableName);
+      if (repaired.repaired) {
+        args = repaired.args;
+        rawArgs = args as Record<string, any>;
+        repairedExplicitIdentifierLookup = true;
+      }
+    }
+    const requestedTableName =
+      typeof rawArgs.table_name === "string" && rawArgs.table_name.trim()
+        ? rawArgs.table_name.trim()
+        : defaultTableName;
+    const answerPayload = rawArgs.value !== undefined ? rawArgs.value : (Object.keys(rawArgs).length > 0 ? rawArgs : defaultRawResult);
+    const normalizedAnswer =
+      typeof answerPayload === "string" && !answerPayload.trim()
+        ? defaultRawResult?.trim() || "No result returned from the model."
+        : answerPayload;
+
+    if (
+      (command === "QueryTable" || command === "ExecuteFinalQuery") &&
+      !inspectedTables.has(requestedTableName) &&
+      !repairedExplicitIdentifierLookup
+    ) {
+      command = "GetColumns";
+      args = { table_name: requestedTableName };
+      rawArgs = args as Record<string, any>;
+    }
+
+    let result: any;
+    let executedSql: string | undefined;
+    let normalizedArgs = args as Record<string, any>;
+
+    switch (command) {
+      case "Answer":
+      case "FinalAnswer":
+        result = normalizedAnswer;
+        break;
+      case "NarrativeAnswer":
+        result = {
+          narrative: rawArgs.text || rawArgs.narrative || defaultRawResult,
+          highlights: rawArgs.highlights || [],
+        };
+        break;
+      case "GetSchema":
+        result = buildDatabaseSchemaDescription(tables, question);
+        normalizedArgs = {};
+        break;
+      case "GetColumns":
+        normalizedArgs = { ...rawArgs, table_name: requestedTableName };
+        if ((!tables[requestedTableName] || tables[requestedTableName].columns.length === 0) && tools.loadTableSchema) {
+          const loadedTable = await tools.loadTableSchema(requestedTableName);
+          if (loadedTable) {
+            const existingTable = tables[requestedTableName];
+            tables[requestedTableName] = {
+              ...(existingTable || { name: requestedTableName, rows: [], columns: [] }),
+              ...loadedTable,
+              rowCount: loadedTable.rowCount ?? existingTable?.rowCount,
+            };
+          }
+        }
+        inspectedTables.add(requestedTableName);
+        result = buildDatabaseColumnsDescription(tables, requestedTableName);
+        break;
+      case "QueryTable":
+      case "ExecuteFinalQuery": {
+        const normalizedTableName = requestedTableName || defaultTableName;
+        const operation = typeof rawArgs.operation === "string" ? rawArgs.operation.trim() : "";
+        const previousFilter = lastIntermediateFilterByTable.get(normalizedTableName);
+        const operationParams = command === "ExecuteFinalQuery"
+          ? carryForwardDatabaseFilter(operation, rawArgs.params || {}, previousFilter)
+          : rawArgs.params || {};
+
+        normalizedArgs = { ...rawArgs, table_name: normalizedTableName, operation, params: operationParams };
+        if (tools.executeTableOperation && operation) {
+          const toolResult = await tools.executeTableOperation({
+            tableName: normalizedTableName,
+            operation,
+            params: operationParams,
+            isFinal: command === "ExecuteFinalQuery",
+          });
+          const unwrapped = unwrapDatabaseExecutionResult(toolResult);
+          result = unwrapped.rows;
+          executedSql = unwrapped.sql;
+        } else {
+          const executed = executeDatabaseTableCommand(normalizedArgs, tables, defaultTableName);
+          normalizedArgs = executed.args;
+          result = command === "QueryTable" && Array.isArray(executed.result)
+            ? executed.result.slice(0, 20)
+            : executed.result;
+        }
+        if (command === "QueryTable" && Array.isArray(result)) {
+          result = result.slice(0, 20);
+        }
+        if (command === "QueryTable") {
+          const carriableFilter = getCarriableDatabaseFilter(operation, operationParams);
+          if (carriableFilter) {
+            lastIntermediateFilterByTable.set(normalizedTableName, carriableFilter);
+          }
+        }
+        break;
+      }
+      default:
+        result = `ERROR: Unknown command '${command}'`;
+    }
+
+    const isFinal =
+      command === "ExecuteFinalQuery" ||
+      command === "Answer" ||
+      command === "FinalAnswer" ||
+      command === "NarrativeAnswer";
+
+    yield {
+      turn,
+      command,
+      args: normalizedArgs,
+      result,
+      sql: executedSql,
+      tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+      durationMs: Date.now() - startTime,
+      isFinal,
+    };
+
+    if (isFinal) return;
+    
+    // Smart guidance for empty identifier searches
+    let guidance = `Result: ${formatResultForModel(result)}`;
+    if (isIdentifierQuery && command === "ExecuteFinalQuery" && 
+        ((Array.isArray(result) && result.length === 0) || 
+         (typeof result === "object" && result.rowCount === 0))) {
+      guidance += `\n\nThe identifier was not found in ${requestedTableName}. Try searching in other available tables using GetSchema and ExecuteFinalQuery on likely tables.`;
+    }
+    
+    llmInput = guidance;
+  }
+
+  yield {
+    turn,
+    command: "MaxTurnsReached",
+    args: {},
+    result: "Agent reached maximum turns without a final answer.",
+    tokens: { input: 0, output: 0 },
+    durationMs: 0,
+    isFinal: true,
   };
 }
 
@@ -2091,6 +3008,8 @@ export async function* runLegacyAgent(
   const history: { role: string; content: string }[] = [];
   const prompt = systemPromptOverride || DEFAULT_AGENT_PROMPT;
   const maxTurns = 8;
+  const lastIntermediateRowsBySheet = new Map<string, Record<string, any>[]>();
+  const lastIntermediateFilterBySheet = new Map<string, { operation: string; params: Record<string, any> }>();
   let turn = 0;
 
   const introParts = [
@@ -2191,11 +3110,37 @@ export async function* runLegacyAgent(
       }
       case "QuerySheet":
       case "ExecuteFinalQuery": {
-        const executed = executeSheetCommand(rawArgs, sheets, defaultSheetName);
+        const requestedSheetName = typeof rawArgs.sheet_name === "string" && rawArgs.sheet_name.trim()
+          ? rawArgs.sheet_name.trim()
+          : defaultSheetName;
+        const operation = typeof rawArgs.operation === "string" ? rawArgs.operation.trim() : "";
+        const previousFilter = lastIntermediateFilterBySheet.get(requestedSheetName);
+        const operationParams = command === "ExecuteFinalQuery"
+          ? carryForwardSheetFilter(operation, rawArgs.params || {}, previousFilter)
+          : rawArgs.params || {};
+        const commandArgs = operation
+          ? { ...rawArgs, sheet_name: requestedSheetName, operation, params: operationParams }
+          : { ...rawArgs, sheet_name: requestedSheetName };
+        const previousRows = lastIntermediateRowsBySheet.get(requestedSheetName);
+        const sourceRows = command === "ExecuteFinalQuery" && operation
+          && canRunOnPreviousSheetRows(operation, operationParams, previousRows)
+          ? previousRows
+          : undefined;
+        const executed = executeSheetCommand(commandArgs, sheets, defaultSheetName, sourceRows);
         normalizedArgs = executed.args;
         result = command === "QuerySheet" && Array.isArray(executed.result)
           ? executed.result.slice(0, 20)
           : executed.result;
+        if (command === "QuerySheet") {
+          if (Array.isArray(executed.result)) {
+            lastIntermediateRowsBySheet.set(requestedSheetName, executed.result);
+          }
+
+          const carriableFilter = getCarriableSheetFilter(operation, operationParams);
+          if (carriableFilter) {
+            lastIntermediateFilterBySheet.set(requestedSheetName, carriableFilter);
+          }
+        }
         break;
       }
       default:

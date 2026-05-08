@@ -13,6 +13,7 @@ const notificationsRoutes = require("./routes/notifications");
 const planRoutes = require("./routes/plans");
 const llmRoutes = require("./routes/llm");
 const connectionsRoutes = require("./routes/connections");
+const dbQueryRoutes = require("./routes/db-query");
 
 
 const app = express();
@@ -52,6 +53,7 @@ app.use("/api/audit", auditRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/llm", llmRoutes);
 app.use("/api/connections", connectionsRoutes);
+app.use("/api/db-query", dbQueryRoutes);
 
 
 app.get("/api/health", (_req, res) =>

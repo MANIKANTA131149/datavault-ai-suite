@@ -2,6 +2,7 @@ const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
+const { testLiveConnection } = require("../lib/live-db");
 
 const router = express.Router();
 
@@ -263,8 +264,6 @@ router.post("/:id/test", authMiddleware, async (req, res) => {
 
     if (!conn) return res.status(404).json({ error: "Connection not found" });
 
-    // In a production system, this would actually attempt to connect
-    // For now, we validate the config fields and simulate a test
     const typeInfo = DB_TYPES[conn.dbType];
     if (!typeInfo) {
       await db.collection("connections").updateOne(
@@ -291,7 +290,8 @@ router.post("/:id/test", authMiddleware, async (req, res) => {
       });
     }
 
-    // Simulate a successful connection test
+    await testLiveConnection(conn);
+
     await db.collection("connections").updateOne(
       { _id: new ObjectId(req.params.id) },
       { $set: { status: "connected", lastTestedAt: new Date().toISOString() } }
@@ -300,7 +300,12 @@ router.post("/:id/test", authMiddleware, async (req, res) => {
     res.json({ success: true, message: `Successfully connected to ${typeInfo.label}` });
   } catch (err) {
     console.error("POST /connections/:id/test error:", err);
-    res.status(500).json({ error: "Connection test failed" });
+    const db = await getDb();
+    await db.collection("connections").updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status: "error", lastTestedAt: new Date().toISOString() } }
+    );
+    res.status(500).json({ error: err.message || "Connection test failed" });
   }
 });
 
