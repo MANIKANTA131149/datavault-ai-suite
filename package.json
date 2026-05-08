@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "vite",
     "server": "node server/index.js",
+    "server:install": "npm --prefix server install",
+    "postinstall": "npm --prefix server install --omit=dev",
     "dev:full": "concurrently -n frontend,backend -c cyan,yellow \"npm run dev\" \"npm run server\"",
     "build": "npm ci --include=dev && vite build",
     "build:local": "vite build",

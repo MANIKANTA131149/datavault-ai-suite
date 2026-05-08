@@ -167,19 +167,20 @@ async function loadModule(name) {
   try {
     return require(name);
   } catch (error) {
+    const installHint = `Missing package "${name}". Run "npm --prefix server install" or "cd server && npm install", then restart the backend.`;
     if (error.code === "ERR_REQUIRE_ESM") {
       try {
         return await import(name);
       } catch (importError) {
         if (importError.code === "ERR_MODULE_NOT_FOUND") {
-          throw new Error(`Missing package "${name}". Install it in server/ to enable this database type.`);
+          throw new Error(installHint);
         }
         throw importError;
       }
     }
 
     if (isTopLevelMissingModule(error, name)) {
-      throw new Error(`Missing package "${name}". Install it in server/ to enable this database type.`);
+      throw new Error(installHint);
     }
 
     throw error;
