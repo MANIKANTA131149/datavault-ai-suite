@@ -21,6 +21,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { useNotificationsStore } from "@/stores/notifications-store";
+import { useConnectionStore } from "@/stores/connection-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/ProviderLogo";
@@ -28,6 +29,7 @@ import { ProviderLogo } from "@/components/ProviderLogo";
 const BREADCRUMBS: Record<string, string> = {
   "/app/dashboard": "Dashboard",
   "/app/datasets": "Datasets",
+  "/app/connections": "Connections",
   "/app/query": "Query",
   "/app/history": "History",
   "/app/insights": "Insights",
@@ -46,6 +48,7 @@ export default function AppLayout() {
   const { fetchInsights } = useInsightsStore();
   const { fetchPlan } = usePlanStore();
   const { fetchNotifications } = useNotificationsStore();
+  const { fetchConnections } = useConnectionStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -55,6 +58,7 @@ export default function AppLayout() {
       fetchSettings();
       fetchInsights();
       fetchNotifications();
+      fetchConnections();
       fetchPlan();
       hydrateRole();
     } else {
