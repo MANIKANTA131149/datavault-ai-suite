@@ -50,8 +50,10 @@ const COMMAND_COLORS: Record<string, string> = {
   GetSchema: "bg-primary/10 text-primary",
   GetSheetDescription: "bg-primary/10 text-primary",
   GetColumns: "bg-accent/10 text-accent",
+  QuerySQL: "bg-warning/10 text-warning",
   QueryTable: "bg-warning/10 text-warning",
   QuerySheet: "bg-warning/10 text-warning",
+  ExecuteSQL: "bg-success/10 text-success",
   ExecuteFinalQuery: "bg-success/10 text-success",
   FinalAnswer: "bg-success/10 text-success",
   NarrativeAnswer: "bg-purple-500/10 text-purple-400",
@@ -419,6 +421,8 @@ function describeAgentStep(step: AgentStep) {
       return "Checked which sheets are available in the workbook.";
     case "GetColumns":
       return `Inspected the schema${targetName ? ` for ${targetLabel} "${targetName}"` : ""}.`;
+    case "QuerySQL":
+      return "Ran an intermediate read-only SQL query.";
     case "QueryTable":
       if (step.sql) {
         return `Ran an intermediate SQL query${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
@@ -426,6 +430,8 @@ function describeAgentStep(step: AgentStep) {
       return `Ran an intermediate ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
     case "QuerySheet":
       return `Ran an intermediate ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
+    case "ExecuteSQL":
+      return "Ran the final read-only SQL query.";
     case "ExecuteFinalQuery":
       if (step.sql) {
         return `Ran the final SQL query${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
@@ -451,7 +457,7 @@ function getFinalStep(steps?: AgentStep[]) {
   if (!steps || steps.length === 0) return null;
   for (let i = steps.length - 1; i >= 0; i--) {
     const step = steps[i];
-    if (step.isFinal || step.command === "ExecuteFinalQuery" || step.command === "Answer" ||
+    if (step.isFinal || step.command === "ExecuteSQL" || step.command === "ExecuteFinalQuery" || step.command === "Answer" ||
       step.command === "FinalAnswer" || step.command === "NarrativeAnswer") {
       return step;
     }
@@ -2612,6 +2618,10 @@ export default function QueryPage() {
         providerOptions,
         {
           loadTableSchema: (tableName) => loadDbTableSchema(selectedConnectionId, tableName),
+          executeSql: async ({ sql }) => {
+            const response = await executeDatabaseQuery(selectedConnectionId, { sql });
+            return response;
+          },
           executeTableOperation: async ({ tableName, operation, params }) => {
             const response = await executeDatabaseQuery(selectedConnectionId, {
               operation,
