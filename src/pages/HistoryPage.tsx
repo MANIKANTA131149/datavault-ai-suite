@@ -1,18 +1,42 @@
-import { Fragment, useEffect, useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Download, RotateCcw, ChevronLeft, ChevronRight, MessageSquare, Copy, Star, GitCompare, CheckSquare, Square, FileText } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Bot,
+  CalendarDays,
+  CheckSquare,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Clock3,
+  Copy,
+  Database,
+  Download,
+  FileText,
+  Filter,
+  GitCompare,
+  MessageSquare,
+  RotateCcw,
+  Search,
+  Square,
+  Star,
+  TerminalSquare,
+  Zap,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useHistoryStore, type HistoryEntry } from "@/stores/history-store";
+import { useHistoryStore, type HistoryEntry, type HistoryStep } from "@/stores/history-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { PROVIDER_LABELS } from "@/stores/llm-store";
-import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
 
 function stringifyResult(value: unknown) {
+  if (value === null || value === undefined) return "";
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
@@ -36,40 +60,353 @@ function getDateGroup(date: string) {
   return "Older";
 }
 
-function ExpandedRow({ entry }: { entry: HistoryEntry }) {
+function formatDuration(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
+}
+
+function getStoredAnswer(entry: HistoryEntry) {
+  return entry.finalResult || "No saved answer is available for this history entry yet. Re-run it with Replay to store the answer and the full agent trace.";
+}
+
+function TinyStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-background/55 px-3 py-2 backdrop-blur-sm">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-medium text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function TraceSection({
+  title,
+  value,
+  copyLabel,
+}: {
+  title: string;
+  value: string | null;
+  copyLabel: string;
+}) {
+  if (!value) return null;
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-card/75 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(value);
+            toast.success(`${copyLabel} copied`);
+          }}
+          className="flex items-center gap-1 text-xs text-primary hover:underline"
+        >
+          <Copy size={10} /> Copy
+        </button>
+      </div>
+      <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+function HistoryTraceStepCard({ step, index }: { step: HistoryStep; index: number }) {
+  return (
+    <div className="rounded-[22px] border border-border/70 bg-background/65 p-4 shadow-[0_18px_34px_-30px_hsl(var(--foreground)/0.72)]">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="border-border text-xs font-mono">
+              Step {index + 1}
+            </Badge>
+            <Badge className="border-0 bg-primary/10 text-primary">
+              {step.command}
+            </Badge>
+            {step.isFinal && (
+              <Badge className="border-0 bg-success/10 text-success">Final</Badge>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Saved execution trace for turn {step.turn || index + 1}.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:w-auto">
+          <TinyStat label="Duration" value={formatDuration(step.durationMs)} />
+          <TinyStat label="Input" value={step.tokens.input.toLocaleString()} />
+          <TinyStat label="Output" value={step.tokens.output.toLocaleString()} />
+          <TinyStat label="Tokens" value={(step.tokens.input + step.tokens.output).toLocaleString()} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        <TraceSection title="Arguments" value={step.argsText} copyLabel="Arguments" />
+        <TraceSection title="SQL" value={step.sql} copyLabel="SQL" />
+      </div>
+
+      <div className="mt-3">
+        <TraceSection title="Result" value={step.resultText} copyLabel="Step result" />
+      </div>
+    </div>
+  );
+}
+
+function ExpandedEntry({ entry }: { entry: HistoryEntry }) {
   const copyResult = async () => {
-    await navigator.clipboard.writeText(stringifyResult(entry.finalResult) || "");
+    if (!entry.finalResult) {
+      toast.info("This older history entry does not have a saved answer yet. Re-run it to capture one.");
+      return;
+    }
+
+    await navigator.clipboard.writeText(stringifyResult(entry.finalResult));
     toast.success("Result copied");
   };
 
+  const copyTrace = async () => {
+    if (!entry.steps.length) {
+      toast.info("No saved trace is available for this entry yet. Re-run it to capture one.");
+      return;
+    }
+
+    await navigator.clipboard.writeText(JSON.stringify(entry.steps, null, 2));
+    toast.success("Agent trace copied");
+  };
+
   return (
-    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-      <div className="px-4 py-3 bg-card/50 border-t border-border space-y-3">
-        <div>
-          <p className="text-xs text-muted-foreground mb-1">Question</p>
-          <p className="text-sm text-foreground">{entry.query}</p>
-        </div>
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-muted-foreground">Answer</p>
-            <button onClick={copyResult} className="text-xs text-primary hover:underline flex items-center gap-1">
-              <Copy size={10} /> Copy result
-            </button>
+    <motion.div
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: "auto", opacity: 1 }}
+      exit={{ height: 0, opacity: 0 }}
+      className="overflow-hidden"
+    >
+      <div className="mt-4 space-y-4 border-t border-border/70 pt-4">
+        <div className="grid gap-4 xl:grid-cols-[1.05fr_1fr]">
+          <div className="rounded-[24px] border border-border/70 bg-background/55 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Question</p>
+            <p className="mt-2 text-base font-medium text-foreground">{entry.query}</p>
           </div>
-          <pre className="text-xs font-mono text-foreground bg-card rounded p-2 border border-border max-h-40 overflow-auto scrollbar-thin whitespace-pre-wrap">
-            {entry.finalResult === null ? "Result details are available for queries run in this session." : stringifyResult(entry.finalResult)}
-          </pre>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground mb-1">Steps ({entry.steps.length})</p>
-          <div className="flex flex-wrap gap-1">
-            {entry.steps.map((step, i) => (
-              <Badge key={i} variant="outline" className="border-border text-xs font-mono">{step.command} ({step.durationMs}ms)</Badge>
-            ))}
+
+          <div className="rounded-[24px] border border-border/70 bg-background/55 p-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Answer</p>
+              <button onClick={copyResult} className="flex items-center gap-1 text-xs text-primary hover:underline">
+                <Copy size={10} /> Copy result
+              </button>
+            </div>
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-border bg-card/80 p-3 text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
+              {getStoredAnswer(entry)}
+            </pre>
           </div>
+        </div>
+
+        <div className="rounded-[24px] border border-border/70 bg-background/55 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Agent Trace</p>
+              <p className="mt-1 text-sm text-foreground">
+                {entry.steps.length > 0
+                  ? `Showing the saved step-by-step execution flow used for this answer.`
+                  : "This entry was saved before full trace persistence was added. Replay it once to capture the richer trace."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="border-border bg-card text-xs text-foreground">
+                {entry.steps.length} step{entry.steps.length === 1 ? "" : "s"}
+              </Badge>
+              <Button variant="outline" size="sm" className="border-border" onClick={copyTrace}>
+                <Copy size={12} className="mr-1" /> Copy trace
+              </Button>
+            </div>
+          </div>
+
+          {entry.steps.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-border/70 bg-card/45 px-4 py-5 text-sm text-muted-foreground">
+              No saved step timeline is available for this entry yet. Replay this query once and the next saved version will include the fuller agent trace.
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {entry.steps.map((step, index) => (
+                <HistoryTraceStepCard key={`${entry.id}-step-${index}-${step.command}`} step={step} index={index} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function ComparePanel({ entries, compareIds }: { entries: HistoryEntry[]; compareIds: string[] }) {
+  if (compareIds.length === 0) return null;
+
+  return (
+    <div className="toolbar-panel">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+        <GitCompare size={14} /> Compare queries
+      </div>
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        {compareIds.map((id) => {
+          const entry = entries.find((item) => item.id === id);
+          if (!entry) return null;
+
+          return (
+            <div key={id} className="rounded-[22px] border border-border/70 bg-card/80 p-4">
+              <p className="line-clamp-2 text-sm font-medium text-foreground">{entry.query}</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {entry.datasetName} - {PROVIDER_LABELS[entry.provider]}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <TinyStat label="Status" value={entry.status} />
+                <TinyStat label="Duration" value={formatDuration(entry.durationMs)} />
+                <TinyStat label="Tokens" value={entry.totalTokens.toLocaleString()} />
+                <TinyStat label="Trace" value={String(entry.steps.length)} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function HistoryEntryCard({
+  entry,
+  expanded,
+  isFavorite,
+  isCompared,
+  onToggleExpand,
+  onToggleFavorite,
+  onToggleCompare,
+  onCopyQuestion,
+  onCopyEntry,
+  onReplay,
+}: {
+  entry: HistoryEntry;
+  expanded: boolean;
+  isFavorite: boolean;
+  isCompared: boolean;
+  onToggleExpand: () => void;
+  onToggleFavorite: () => void;
+  onToggleCompare: () => void;
+  onCopyQuestion: () => void;
+  onCopyEntry: () => void;
+  onReplay: () => void;
+}) {
+  const statusClass = entry.status === "success"
+    ? "bg-success/10 text-success"
+    : "bg-destructive/10 text-destructive";
+
+  const hasSavedTrace = entry.steps.length > 0;
+
+  return (
+    <Card className="overflow-hidden rounded-[28px] border-border/70 bg-card/80 p-4 shadow-[0_24px_48px_-34px_hsl(var(--foreground)/0.78)] backdrop-blur-sm sm:p-5">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className={`border-0 text-xs ${statusClass}`}>{entry.status}</Badge>
+              <Badge variant="outline" className="border-border text-xs">
+                {hasSavedTrace ? "Trace saved" : "Replay to save trace"}
+              </Badge>
+              {isFavorite && <Badge className="border-0 bg-warning/10 text-warning">Favorite</Badge>}
+            </div>
+
+            <h3 className="mt-3 break-words text-lg font-semibold leading-7 text-foreground">
+              {entry.query}
+            </h3>
+
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/55 px-3 py-1 text-muted-foreground">
+                <Database size={12} /> {entry.datasetName || "Unknown dataset"}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/55 px-3 py-1 text-muted-foreground">
+                <Bot size={12} /> {PROVIDER_LABELS[entry.provider]} - {entry.model}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2">
+            <TinyStat label="Turns" value={String(entry.turns)} />
+            <TinyStat label="Tokens" value={entry.totalTokens.toLocaleString()} />
+            <TinyStat label="Duration" value={formatDuration(entry.durationMs)} />
+            <TinyStat label="Trace" value={`${entry.steps.length} step${entry.steps.length === 1 ? "" : "s"}`} />
+          </div>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[auto_auto_auto_auto_auto_1fr_auto] xl:items-center">
+          <div className="inline-flex items-center gap-2 rounded-2xl border border-border/60 bg-background/55 px-3 py-2 text-xs text-muted-foreground">
+            <CalendarDays size={12} />
+            {new Date(entry.date).toLocaleDateString()}
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-2xl border border-border/60 bg-background/55 px-3 py-2 text-xs text-muted-foreground">
+            <Clock3 size={12} />
+            {formatDuration(entry.durationMs)}
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-2xl border border-border/60 bg-background/55 px-3 py-2 text-xs text-muted-foreground">
+            <Zap size={12} />
+            {entry.totalTokens.toLocaleString()} tokens
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-2xl border border-border/60 bg-background/55 px-3 py-2 text-xs text-muted-foreground">
+            <TerminalSquare size={12} />
+            {entry.steps.length > 0 ? "Detailed trace saved" : "Older saved entry"}
+          </div>
+
+          <div className="flex flex-wrap gap-1 sm:col-span-2 xl:col-span-2 xl:justify-end">
+            <button
+              type="button"
+              aria-label="Favorite query"
+              title="Favorite query"
+              onClick={onToggleFavorite}
+              className={`rounded-xl p-2 transition-colors hover:bg-background-secondary ${isFavorite ? "text-warning" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              <Star size={14} fill={isFavorite ? "currentColor" : "none"} />
+            </button>
+            <button
+              type="button"
+              aria-label="Compare query"
+              title="Compare query"
+              onClick={onToggleCompare}
+              className={`rounded-xl p-2 transition-colors hover:bg-background-secondary ${isCompared ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {isCompared ? <CheckSquare size={14} /> : <Square size={14} />}
+            </button>
+            <button
+              type="button"
+              aria-label="Copy question"
+              title="Copy question"
+              onClick={onCopyQuestion}
+              className="rounded-xl p-2 text-muted-foreground transition-colors hover:bg-background-secondary hover:text-foreground"
+            >
+              <Copy size={14} />
+            </button>
+            <button
+              type="button"
+              aria-label="Copy full entry"
+              title="Copy full entry"
+              onClick={onCopyEntry}
+              className="rounded-xl p-2 text-muted-foreground transition-colors hover:bg-background-secondary hover:text-foreground"
+            >
+              <FileText size={14} />
+            </button>
+            <Button variant="outline" size="sm" className="border-border" onClick={onReplay}>
+              <RotateCcw size={12} className="mr-1" /> Replay
+            </Button>
+          </div>
+
+          <Button variant={expanded ? "default" : "outline"} className="w-full xl:w-auto" onClick={onToggleExpand}>
+            {expanded ? <ChevronUp size={14} className="mr-2" /> : <ChevronDown size={14} className="mr-2" />}
+            {expanded ? "Hide details" : "Show details"}
+          </Button>
+        </div>
+
+        <AnimatePresence initial={false}>
+          {expanded && <ExpandedEntry entry={entry} />}
+        </AnimatePresence>
+      </div>
+    </Card>
   );
 }
 
@@ -78,6 +415,7 @@ export default function HistoryPage() {
   const { checkExport } = usePlanStore();
   const { datasets } = useDatasetStore();
   const navigate = useNavigate();
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [providerFilter, setProviderFilter] = useState<string>("all");
@@ -103,14 +441,14 @@ export default function HistoryPage() {
   }, [entries]);
 
   const filtered = useMemo(() => {
-    return entries.filter((e) => {
+    return entries.filter((entry) => {
       const q = search.toLowerCase();
-      if (q && ![e.query, e.datasetName, e.model].some((value) => value?.toLowerCase().includes(q))) return false;
-      if (statusFilter !== "all" && e.status !== statusFilter) return false;
-      if (providerFilter !== "all" && e.provider !== providerFilter) return false;
-      if (datasetFilter !== "all" && e.datasetName !== datasetFilter) return false;
-      if (favoritesOnly && !favoriteIds.includes(e.id)) return false;
-      if (!isWithinDateFilter(e.date, dateFilter)) return false;
+      if (q && ![entry.query, entry.datasetName, entry.model].some((value) => value?.toLowerCase().includes(q))) return false;
+      if (statusFilter !== "all" && entry.status !== statusFilter) return false;
+      if (providerFilter !== "all" && entry.provider !== providerFilter) return false;
+      if (datasetFilter !== "all" && entry.datasetName !== datasetFilter) return false;
+      if (favoritesOnly && !favoriteIds.includes(entry.id)) return false;
+      if (!isWithinDateFilter(entry.date, dateFilter)) return false;
       return true;
     });
   }, [entries, search, statusFilter, providerFilter, datasetFilter, dateFilter, favoritesOnly, favoriteIds]);
@@ -157,6 +495,8 @@ export default function HistoryPage() {
       durationMs: entry.durationMs,
       tokens: entry.totalTokens,
       date: entry.date,
+      answer: entry.finalResult,
+      steps: entry.steps,
     }, null, 2));
     toast.success("History entry copied");
   };
@@ -180,11 +520,26 @@ export default function HistoryPage() {
       toast.error(err.message || "History export requires Enterprise plan");
       return;
     }
+
     const headers = ["Query", "Dataset", "Provider", "Model", "Turns", "Tokens", "Duration (ms)", "Status", "Date"];
-    const rows = entries.map((e) => [e.query, e.datasetName, e.provider, e.model, e.turns, e.totalTokens, e.durationMs, e.status, e.date]);
-    const csv = [headers.join(","), ...rows.map((r) => r.map((v) => JSON.stringify(v)).join(","))].join("\n");
+    const rows = entries.map((entry) => [
+      entry.query,
+      entry.datasetName,
+      entry.provider,
+      entry.model,
+      entry.turns,
+      entry.totalTokens,
+      entry.durationMs,
+      entry.status,
+      entry.date,
+    ]);
+    const csv = [headers.join(","), ...rows.map((row) => row.map((value) => JSON.stringify(value)).join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "query-history.csv"; a.click();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "query-history.csv";
+    link.click();
     toast.success("History exported");
   };
 
@@ -196,8 +551,7 @@ export default function HistoryPage() {
             <p className="page-kicker">Query archive</p>
             <h1 className="page-title">Review past questions and results</h1>
             <p className="page-copy">
-              Search, compare, replay, and export your query history in a layout that stays readable across smaller
-              phones and wider analytical workstations.
+              Search, compare, replay, and inspect the saved execution trace for past queries in a layout that fits smaller laptops as well as wider workstations.
             </p>
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
@@ -217,215 +571,169 @@ export default function HistoryPage() {
       </div>
 
       <div className="toolbar-panel">
-        <div className="flex gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search queries, datasets, or models..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
+        <div className="flex flex-wrap gap-3">
+          <div className="relative min-w-[220px] flex-1">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search queries, datasets, or models..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border-border bg-background-secondary pl-9"
+            />
+          </div>
+
+          <Select value={datasetFilter} onValueChange={setDatasetFilter}>
+            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[180px]">
+              <Filter size={12} className="mr-1" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value="all">All datasets</SelectItem>
+              {datasetNames.map((name) => (
+                <SelectItem key={name} value={name}>{name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={dateFilter} onValueChange={setDateFilter}>
+            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[150px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value="all">All dates</SelectItem>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="week">Last 7 days</SelectItem>
+              <SelectItem value="month">Last 30 days</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value="all">All status</SelectItem>
+              <SelectItem value="success">Success</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={providerFilter} onValueChange={setProviderFilter}>
+            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[170px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="border-border bg-popover">
+              <SelectItem value="all">All providers</SelectItem>
+              {Object.entries(PROVIDER_LABELS).map(([key, value]) => (
+                <SelectItem key={key} value={key}>{value}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            type="button"
+            variant={favoritesOnly ? "default" : "outline"}
+            className="w-full sm:w-auto"
+            onClick={() => setFavoritesOnly((current) => !current)}
+          >
+            <Star size={14} className="mr-2" />
+            {favoritesOnly ? "Favorites only" : "Show favorites"}
+          </Button>
         </div>
-        <Select value={datasetFilter} onValueChange={setDatasetFilter}>
-          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[170px]">
-            <Filter size={12} className="mr-1" /><SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All datasets</SelectItem>
-            {datasetNames.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={dateFilter} onValueChange={setDateFilter}>
-          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[140px]"><SelectValue /></SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All dates</SelectItem>
-            <SelectItem value="today">Today</SelectItem>
-            <SelectItem value="week">Last 7 days</SelectItem>
-            <SelectItem value="month">Last 30 days</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]"><SelectValue /></SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All status</SelectItem>
-            <SelectItem value="success">Success</SelectItem>
-            <SelectItem value="error">Error</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={providerFilter} onValueChange={setProviderFilter}>
-          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[150px]"><SelectValue /></SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All providers</SelectItem>
-            {Object.entries(PROVIDER_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
       </div>
 
       {filtered.length > 0 && (
         <div className="toolbar-panel">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-muted-foreground">
-            Showing {pageStart + 1}-{Math.min(pageStart + pageEntries.length, filtered.length)} of {filtered.length} quer{filtered.length === 1 ? "y" : "ies"}
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
-              <SelectTrigger className="h-8 w-[110px] bg-card border-border text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                {[10, 25, 50, 100].map((size) => (
-                  <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 border-border"
-                disabled={safePage <= 1}
-                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-              >
-                <ChevronLeft size={13} />
-              </Button>
-              <span className="min-w-[80px] text-center text-xs text-muted-foreground">
-                Page {safePage} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 border-border"
-                disabled={safePage >= totalPages}
-                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-              >
-                <ChevronRight size={13} />
-              </Button>
+            <p className="text-xs text-muted-foreground">
+              Showing {pageStart + 1}-{Math.min(pageStart + pageEntries.length, filtered.length)} of {filtered.length} quer{filtered.length === 1 ? "y" : "ies"}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
+                <SelectTrigger className="h-8 w-[110px] border-border bg-card text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-border bg-popover">
+                  {[10, 25, 50, 100].map((size) => (
+                    <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-border"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                >
+                  <ChevronLeft size={13} />
+                </Button>
+                <span className="min-w-[80px] text-center text-xs text-muted-foreground">
+                  Page {safePage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-border"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                >
+                  <ChevronRight size={13} />
+                </Button>
+              </div>
             </div>
           </div>
         </div>
-        </div>
       )}
 
-      {compareIds.length > 0 && (
-        <div className="toolbar-panel">
-          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
-            <GitCompare size={14} /> Compare queries
-          </div>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {compareIds.map((id) => {
-              const entry = entries.find((item) => item.id === id);
-              if (!entry) return null;
-              return (
-                <div key={id} className="rounded-md border border-border bg-card p-3 text-xs">
-                  <p className="truncate font-medium text-foreground">{entry.query}</p>
-                  <p className="mt-1 text-muted-foreground">{entry.datasetName} · {PROVIDER_LABELS[entry.provider]}</p>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    <Badge variant="outline" className="justify-center border-border">{entry.durationMs}ms</Badge>
-                    <Badge variant="outline" className="justify-center border-border">{entry.totalTokens.toLocaleString()} tokens</Badge>
-                    <Badge className={`justify-center border-0 ${entry.status === "success" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>{entry.status}</Badge>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <ComparePanel entries={entries} compareIds={compareIds} />
 
       {filtered.length === 0 ? (
         <div className="empty-panel">
-          <MessageSquare size={48} className="mx-auto text-muted-foreground/30 mb-4" />
+          <MessageSquare size={48} className="mx-auto mb-4 text-muted-foreground/30" />
           <p className="text-muted-foreground">{entries.length === 0 ? "No queries yet" : "No matching queries"}</p>
           {entries.length === 0 && (
-            <Button variant="link" className="text-primary mt-1" onClick={() => navigate("/app/query")}>Go to Query to get started</Button>
+            <Button variant="link" className="mt-1 text-primary" onClick={() => navigate("/app/query")}>
+              Go to Query to get started
+            </Button>
           )}
         </div>
       ) : (
-        <div className="page-table-wrap">
-          <table className="min-w-[920px] w-full text-sm">
-            <thead className="bg-background-secondary">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Query</th>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Dataset</th>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Provider</th>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Turns</th>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Tokens</th>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Status</th>
-                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Date</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(grouped).map(([group, groupEntries]) => (
-                <Fragment key={group}>
-                  <tr key={group} className="border-t border-border bg-background-secondary/70">
-                    <td colSpan={8} className="px-4 py-2 text-xs font-medium text-muted-foreground">{group}</td>
-                  </tr>
-                  {groupEntries.map((entry) => (
-                    <motion.tr key={entry.id} className="border-t border-border hover:bg-card/50 cursor-pointer" onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}>
-                    <td className="px-4 py-3 max-w-[250px] truncate text-foreground">{entry.query}</td>
-                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{entry.datasetName}</td>
-                    <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="text-xs text-muted-foreground">{PROVIDER_LABELS[entry.provider]} · {entry.model}</span>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{entry.turns}</td>
-                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{entry.totalTokens.toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      <Badge className={`border-0 text-xs ${entry.status === "success" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>{entry.status}</Badge>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell">{new Date(entry.date).toLocaleDateString()}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          aria-label="Favorite query"
-                          title="Favorite query"
-                          onClick={(e) => { e.stopPropagation(); toggleFavorite(entry.id); }}
-                          className={`p-1 rounded hover:bg-background-secondary ${favoriteIds.includes(entry.id) ? "text-warning" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          <Star size={13} fill={favoriteIds.includes(entry.id) ? "currentColor" : "none"} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Compare query"
-                          title="Compare query"
-                          onClick={(e) => { e.stopPropagation(); toggleCompare(entry.id); }}
-                          className={`p-1 rounded hover:bg-background-secondary ${compareIds.includes(entry.id) ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          {compareIds.includes(entry.id) ? <CheckSquare size={13} /> : <Square size={13} />}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Copy question"
-                          title="Copy question"
-                          onClick={(e) => { e.stopPropagation(); copyQuestion(entry.query); }}
-                          className="p-1 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
-                        >
-                          <Copy size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Copy entry"
-                          title="Copy full entry"
-                          onClick={(e) => { e.stopPropagation(); copyEntry(entry); }}
-                          className="p-1 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
-                        >
-                          <FileText size={13} />
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); replayQuery(entry); }} className="text-xs text-primary hover:underline flex items-center gap-1">
-                          <RotateCcw size={10} /> Replay
-                        </button>
-                      </div>
-                    </td>
-                    </motion.tr>
-                  ))}
-                  {groupEntries.map((entry) => (
-                    <AnimatePresence key={`${entry.id}-expanded`}>
-                      {expandedId === entry.id && (
-                        <tr><td colSpan={8}><ExpandedRow entry={entry} /></td></tr>
-                      )}
-                    </AnimatePresence>
-                  ))}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-6">
+          {Object.entries(grouped).map(([group, groupEntries]) => (
+            <section key={group} className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{group}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {groupEntries.length} quer{groupEntries.length === 1 ? "y" : "ies"} on this page
+                  </p>
+                </div>
+                <Badge variant="outline" className="border-border bg-card text-xs text-foreground">
+                  {groupEntries.length}
+                </Badge>
+              </div>
+
+              <div className="space-y-3">
+                {groupEntries.map((entry) => (
+                  <HistoryEntryCard
+                    key={entry.id}
+                    entry={entry}
+                    expanded={expandedId === entry.id}
+                    isFavorite={favoriteIds.includes(entry.id)}
+                    isCompared={compareIds.includes(entry.id)}
+                    onToggleExpand={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+                    onToggleFavorite={() => toggleFavorite(entry.id)}
+                    onToggleCompare={() => toggleCompare(entry.id)}
+                    onCopyQuestion={() => copyQuestion(entry.query)}
+                    onCopyEntry={() => copyEntry(entry)}
+                    onReplay={() => replayQuery(entry)}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       )}
     </div>
