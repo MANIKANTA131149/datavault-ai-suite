@@ -78,6 +78,15 @@ function defaultPlanFields(actorId = "system") {
   };
 }
 
+function buildCurrentMonthlyWindow(now = new Date()) {
+  const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return {
+    start: periodStart.toISOString(),
+    end: periodEnd.toISOString(),
+  };
+}
+
 function organizationPatchForUser(user, fallbackOwnerId) {
   const selfId = user?._id?.toString ? user._id.toString() : fallbackOwnerId;
   const organizationId = user?.organizationId || selfId;
@@ -87,13 +96,28 @@ function organizationPatchForUser(user, fallbackOwnerId) {
   };
 }
 
-function getMonthlyWindow(user = {}) {
-  const now = new Date();
-  const fallbackStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const fallbackEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const start = user.currentPeriodStart || fallbackStart.toISOString();
-  const end = user.currentPeriodEnd || fallbackEnd.toISOString();
-  return { start, end };
+function getMonthlyWindow(user = {}, now = new Date()) {
+  const fallbackWindow = buildCurrentMonthlyWindow(now);
+  const startDate = user.currentPeriodStart ? new Date(user.currentPeriodStart) : null;
+  const endDate = user.currentPeriodEnd ? new Date(user.currentPeriodEnd) : null;
+
+  const hasValidWindow = Boolean(
+    startDate &&
+    endDate &&
+    !Number.isNaN(startDate.getTime()) &&
+    !Number.isNaN(endDate.getTime()) &&
+    startDate < endDate
+  );
+
+  if (!hasValidWindow) return fallbackWindow;
+
+  // Roll the stored period forward once it no longer covers "now".
+  if (now < startDate || now >= endDate) return fallbackWindow;
+
+  return {
+    start: startDate.toISOString(),
+    end: endDate.toISOString(),
+  };
 }
 
 function limitValue(plan, metric) {
@@ -153,27 +177,48 @@ async function ensureUserPlan(db, userId, actorId = "system") {
 
   const normalized = normalizePlanTier(user.planTier);
   const orgPatch = organizationPatchForUser(user, userId);
-  const needsDefaults =
-    !user.planTier ||
-    user.planTier !== normalized ||
-    !user.planStatus ||
-    !user.planSource ||
-    !user.currentPeriodStart ||
-    !user.currentPeriodEnd ||
-    !user.organizationId ||
-    !user.organizationOwnerId;
+  const monthlyWindow = getMonthlyWindow(user);
+  const needsWindowRefresh =
+    user.currentPeriodStart !== monthlyWindow.start ||
+    user.currentPeriodEnd !== monthlyWindow.end;
 
-  if (!needsDefaults) return { ...user, planTier: normalized, ...orgPatch };
+  const patch = {};
 
-  const patch = {
-    ...defaultPlanFields(actorId),
-    planTier: normalized,
-    planAssignedBy: user.planAssignedBy || actorId,
-    planAssignedAt: user.planAssignedAt || new Date().toISOString(),
-    ...orgPatch,
-  };
+  if (!user.planTier || user.planTier !== normalized) patch.planTier = normalized;
+  if (!user.planStatus) patch.planStatus = "active";
+  if (!user.planSource) patch.planSource = "manual";
+  if (!user.planAssignedBy) patch.planAssignedBy = actorId;
+  if (!user.planAssignedAt) patch.planAssignedAt = new Date().toISOString();
+  if (!user.organizationId || !user.organizationOwnerId) {
+    patch.organizationId = orgPatch.organizationId;
+    patch.organizationOwnerId = orgPatch.organizationOwnerId;
+  }
+  if (needsWindowRefresh) {
+    patch.currentPeriodStart = monthlyWindow.start;
+    patch.currentPeriodEnd = monthlyWindow.end;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return {
+      ...user,
+      planTier: normalized,
+      organizationId: orgPatch.organizationId,
+      organizationOwnerId: orgPatch.organizationOwnerId,
+      currentPeriodStart: monthlyWindow.start,
+      currentPeriodEnd: monthlyWindow.end,
+    };
+  }
+
   await db.collection("users").updateOne({ _id: user._id }, { $set: patch });
-  return { ...user, ...patch };
+  return {
+    ...user,
+    ...patch,
+    planTier: patch.planTier || normalized,
+    organizationId: patch.organizationId || orgPatch.organizationId,
+    organizationOwnerId: patch.organizationOwnerId || orgPatch.organizationOwnerId,
+    currentPeriodStart: patch.currentPeriodStart || monthlyWindow.start,
+    currentPeriodEnd: patch.currentPeriodEnd || monthlyWindow.end,
+  };
 }
 
 async function getOrganizationMembers(db, user) {

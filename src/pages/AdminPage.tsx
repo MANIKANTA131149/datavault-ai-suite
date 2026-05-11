@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -257,11 +258,97 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div className="page-shell flex min-h-[50vh] items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Loading admin panel...</p>
+      <div className="page-shell space-y-6">
+        <div className="page-hero">
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl space-y-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-primary/80">
+                <Shield size={12} />
+                Syncing admin workspace
+              </div>
+              <Skeleton className="h-10 w-full max-w-md rounded-xl" />
+              <Skeleton className="h-4 w-full max-w-2xl" />
+              <Skeleton className="h-4 w-5/6 max-w-xl" />
+            </div>
+
+            <Card className="w-full max-w-sm rounded-[24px] border-border/70 bg-background/45 p-4 shadow-none backdrop-blur-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Loading admin panel
+                  </p>
+                  <p className="text-sm text-foreground">
+                    Pulling users, plans, roles, and audit activity into the console.
+                  </p>
+                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
+                  <div className="h-6 w-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <Skeleton className="h-2 w-full rounded-full" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-9 flex-1 rounded-xl" />
+                  <Skeleton className="h-9 w-24 rounded-xl" />
+                </div>
+              </div>
+            </Card>
+          </div>
         </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Card key={index} className="metric-card space-y-4">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-9 w-9 rounded-xl" />
+              </div>
+              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-3 w-28" />
+            </Card>
+          ))}
+        </div>
+
+        <Card className="toolbar-panel space-y-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <Skeleton className="h-6 w-44" />
+              <Skeleton className="h-4 w-64" />
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Skeleton className="h-10 w-52 rounded-xl" />
+              <Skeleton className="h-10 w-32 rounded-xl" />
+              <Skeleton className="h-10 w-32 rounded-xl" />
+            </div>
+          </div>
+
+          <div className="page-table-wrap">
+            <div className="min-w-[900px]">
+              <div className="grid grid-cols-[1.8fr_1fr_1fr_1fr_120px] gap-4 border-b border-border/70 bg-background-secondary/45 px-4 py-3">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <Skeleton key={index} className="h-3 w-full max-w-[140px]" />
+                ))}
+              </div>
+
+              {Array.from({ length: 5 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="grid grid-cols-[1.8fr_1fr_1fr_1fr_120px] gap-4 border-b border-border/60 px-4 py-4 last:border-b-0"
+                >
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-56" />
+                  </div>
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-4 w-28" />
+                  <Skeleton className="h-9 w-20 rounded-xl justify-self-end" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
       </div>
     );
   }
