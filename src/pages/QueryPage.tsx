@@ -3151,14 +3151,15 @@ export default function QueryPage() {
               {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
               {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
               <div className="flex flex-wrap items-center gap-2 sm:pl-10">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0s" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.4s" }} />
+                {/* Premium 3-dot thinking indicator */}
+                <div className="flex items-center gap-1.5">
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
+                  <span className="thinking-dot" />
                 </div>
                 <span className="text-xs text-muted-foreground">
                   Agent is thinking... {Math.floor(elapsedMs / 1000)}s
-                  {elapsedMs > 30000 ? " - taking longer than usual" : ""}
+                  {elapsedMs > 30000 ? " — taking longer than usual" : ""}
                 </span>
                 <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
                   <X size={12} className="mr-1" /> Stop
@@ -3184,12 +3185,18 @@ export default function QueryPage() {
               </Button>
             </div>
           )}
-          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm">
+          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
             <div className="relative min-w-0 flex-1">
               <Textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  // Auto-grow
+                  const el = e.target;
+                  el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, queryExpanded ? 260 : 120)}px`;
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
                 disabled={isRunning}

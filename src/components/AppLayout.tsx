@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, Outlet, Navigate, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Bookmark,
+  Cable,
   Clock,
   Database,
   LayoutDashboard,
@@ -37,19 +39,123 @@ const BREADCRUMBS: Record<string, string> = {
   "/app/settings": "Settings",
 };
 
-export default function AppLayout() {
-  const { user, hydrateRole } = useAuthStore();
+const MOBILE_NAV_ITEMS = [
+  { label: "Home",     icon: LayoutDashboard, path: "/app/dashboard" },
+  { label: "Data",     icon: Database,        path: "/app/datasets" },
+  { label: "Query",    icon: MessageSquare,   path: "/app/query" },
+  { label: "Insights", icon: Bookmark,        path: "/app/insights" },
+  { label: "Settings", icon: Settings,        path: "/app/settings" },
+];
+
+// ─── Page Progress Bar ────────────────────────────────────────────────────────
+function PageProgressBar({ locationKey }: { locationKey: string }) {
+  const [visible, setVisible] = useState(false);
+  const [width, setWidth]     = useState(0);
+  const timerRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setVisible(true);
+    setWidth(0);
+
+    // Rapid ramp to 80%, then freeze until page finishes
+    const t1 = setTimeout(() => setWidth(30),  30);
+    const t2 = setTimeout(() => setWidth(65),  120);
+    const t3 = setTimeout(() => setWidth(82),  260);
+
+    // Complete and hide
+    const t4 = setTimeout(() => setWidth(100), 380);
+    const t5 = setTimeout(() => setVisible(false), 640);
+
+    timerRef.current = t5;
+    return () => {
+      [t1, t2, t3, t4, t5].forEach(clearTimeout);
+    };
+  }, [locationKey]);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      className="pointer-events-none absolute top-0 left-0 h-[2.5px] z-50 progress-bar-glow rounded-r-full"
+      style={{
+        width: `${width}%`,
+        background: "linear-gradient(90deg, hsl(217 91% 60%), hsl(263 70% 58%))",
+        transition: width === 100
+          ? "width 0.18s ease-out"
+          : "width 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
+      }}
+    />
+  );
+}
+
+// ─── Mobile Bottom Nav ────────────────────────────────────────────────────────
+function MobileBottomNav() {
   const location = useLocation();
-  const navigate = useNavigate();
+  const navigate  = useNavigate();
+  const active    = MOBILE_NAV_ITEMS.find((item) => location.pathname === item.path);
+
+  return (
+    <nav
+      className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/70 bg-background/96 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_-22px_hsl(var(--foreground)/0.85)] backdrop-blur-xl md:hidden"
+      aria-label="Mobile navigation"
+    >
+      <div className="relative grid grid-cols-5">
+        {/* Sliding pill indicator */}
+        {active && (
+          <motion.div
+            layoutId="mobile-tab-pill"
+            className="pointer-events-none absolute top-0 left-0 h-[2px] rounded-full"
+            style={{
+              background: "linear-gradient(90deg, hsl(217 91% 60%), hsl(263 70% 58%))",
+              width: `${100 / MOBILE_NAV_ITEMS.length}%`,
+              x: `${MOBILE_NAV_ITEMS.indexOf(active) * 100}%`,
+            }}
+            transition={{ type: "spring", stiffness: 420, damping: 36 }}
+          />
+        )}
+
+        {MOBILE_NAV_ITEMS.map(({ label, icon: Icon, path }) => {
+          const isActive = location.pathname === path;
+          return (
+            <button
+              key={path}
+              type="button"
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => navigate(path)}
+              className="flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors duration-150"
+              style={{ color: isActive ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))", opacity: isActive ? 1 : 0.6 }}
+            >
+              <motion.span
+                animate={isActive ? { scale: [1, 1.22, 1] } : { scale: 1 }}
+                transition={{ duration: 0.28, ease: [0.34, 1.56, 0.64, 1] }}
+                className="flex items-center justify-center"
+              >
+                <Icon size={18} strokeWidth={isActive ? 2.2 : 1.7} />
+              </motion.span>
+              <span className={isActive ? "font-semibold" : ""}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+// ─── AppLayout ────────────────────────────────────────────────────────────────
+export default function AppLayout() {
+  const { user, hydrateRole }         = useAuthStore();
+  const location                       = useLocation();
+  const navigate                       = useNavigate();
   const { activeProvider, activeModel } = useLLMStore();
-  const { fetchDatasets } = useDatasetStore();
-  const { fetchHistory } = useHistoryStore();
+  const { fetchDatasets }              = useDatasetStore();
+  const { fetchHistory }               = useHistoryStore();
   const { fetchSettings, applyTheme, theme } = useSettingsStore();
-  const { fetchInsights } = useInsightsStore();
-  const { fetchPlan } = usePlanStore();
-  const { fetchNotifications } = useNotificationsStore();
-  const { fetchConnections } = useConnectionStore();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { fetchInsights }              = useInsightsStore();
+  const { fetchPlan }                  = usePlanStore();
+  const { fetchNotifications }         = useNotificationsStore();
+  const { fetchConnections }           = useConnectionStore();
+  const [sidebarOpen, setSidebarOpen]  = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -90,6 +196,7 @@ export default function AppLayout() {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)]" />
 
         <header className="relative shrink-0 border-b border-border/70 bg-background/70 backdrop-blur-xl">
+          <PageProgressBar locationKey={location.pathname} />
           <div className="flex min-h-14 items-center justify-between gap-3 px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <Button
@@ -158,28 +265,9 @@ export default function AppLayout() {
           </AnimatePresence>
         </main>
 
-        <nav className="fixed bottom-0 left-0 right-0 z-40 grid grid-cols-5 border-t border-border/70 bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_-22px_hsl(var(--foreground)/0.85)] backdrop-blur-xl md:hidden">
-          {[
-            { label: "Home", icon: LayoutDashboard, path: "/app/dashboard" },
-            { label: "Data", icon: Database, path: "/app/datasets" },
-            { label: "Query", icon: MessageSquare, path: "/app/query" },
-            { label: "History", icon: Clock, path: "/app/history" },
-            { label: "Settings", icon: Settings, path: "/app/settings" },
-          ].map(({ label, icon: Icon, path }) => (
-            <button
-              key={path}
-              type="button"
-              onClick={() => navigate(path)}
-              className={`flex flex-col items-center gap-1 py-2 text-[10px] transition-colors ${
-                location.pathname === path ? "text-primary" : "text-muted-foreground"
-              }`}
-            >
-              <Icon size={16} />
-              {label}
-            </button>
-          ))}
-        </nav>
+        <MobileBottomNav />
       </div>
     </div>
   );
 }
+
