@@ -34,6 +34,7 @@ import { useHistoryStore, type HistoryEntry, type HistoryStep } from "@/stores/h
 import { usePlanStore } from "@/stores/plan-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { PROVIDER_LABELS } from "@/stores/llm-store";
+import { PageHeader } from "@/components/PageHeader";
 
 function stringifyResult(value: unknown) {
   if (value === null || value === undefined) return "";
@@ -517,7 +518,12 @@ export default function HistoryPage() {
     try {
       await checkExport("history");
     } catch (err: any) {
-      toast.error(err.message || "History export requires Enterprise plan");
+      toast.error(err.message || "History export requires Enterprise plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
       return;
     }
 
@@ -545,30 +551,26 @@ export default function HistoryPage() {
 
   return (
     <div className="page-shell space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Query archive</p>
-            <h1 className="page-title">Review past questions and results</h1>
-            <p className="page-copy">
-              Search, compare, replay, and inspect the saved execution trace for past queries in a layout that fits smaller laptops as well as wider workstations.
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Queries</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{entries.length}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Favorites</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{favoriteIds.length}</p>
-            </div>
-            <Button variant="outline" className="col-span-2 sm:col-span-1 sm:w-auto" onClick={exportCSV} disabled={entries.length === 0}>
-              <Download size={14} className="mr-2" /> Export
-            </Button>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Query history"
+        titleIcon={Clock3}
+        info="Search, compare, replay, and inspect the saved execution trace for past queries in a layout that fits smaller laptops as well as wider workstations."
+        stats={[
+          { label: "Queries", value: entries.length },
+          { label: "Favorites", value: favoriteIds.length, tone: "warning" },
+        ]}
+        actions={
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-9 w-full gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:w-auto" 
+            onClick={exportCSV} 
+            disabled={entries.length === 0}
+          >
+            <Download size={14} /> Export CSV
+          </Button>
+        }
+      />
 
       <div className="toolbar-panel">
         <div className="flex flex-wrap gap-3">

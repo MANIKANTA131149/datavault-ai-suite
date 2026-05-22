@@ -6,11 +6,13 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
+import GetStartedPage from "@/pages/GetStartedPage";
 import DashboardPage from "@/pages/DashboardPage";
 import DatasetsPage from "@/pages/DatasetsPage";
 import QueryPage from "@/pages/QueryPage";
 import HistoryPage from "@/pages/HistoryPage";
 import SettingsPage from "@/pages/SettingsPage";
+import PricingPage from "@/pages/PricingPage";
 import InsightsPage from "@/pages/InsightsPage";
 import AdminPage from "@/pages/AdminPage";
 import ConnectionsPage from "@/pages/ConnectionsPage";
@@ -29,6 +31,8 @@ const App = () => (
           <Route path="/" element={<Navigate to="/auth" replace />} />
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/app" element={<AppLayout />}>
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="get-started" element={<GetStartedPage />} />
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="datasets" element={<DatasetsPage />} />
             <Route path="connections" element={<ConnectionsPage />} />
@@ -37,6 +41,7 @@ const App = () => (
             <Route path="insights" element={<InsightsPage />} />
             <Route path="admin" element={<AdminPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="pricing" element={<PricingPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

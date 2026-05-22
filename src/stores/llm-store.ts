@@ -117,6 +117,32 @@ function stripProviderSecrets(configs: Partial<Record<Provider, ProviderConfig>>
   ) as Partial<Record<Provider, ProviderConfig>>;
 }
 
+function getSessionSecrets(): Record<string, { apiKey?: string; secretAccessKey?: string }> {
+  try {
+    const raw = sessionStorage.getItem("datavault-llm-secrets");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSessionSecrets(configs: Partial<Record<Provider, ProviderConfig>>) {
+  try {
+    const secrets: Record<string, { apiKey?: string; secretAccessKey?: string }> = {};
+    Object.entries(configs).forEach(([provider, config]) => {
+      if (config?.apiKey || config?.secretAccessKey) {
+        secrets[provider] = {
+          ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+          ...(config.secretAccessKey ? { secretAccessKey: config.secretAccessKey } : {}),
+        };
+      }
+    });
+    sessionStorage.setItem("datavault-llm-secrets", JSON.stringify(secrets));
+  } catch (err) {
+    console.error("Failed to save secrets to sessionStorage:", err);
+  }
+}
+
 function getValidModel(provider: Provider, model?: string) {
   const models = PROVIDER_MODELS[provider] || [];
   if (provider === "bedrock" && model?.trim()) return model;
@@ -145,18 +171,30 @@ export const useLLMStore = create<LLMState>()(
       setMaxTokens: (maxTokens) => set({ maxTokens }),
       setSystemPrompt: (systemPrompt) => set({ systemPrompt }),
       setProviderConfig: (provider, config) =>
-        set((state) => ({
-          providerConfigs: {
+        set((state) => {
+          const nextConfigs = {
             ...state.providerConfigs,
             [provider]: { ...state.providerConfigs[provider], ...config } as ProviderConfig,
-          },
-        })),
-      replaceProviderConfigs: (providerConfigs) => set({ providerConfigs }),
-      clearProviderConfigs: () => set({ providerConfigs: {} }),
+          };
+          saveSessionSecrets(nextConfigs);
+          return { providerConfigs: nextConfigs };
+        }),
+      replaceProviderConfigs: (providerConfigs) => {
+        saveSessionSecrets(providerConfigs);
+        set({ providerConfigs });
+      },
+      clearProviderConfigs: () => {
+        try {
+          sessionStorage.removeItem("datavault-llm-secrets");
+        } catch {}
+        set({ providerConfigs: {} });
+      },
       clearProviderApiKeys: () =>
-        set((state) => ({
-          providerConfigs: stripProviderSecrets(state.providerConfigs),
-        })),
+        set((state) => {
+          const nextConfigs = stripProviderSecrets(state.providerConfigs);
+          saveSessionSecrets(nextConfigs);
+          return { providerConfigs: nextConfigs };
+        }),
       getApiKey: (provider) => get().providerConfigs[provider]?.apiKey || "",
     }),
     {
@@ -180,7 +218,21 @@ export const useLLMStore = create<LLMState>()(
         };
       },
       onRehydrateStorage: () => (state) => {
-        state?.clearProviderApiKeys();
+        // Read secrets from sessionStorage to restore them in-memory
+        const sessionSecrets = getSessionSecrets();
+        if (state && Object.keys(sessionSecrets).length > 0) {
+          const nextConfigs = { ...state.providerConfigs };
+          Object.entries(sessionSecrets).forEach(([provider, secrets]) => {
+            const p = provider as Provider;
+            nextConfigs[p] = {
+              ...(nextConfigs[p] || {}),
+              ...secrets,
+            } as ProviderConfig;
+          });
+          state.replaceProviderConfigs(nextConfigs);
+        } else {
+          state?.clearProviderApiKeys();
+        }
         if (state) state.setActiveModel(getValidModel(state.activeProvider, state.activeModel));
       },
     }

@@ -9,7 +9,9 @@ import {
   LayoutDashboard,
   Menu,
   MessageSquare,
+  Moon,
   Settings,
+  Sun,
 } from "lucide-react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AccountMenu } from "@/components/AccountMenu";
@@ -29,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
 const BREADCRUMBS: Record<string, string> = {
+  "/app/get-started": "Get Started",
   "/app/dashboard": "Dashboard",
   "/app/datasets": "Datasets",
   "/app/connections": "Connections",
@@ -41,7 +44,6 @@ const BREADCRUMBS: Record<string, string> = {
 
 const MOBILE_NAV_ITEMS = [
   { label: "Home",     icon: LayoutDashboard, path: "/app/dashboard" },
-  { label: "Data",     icon: Database,        path: "/app/datasets" },
   { label: "Query",    icon: MessageSquare,   path: "/app/query" },
   { label: "Insights", icon: Bookmark,        path: "/app/insights" },
   { label: "Settings", icon: Settings,        path: "/app/settings" },
@@ -150,7 +152,7 @@ export default function AppLayout() {
   const { activeProvider, activeModel } = useLLMStore();
   const { fetchDatasets }              = useDatasetStore();
   const { fetchHistory }               = useHistoryStore();
-  const { fetchSettings, applyTheme, theme } = useSettingsStore();
+  const { fetchSettings, applyTheme, theme, setTheme, saveSettings } = useSettingsStore();
   const { fetchInsights }              = useInsightsStore();
   const { fetchPlan }                  = usePlanStore();
   const { fetchNotifications }         = useNotificationsStore();
@@ -234,6 +236,22 @@ export default function AppLayout() {
                   {PROVIDER_LABELS[activeProvider]} | {activeModel}
                 </span>
               </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
+                aria-label={theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={async () => {
+                  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+                  setTheme(isDark ? "light" : "dark");
+                  try { await saveSettings(); } catch { /* DOM already updated */ }
+                }}
+              >
+                {(theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches))
+                  ? <Sun size={16} />
+                  : <Moon size={16} />}
+              </Button>
               <NotificationBell />
               <AccountMenu
                 trigger={

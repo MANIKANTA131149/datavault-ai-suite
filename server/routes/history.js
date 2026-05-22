@@ -24,7 +24,7 @@ router.get("/", async (req, res) => {
       .collection("history")
       .find({ userId: req.userId })
       .sort({ date: -1 })
-      .limit(100)
+      .limit(10000)
       .toArray();
 
     res.json(entries.map(({ _id, ...rest }) => ({ id: rest.id ?? _id.toString(), ...rest })));

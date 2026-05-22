@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 import { motion, animate } from "framer-motion";
-import { ArrowRight, BarChart2, Brain, Database, Eye, EyeOff, Layers, Loader2, Zap } from "lucide-react";
+import { ArrowRight, BarChart2, Brain, Database, Eye, EyeOff, Layers, Loader2, Moon, Sun, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuthStore } from "@/stores/auth-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { toast } from "sonner";
 
 const FEATURES = [
@@ -101,6 +102,23 @@ export default function AuthPage() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const { theme, setTheme, saveSettings, hasFetched } = useSettingsStore();
+
+  // Default to light on auth page if settings haven't been fetched from backend yet
+  useEffect(() => {
+    if (!hasFetched) {
+      setTheme("light");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  const handleToggleTheme = async () => {
+    const next = isDark ? "light" : "dark";
+    setTheme(next);
+    try { await saveSettings(); } catch { /* not logged in yet — DOM updated */ }
+  };
 
   // ─── Auth0 callback: detect when Auth0 login completes, sync with backend ──
   useEffect(() => {
@@ -210,7 +228,18 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+    <div className="relative min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+      {/* Theme toggle — top right */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={handleToggleTheme}
+        className="absolute right-4 top-4 z-50 h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground"
+        aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {isDark ? <Sun size={18} /> : <Moon size={18} />}
+      </Button>
       <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col xl:flex-row">
         {/* ── Left marketing panel ──────────────────────────────────────────── */}
         <section className="relative flex flex-1 flex-col justify-between overflow-hidden border-b border-border/70 px-4 py-6 sm:px-6 lg:px-10 xl:border-b-0 xl:border-r">

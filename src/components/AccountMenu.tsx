@@ -75,8 +75,8 @@ export function AccountMenu({
         <DropdownMenuItem onClick={() => handleRoute("/app/settings")}>
           <User size={14} className="mr-2" /> Profile
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleRoute("/app/settings")}>
-          <CreditCard size={14} className="mr-2" /> Billing
+        <DropdownMenuItem onClick={() => handleRoute("/app/pricing")}>
+          <CreditCard size={14} className="mr-2" /> Plans & Billing
         </DropdownMenuItem>
 
         {adminUser && (

@@ -9,6 +9,7 @@ interface SettingsState {
   compactMode: boolean;
   codeFont: CodeFont;
   loading: boolean;
+  hasFetched: boolean;
 
   setTheme: (theme: Theme) => void;
   setCompactMode: (v: boolean) => void;
@@ -35,6 +36,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   compactMode: false,
   codeFont: "jetbrains",
   loading: false,
+  hasFetched: false,
 
   applyTheme: applyThemeToDom,
 
@@ -74,6 +76,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
           llm.replaceProviderConfigs(nextConfigs as Parameters<typeof llm.replaceProviderConfigs>[0]);
         }
       }
+      set({ hasFetched: true });
     } catch (err) {
       console.error("fetchSettings:", err);
     } finally {

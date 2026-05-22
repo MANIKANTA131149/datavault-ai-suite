@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Compass,
+  CreditCard,
   Database,
   LayoutDashboard,
   MessageSquare,
@@ -41,12 +43,14 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
   const isCollapsed = mobile ? false : collapsed;
 
   const navItems = [
+    { to: "/app/get-started", icon: Compass,          label: "Get Started", visible: true },
     { to: "/app/dashboard",   icon: LayoutDashboard, label: "Dashboard",   visible: true },
     { to: "/app/datasets",    icon: Database,         label: "Datasets",    visible: true },
     { to: "/app/connections", icon: Cable,            label: "Connections", visible: true },
     { to: "/app/query",       icon: MessageSquare,    label: "Query",       visible: true },
     { to: "/app/history",     icon: Clock,            label: "History",     visible: true },
     { to: "/app/insights",    icon: Bookmark,         label: "Insights",    visible: true },
+    { to: "/app/pricing",     icon: CreditCard,       label: "Pricing",     visible: true },
     { to: "/app/admin",       icon: Shield,           label: "Admin",       visible: adminUser },
     { to: "/app/settings",    icon: Settings,         label: "Settings",    visible: true },
   ].filter((item) => item.visible);

@@ -8,7 +8,9 @@ import {
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
+  Share2, Mic
 } from "lucide-react";
+import { ShareCard } from "@/components/ShareCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -815,10 +817,10 @@ const StepsTimeline = memo(function StepsTimeline({
 
 // ─── ResultPanel (Right Sidebar) ─────────────────────────────────────────────
 const ResultPanel = memo(function ResultPanel({
-  result, query, onClose, onBookmark,
+  result, query, onClose, onBookmark, datasetName, onShare,
 }: {
   result: any; query: string; onClose: () => void; onBookmark: () => void;
-  datasetName: string;
+  datasetName: string; onShare: () => void;
 }) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
@@ -981,7 +983,12 @@ const ResultPanel = memo(function ResultPanel({
       action();
       toast.success(`${label} downloaded`);
     } catch (err: any) {
-      toast.error(err.message || `${label} export is not available on your plan`);
+      toast.error(err.message || `${label} export is not available on your plan`, {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 
@@ -993,7 +1000,9 @@ const ResultPanel = memo(function ResultPanel({
           {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
         </div>
         <div className="flex flex-wrap gap-1 sm:justify-end">
-
+          <button onClick={onShare} title="Share Story Card" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
+            <Share2 size={14} />
+          </button>
           <button onClick={onBookmark} title="Save as Insight" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
             <BookmarkPlus size={14} />
           </button>
@@ -2111,7 +2120,12 @@ function SaveInsightDialog({
       toast.success("Saved to Insights");
       onClose();
     } catch (err: any) {
-      toast.error(err.message || "Insight limit reached for your plan");
+      toast.error(err.message || "Insight limit reached for your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     } finally {
       setSaving(false);
     }
@@ -2192,6 +2206,9 @@ export default function QueryPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSaveInsight, setShowSaveInsight] = useState(false);
+  const [showShareCard, setShowShareCard] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
   const [showMobileAdvanced, setShowMobileAdvanced] = useState(false);
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
@@ -2312,6 +2329,62 @@ export default function QueryPage() {
     localStorage.setItem(FAVORITE_PROMPTS_KEY, JSON.stringify(favoritePrompts));
   }, [favoritePrompts]);
 
+
+
+  const handleSpeech = () => {
+    const SpeechRecognition = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SpeechRecognition) {
+      toast.error("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = "en-US";
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        const text = event.results[0][0].transcript;
+        if (text) {
+          setInput((prev) => prev ? prev + " " + text : text);
+          toast.success("Speech recognized!");
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        if (event.error === "not-allowed") {
+          toast.error("Microphone access denied.");
+        } else {
+          toast.error(`Error: ${event.error}`);
+        }
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to start speech recognition.");
+      setIsListening(false);
+    }
+  };
+
   const toggleFavoritePrompt = (prompt: string) => {
     if (!prompt.trim()) return;
     setFavoritePrompts((prev) => prev.includes(prompt) ? prev.filter((item) => item !== prompt) : [prompt, ...prev].slice(0, 20));
@@ -2400,7 +2473,12 @@ export default function QueryPage() {
       await checkMetric("monthlyQueries", 1);
       await checkMetric("monthlyTokens", maxTokens);
     } catch (err: any) {
-      toast.error(err.message || "Query limit reached for your plan");
+      toast.error(err.message || "Query limit reached for your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
       setIsRunning(false);
       return;
     }
@@ -2557,7 +2635,12 @@ export default function QueryPage() {
       await checkMetric("monthlyQueries", 1);
       await checkMetric("monthlyTokens", maxTokens);
     } catch (err: any) {
-      toast.error(err.message || "Query limit reached for your plan");
+      toast.error(err.message || "Query limit reached for your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
       setIsRunning(false);
       return;
     }
@@ -2734,9 +2817,57 @@ export default function QueryPage() {
     toast.info("Query stopped");
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
+  // Active columns for matching
+  const activeColumns = useMemo(() => {
+    if (isDbConnection && selectedDbTableData?.columns) {
+      return selectedDbTableData.columns.map((c: any) => c.name);
+    }
+    const sheet = selectedDataset?.data?.sheets[selectedSheet];
+    if (sheet?.columns) {
+      return sheet.columns.map((c: any) => c.name);
+    }
+    return [];
+  }, [selectedDataset, selectedSheet, isDbConnection, selectedDbTableData]);
+
+  const activeSuggestion = useMemo(() => {
+    if (!input.trim()) return "";
+    const lowercaseInput = input.toLowerCase();
+    
+    // Try smart suggestions first
+    const match = smartSuggestions.find(s => s.toLowerCase().startsWith(lowercaseInput));
+    if (match) {
+      return match.slice(input.length);
+    }
+    
+    // Fallback to column names
+    const colMatch = activeColumns.find(c => c.toLowerCase().startsWith(lowercaseInput));
+    if (colMatch) {
+      return colMatch.slice(input.length);
+    }
+    
+    return "";
+  }, [input, smartSuggestions, activeColumns]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Tab" && activeSuggestion) {
+      e.preventDefault();
+      setInput((prev) => prev + activeSuggestion);
+      return;
+    }
+    if (e.key === "ArrowRight" && activeSuggestion) {
+      const cursorPosition = e.currentTarget.selectionStart;
+      if (cursorPosition === input.length) {
+        e.preventDefault();
+        setInput((prev) => prev + activeSuggestion);
+        return;
+      }
+    }
+    if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSend();
+    }
   };
+
 
   const handlePdfReport = async (query: string, result: any) => {
     try {
@@ -2748,7 +2879,12 @@ export default function QueryPage() {
         narrative: result?.narrative || undefined,
       });
     } catch (err: any) {
-      toast.error(err.message || "PDF export is not available on your plan");
+      toast.error(err.message || "PDF export is not available on your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 
@@ -3187,6 +3323,47 @@ export default function QueryPage() {
           )}
           <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
             <div className="relative min-w-0 flex-1">
+              {/* Ghost text backdrop overlay */}
+              {activeSuggestion && !isRunning && !isListening && (
+                <div 
+                  className="absolute inset-0 bg-transparent text-transparent pointer-events-none whitespace-pre-wrap break-all select-none px-3 py-2 text-sm leading-normal border border-transparent font-normal font-sans"
+                  style={{
+                    fontFamily: "inherit",
+                    fontSize: "0.875rem",
+                    lineHeight: "1.25rem",
+                    padding: "0.5rem 0.75rem",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <span>{input}</span>
+                  <span className="text-muted-foreground/30 dark:text-muted-foreground/35">{activeSuggestion}</span>
+                </div>
+              )}
+
+              {/* Listening waveforms overlay */}
+              {isListening && (
+                <div className="absolute inset-0 flex items-center justify-between bg-background-secondary/95 backdrop-blur-sm rounded-[24px] px-4 py-2 border border-primary/20 z-20">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
+                      <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
+                      <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
+                      <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
+                      <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
+                      <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
+                    </div>
+                    <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSpeech}
+                    className="h-7 px-3 text-xs border-border bg-card hover:bg-background"
+                  >
+                    Done
+                  </Button>
+                </div>
+              )}
+
               <Textarea
                 ref={textareaRef}
                 value={input}
@@ -3203,7 +3380,7 @@ export default function QueryPage() {
                 className={`bg-background-secondary border-border resize-none min-h-[44px] disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
                 rows={queryExpanded ? 5 : 1}
               />
-              {input && (
+              {input && !isListening && (
                 <button
                   type="button"
                   aria-label="Clear query"
@@ -3216,6 +3393,15 @@ export default function QueryPage() {
               )}
             </div>
             <div className="flex shrink-0 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleSpeech}
+                size="icon"
+                title={isListening ? "Stop listening" : "Voice search"}
+                className={`h-[44px] w-[44px] shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
+              >
+                <Mic size={16} className={isListening ? "animate-pulse" : ""} />
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setQueryExpanded((prev) => !prev)}
@@ -3244,6 +3430,7 @@ export default function QueryPage() {
             onClose={() => setShowResult(false)}
             onBookmark={() => setShowSaveInsight(true)}
             datasetName={sourceName}
+            onShare={() => setShowShareCard(true)}
           />
         </div>
       )}
@@ -3501,6 +3688,14 @@ export default function QueryPage() {
       <SaveInsightDialog
         open={showSaveInsight}
         onClose={() => setShowSaveInsight(false)}
+        query={lastQuery}
+        result={finalResult}
+        datasetName={selectedConnection?.name || selectedDataset?.fileName || ""}
+      />
+
+      <ShareCard
+        open={showShareCard}
+        onClose={() => setShowShareCard(false)}
         query={lastQuery}
         result={finalResult}
         datasetName={selectedConnection?.name || selectedDataset?.fileName || ""}

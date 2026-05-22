@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowRight,
   BarChart2,
+  Cable,
   CheckCircle,
   Clock,
   Database,
@@ -35,10 +36,12 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/PageHeader";
 import { useAuthStore } from "@/stores/auth-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useLLMStore, PROVIDER_LABELS } from "@/stores/llm-store";
+import { useConnectionStore } from "@/stores/connection-store";
 import type { Provider } from "@/lib/llm-client";
 
 const CHART_COLORS = [
@@ -91,9 +94,16 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { datasets } = useDatasetStore();
-  const { entries } = useHistoryStore();
+  const { datasets, fetchDatasets } = useDatasetStore();
+  const { entries, fetchHistory } = useHistoryStore();
+  const { connections, fetchConnections } = useConnectionStore();
   const { providerConfigs } = useLLMStore();
+
+  useEffect(() => {
+    fetchHistory();
+    fetchDatasets();
+    fetchConnections();
+  }, [fetchHistory, fetchDatasets, fetchConnections]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -113,6 +123,8 @@ export default function DashboardPage() {
   const averageDuration = entries.length
     ? Math.round(entries.reduce((sum, entry) => sum + entry.durationMs, 0) / entries.length)
     : 0;
+
+  const activeConnectionsCount = connections.filter((c) => c.status === "connected").length;
 
   const configuredProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((provider) => !!providerConfigs[provider]?.apiKey);
 
@@ -176,6 +188,17 @@ export default function DashboardPage() {
       trend: null,
     },
     {
+      label: "Connections",
+      rawValue: connections.length,
+      value: connections.length.toLocaleString(),
+      sub: `${activeConnectionsCount} active ${activeConnectionsCount === 1 ? "connection" : "connections"}`,
+      icon: Cable,
+      color: "text-pink-500",
+      bg: "bg-pink-500/10",
+      glow: "card-glow-pink",
+      trend: null,
+    },
+    {
       label: "Queries Run",
       rawValue: entries.length,
       value: entries.length.toLocaleString(),
@@ -212,52 +235,41 @@ export default function DashboardPage() {
 
   return (
     <div className="page-shell-wide space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Workspace overview</p>
-            <h1 className="page-title">
-              {greeting}, {user?.name?.split(" ")[0]}
-            </h1>
-            <p className="page-copy">
-              See the health of your analytics workspace at a glance, from provider readiness to dataset coverage
-              and recent query activity, across every screen size.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <div className="inline-stat">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Last updated</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{lastUpdated}</p>
-              </div>
-              <div className="inline-stat">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Providers ready</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{configuredProviders.length}</p>
-              </div>
-              <div className="inline-stat">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Rows available</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{totalRows.toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="w-full sm:w-auto">
-            <div className="grid grid-cols-1 overflow-hidden rounded-[24px] border border-border/70 bg-background/60 shadow-[0_20px_38px_-28px_hsl(var(--foreground)/0.5)] sm:grid-cols-2">
-              <Button
-                onClick={() => toast.success("Dashboard refreshed")}
-                variant="outline"
-                className="h-12 rounded-none border-0 bg-transparent justify-center px-6 shadow-none hover:bg-background/60 sm:min-w-[170px]"
-              >
-                <RefreshCw size={15} /> Refresh
-              </Button>
-              <Button
-                onClick={() => navigate("/app/query")}
-                className="h-12 rounded-none border-0 justify-center px-6 shadow-none sm:min-w-[190px]"
-              >
-                <MessageSquare size={15} /> New Query
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={`${greeting}, ${user?.name?.split(" ")[0]}`}
+        info="See the health of your analytics workspace at a glance, from provider readiness to dataset coverage and recent query activity."
+        stats={[
+          { label: "Last updated", value: lastUpdated, live: true },
+          { label: "Providers ready", value: configuredProviders.length, tone: "success" },
+          { label: "Rows available", value: totalRows.toLocaleString(), tone: "info" },
+        ]}
+        actions={
+          <>
+          <Button
+            onClick={async () => {
+              try {
+                await Promise.all([fetchHistory(), fetchDatasets(), fetchConnections()]);
+                toast.success("Dashboard refreshed");
+              } catch (e) {
+                toast.error("Failed to refresh dashboard");
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="h-9 flex-1 gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:flex-none"
+          >
+            <RefreshCw size={14} /> Refresh
+          </Button>
+          <Button
+            onClick={() => navigate("/app/query")}
+            size="sm"
+            className="h-9 flex-1 gap-1.5 sm:flex-none"
+          >
+            <MessageSquare size={14} /> New Query
+          </Button>
+          </>
+        }
+      />
 
       <div className="space-y-6 animate-in fade-in duration-300">
         {datasets.length === 0 && entries.length === 0 && (
@@ -434,6 +446,10 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Datasets stored</span>
                 <span className="font-medium text-foreground">{datasets.length}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Connections</span>
+                <span className="font-medium text-foreground">{connections.length}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">History entries</span>
