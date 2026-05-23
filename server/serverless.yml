@@ -12,6 +12,8 @@ provider:
     MONGODB_URI: ${env:MONGODB_URI}
     JWT_SECRET: ${env:JWT_SECRET}
     FRONTEND_URL: ${env:FRONTEND_URL}
+    AUTH0_DOMAIN: ${env:AUTH0_DOMAIN}
+    AUTH0_CLIENT_SECRET: ${env:AUTH0_CLIENT_SECRET}
 
 package:
   patterns:
