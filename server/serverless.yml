@@ -15,6 +15,19 @@ provider:
     AUTH0_DOMAIN: ${env:AUTH0_DOMAIN}
     AUTH0_CLIENT_SECRET: ${env:AUTH0_CLIENT_SECRET}
 
+package:
+  patterns:
+    - '!node_modules/**/test/**'
+    - '!node_modules/**/tests/**'
+    - '!node_modules/**/README*'
+    - '!node_modules/**/*.md'
+    - '!node_modules/**/LICENSE'
+    - '!node_modules/**/*.ts'
+    - '!node_modules/**/*.map'
+    - '!node_modules/**/docs/**'
+    - '!node_modules/**/example/**'
+    - '!node_modules/**/examples/**'
+
 
 functions:
   api:
