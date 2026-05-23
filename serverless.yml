@@ -1,0 +1,40 @@
+service: datavault-ai-backend
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1 # Adjust this to your preferred AWS region
+  stage: prod
+  memorySize: 1024 # Custom resource limits (sufficient for drivers like Snowflake/Oracle)
+  timeout: 30 # AWS Lambda timeout (seconds)
+  environment:
+    MONGODB_URI: ${env:MONGODB_URI}
+    JWT_SECRET: ${env:JWT_SECRET}
+    FRONTEND_URL: ${env:FRONTEND_URL} # Point to your Amplify app url
+    # Add other environment variables as needed here
+
+package:
+  individually: true
+  patterns:
+    - '!node_modules/**'
+    - '!src/**'
+    - '!dist/**'
+    - '!public/**'
+    - '!docs/**'
+    - 'server/**'
+    - '!server/node_modules/**'
+
+functions:
+  api:
+    handler: server/lambda.handler
+    events:
+      - httpApi:
+          path: /api/{proxy+}
+          method: any
+      - httpApi:
+          path: /api
+          method: any
+
+plugins:
+  - serverless-offline

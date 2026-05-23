@@ -16,6 +16,8 @@
     "build:local": "vite build",
     "render-build": "npm run build",
     "build:dev": "vite build --mode development",
+    "aws-deploy:backend": "serverless deploy",
+    "aws-offline:backend": "serverless offline",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -112,6 +114,8 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "serverless": "^3.38.0",
+    "serverless-offline": "^13.3.3"
   }
 }

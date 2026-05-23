@@ -1,0 +1,33 @@
+name: Deploy Backend to AWS Lambda
+
+on:
+  push:
+    branches:
+      - main # Change this if your default branch is different (e.g. master)
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Deploy Backend via Serverless Framework
+        run: npm run aws-deploy:backend
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # FRONTEND_URL can be added to secrets and mapped here if CORS is strict
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}

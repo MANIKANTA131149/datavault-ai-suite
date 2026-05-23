@@ -9,21 +9,13 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
-    "@databricks/sql": "^1.13.0",
-    "@duckdb/node-api": "^1.5.2-r.1",
-    "@elastic/elasticsearch": "^8.19.0",
-    "@google-cloud/bigquery": "^8.3.0",
+    "@codegenie/serverless-express": "^4.14.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^4.0.1",
     "mongodb": "^6.3.0",
-    "mssql": "^11.0.1",
-    "mysql2": "^3.14.1",
-    "oracledb": "^6.10.0",
-    "pg": "^8.16.0",
-    "snowflake-sdk": "^2.4.0",
     "vite_react_shadcn_ts": "file:.."
   }
 }

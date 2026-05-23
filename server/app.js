@@ -28,6 +28,7 @@ app.use(
         origin.includes("localhost") ||
         origin.includes("127.0.0.1") ||
         origin.includes(".vercel.app") ||
+        origin.includes(".amplifyapp.com") ||
         (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL)
       ) {
         callback(null, true);

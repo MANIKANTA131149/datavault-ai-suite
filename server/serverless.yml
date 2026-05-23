@@ -1,0 +1,39 @@
+service: datavault-ai-backend
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1 # Adjust this to your preferred AWS region
+  stage: prod
+  memorySize: 1024 # Custom resource limits (sufficient for database drivers)
+  timeout: 30 # AWS Lambda timeout (seconds)
+  environment:
+    MONGODB_URI: ${env:MONGODB_URI}
+    JWT_SECRET: ${env:JWT_SECRET}
+    FRONTEND_URL: ${env:FRONTEND_URL}
+
+package:
+  patterns:
+    # Exclude heavy native database drivers from the Lambda zip package
+    # (These are dynamically loaded at runtime, so excluding them keeps the package tiny!)
+    - '!node_modules/@databricks/**'
+    - '!node_modules/@duckdb/**'
+    - '!node_modules/@elastic/**'
+    - '!node_modules/@google-cloud/**'
+    - '!node_modules/mssql/**'
+    - '!node_modules/mysql2/**'
+    - '!node_modules/oracledb/**'
+    - '!node_modules/pg/**'
+    - '!node_modules/snowflake-sdk/**'
+
+functions:
+  api:
+    handler: lambda.handler
+    events:
+      - httpApi:
+          path: /api/{proxy+}
+          method: any
+      - httpApi:
+          path: /api
+          method: any
