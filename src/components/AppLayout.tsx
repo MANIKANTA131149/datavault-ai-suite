@@ -94,14 +94,40 @@ function PageProgressBar({ locationKey }: { locationKey: string }) {
 function MobileBottomNav() {
   const location = useLocation();
   const navigate  = useNavigate();
-  const active    = MOBILE_NAV_ITEMS.find((item) => location.pathname === item.path);
+  
+  // Smart route mapper to align adjacent pages and sub-routes with bottom navigation tabs
+  const active = MOBILE_NAV_ITEMS.find((item) => {
+    if (location.pathname === item.path) return true;
+    
+    // Align sub-routes and similar modules functionality-wise
+    if (item.path === "/app/dashboard") {
+      return location.pathname === "/app/get-started";
+    }
+    if (item.path === "/app/query") {
+      return (
+        location.pathname === "/app/history" ||
+        location.pathname === "/app/datasets" ||
+        location.pathname === "/app/connections"
+      );
+    }
+    if (item.path === "/app/settings") {
+      return (
+        location.pathname === "/app/pricing" ||
+        location.pathname.startsWith("/app/admin")
+      );
+    }
+    return false;
+  });
 
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/70 bg-background/96 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_-22px_hsl(var(--foreground)/0.85)] backdrop-blur-xl md:hidden"
       aria-label="Mobile navigation"
     >
-      <div className="relative grid grid-cols-5">
+      <div 
+        className="relative grid"
+        style={{ gridTemplateColumns: `repeat(${MOBILE_NAV_ITEMS.length}, minmax(0, 1fr))` }}
+      >
         {/* Sliding pill indicator */}
         {active && (
           <motion.div
@@ -117,7 +143,7 @@ function MobileBottomNav() {
         )}
 
         {MOBILE_NAV_ITEMS.map(({ label, icon: Icon, path }) => {
-          const isActive = location.pathname === path;
+          const isActive = active?.path === path;
           return (
             <button
               key={path}
