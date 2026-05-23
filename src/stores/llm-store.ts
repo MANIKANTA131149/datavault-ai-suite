@@ -56,6 +56,15 @@ export const PROVIDER_MODELS: Record<Provider, string[]> = {
     "deepcogito/cogito-671b-v2.1-FP8:together",
     "EssentialAI/rnj-1-instruct:together",
   ],
+  alibaba: [
+    "qwen3.7-max",
+    "qwen3.6-plus",
+    "qwen3.6-flash",
+    "qwen-turbo",
+    "qwen3-coder-plus",
+    "qwen3-coder-flash",
+    "qwq-plus"
+  ],
 };
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
@@ -70,6 +79,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   together: "Together AI",
   ollama: "Ollama",
   huggingface: "Hugging Face",
+  alibaba: "Alibaba DashScope (Qwen)",
 };
 
 export function getModelDisplayName(model: string) {

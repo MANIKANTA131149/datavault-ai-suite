@@ -8,7 +8,7 @@ export interface LLMResponse {
 
 export type Provider =
   | "groq" | "openai" | "gemini" | "anthropic" | "bedrock"
-  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface";
+  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface" | "alibaba";
 
 export interface LLMProviderOptions {
   secretAccessKey?: string;
@@ -22,6 +22,7 @@ const PROVIDER_ENDPOINTS: Record<string, string> = {
   mistral: "https://api.mistral.ai/v1/chat/completions",
   together: "https://api.together.xyz/v1/chat/completions",
   huggingface: `${getApiBaseUrl()}/llm/huggingface/chat`,
+  alibaba: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
 };
 
 async function callBedrock(
