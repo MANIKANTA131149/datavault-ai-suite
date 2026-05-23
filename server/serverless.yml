@@ -15,19 +15,6 @@ provider:
     AUTH0_DOMAIN: ${env:AUTH0_DOMAIN}
     AUTH0_CLIENT_SECRET: ${env:AUTH0_CLIENT_SECRET}
 
-package:
-  patterns:
-    # Exclude heavy native database drivers from the Lambda zip package
-    # (These are dynamically loaded at runtime, so excluding them keeps the package tiny!)
-    - '!node_modules/@databricks/**'
-    - '!node_modules/@duckdb/**'
-    - '!node_modules/@elastic/**'
-    - '!node_modules/@google-cloud/**'
-    - '!node_modules/mssql/**'
-    - '!node_modules/mysql2/**'
-    - '!node_modules/oracledb/**'
-    - '!node_modules/pg/**'
-    - '!node_modules/snowflake-sdk/**'
 
 functions:
   api:
