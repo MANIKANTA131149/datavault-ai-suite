@@ -32,6 +32,7 @@ export default defineConfig(({ mode }) => ({
           if (id.includes("@radix-ui")) return "radix";
           if (id.includes("framer-motion")) return "motion";
           if (
+            id.includes("react") ||
             id.includes("react-dom") ||
             id.includes("react-router") ||
             id.includes("@tanstack/react-query")
