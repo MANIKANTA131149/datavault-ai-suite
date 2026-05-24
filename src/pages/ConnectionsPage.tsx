@@ -43,6 +43,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/PageHeader";
 import { toast } from "sonner";
 import {
   useConnectionStore,
@@ -951,36 +952,17 @@ export default function ConnectionsPage() {
 
   return (
     <div className="page-shell space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Connection studio</p>
-            <h1 className="page-title">Manage database connections</h1>
-            <p className="page-copy">
-              Keep warehouse, transactional, local, and search connections organized with clean cards, table view,
-              quick testing, and one-click handoff into the Query page.
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-4">
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Total</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{stats.total}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Ready</p>
-              <p className="mt-1 text-sm font-medium text-emerald-400">{stats.connected}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Needs fix</p>
-              <p className="mt-1 text-sm font-medium text-red-400">{stats.error}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">DB types</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{stats.types}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Database connections"
+        titleIcon={Cable}
+        info="Keep warehouse, transactional, local, and search connections organized with clean cards, table view, quick testing, and one-click handoff into the Query page."
+        stats={[
+          { label: "Total", value: stats.total },
+          { label: "Ready", value: stats.connected, tone: "success" },
+          { label: "Needs fix", value: stats.error, tone: "danger" },
+          { label: "DB types", value: stats.types, tone: "info" },
+        ]}
+      />
 
       {connections.length > 0 && (
         <div className="toolbar-panel">

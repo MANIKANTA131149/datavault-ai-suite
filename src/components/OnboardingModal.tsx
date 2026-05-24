@@ -6,7 +6,7 @@ import { useAuthStore } from "@/stores/auth-store";
 
 const STEPS = [
   {
-    title: "Welcome to DataVault Agent",
+    title: "Welcome to Querify Agent",
     description: "Your AI-powered data analytics platform. Query your data in plain English with full reasoning trace.",
     icon: "🎉",
   },

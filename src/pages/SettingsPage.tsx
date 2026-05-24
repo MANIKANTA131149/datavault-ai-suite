@@ -17,9 +17,10 @@ import { PLAN_DEFINITIONS, PLAN_TIERS, formatFileSizeLimit, formatPlanLimit, typ
 import { testProviderConnection, type Provider } from "@/lib/llm-client";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Trash2, Check, Shield, Palette, User, CreditCard, Cpu, Save, Eye, EyeOff, Key, Copy, Plus, Search } from "lucide-react";
+import { Trash2, Check, Shield, Palette, User, CreditCard, Cpu, Save, Eye, EyeOff, Key, Copy, Plus, Search, Settings as SettingsIcon } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { ProviderLogo } from "@/components/ProviderLogo";
+import { PageHeader } from "@/components/PageHeader";
 
 export default function SettingsPage() {
   const { user, updateUserName } = useAuthStore();
@@ -171,7 +172,7 @@ export default function SettingsPage() {
     const key = keyInputs[provider] || "";
     if (provider === "ollama") return true;
     if (provider === "bedrock") return key.length >= 16 && !!secretInputs[provider];
-    if (provider === "openai") return key.startsWith("sk-");
+    if (provider === "openai" || provider === "alibaba") return key.startsWith("sk-");
     if (provider === "gemini") return key.startsWith("AIza");
     if (provider === "anthropic") return key.startsWith("sk-ant-");
     return key.length > 8;
@@ -222,32 +223,16 @@ export default function SettingsPage() {
 
   return (
     <div className="page-shell-narrow space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Workspace controls</p>
-            <h1 className="page-title">Manage your account, appearance, and providers</h1>
-            <p className="page-copy">
-              Tune your profile, LLM providers, theme, and workspace usage with controls that stay organized and touch
-              friendly across compact and wide screens.
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Providers ready</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{configuredCount}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Queries run</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{entries.length}</p>
-            </div>
-            <div className="inline-stat col-span-2 sm:col-span-1">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Current plan</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{currentPlan.name}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Settings"
+        titleIcon={SettingsIcon}
+        info="Tune your profile, LLM providers, theme, and workspace usage with controls that stay organized and touch friendly across compact and wide screens."
+        stats={[
+          { label: "Providers ready", value: configuredCount, tone: "success" },
+          { label: "Queries run", value: entries.length, tone: "info" },
+          { label: "Plan", value: currentPlan.name, tone: "accent" },
+        ]}
+      />
 
       <div className="toolbar-panel">
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -313,7 +298,7 @@ export default function SettingsPage() {
           <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-foreground">{configuredCount} of {Object.keys(PROVIDER_LABELS).length} providers configured</p>
-              <p className="text-xs text-muted-foreground">Provider keys are used for running queries via DataVault UI</p>
+              <p className="text-xs text-muted-foreground">Provider keys are used for running queries via Querify UI</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Select value={activeProvider} onValueChange={(value) => setActiveProvider(value as Provider)}>

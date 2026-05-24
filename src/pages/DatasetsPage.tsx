@@ -484,6 +484,7 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
 }
 
 export default function DatasetsPage() {
+  const navigate = useNavigate();
   const { datasets, addDataset, removeDataset, duplicateDataset, updateDatasetMeta, loading } = useDatasetStore();
   const { entries } = useHistoryStore();
   const { addLocalNotification } = useNotificationsStore();
@@ -530,7 +531,12 @@ export default function DatasetsPage() {
       if (activePlan?.fileSizeLimitBytes !== null && activePlan?.fileSizeLimitBytes !== undefined && item.file.size > activePlan.fileSizeLimitBytes) {
         const message = getFileSizeLimitMessage(item.file, activePlan);
         setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "failed", progress: 100, error: message } : q));
-        toast.error(message);
+        toast.error(message, {
+          action: {
+            label: "View Plans",
+            onClick: () => navigate("/app/pricing"),
+          },
+        });
         return;
       }
 
@@ -545,7 +551,12 @@ export default function DatasetsPage() {
       toast.success(`${item.file.name} uploaded successfully`);
     } catch (err: any) {
       setUploadQueue((prev) => prev.map((q) => q.id === item.id ? { ...q, status: "failed", progress: 100, error: err.message || "Upload failed" } : q));
-      toast.error(err.message || `Failed to upload ${item.file.name}`);
+      toast.error(err.message || `Failed to upload ${item.file.name}`, {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     } finally {
       setParsing(false);
     }
@@ -655,7 +666,12 @@ export default function DatasetsPage() {
       fetchPlan();
       toast.success(`${dataset.fileName} duplicated`);
     } catch (err: any) {
-      toast.error(err.message || "Failed to duplicate dataset");
+      toast.error(err.message || "Failed to duplicate dataset", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 

@@ -1,5 +1,6 @@
 import { callLLM, type Provider, type LLMProviderOptions, type LLMResponse } from "./llm-client";
 import type { SheetData } from "./file-parser";
+import { isClarificationAnswer, mergeClarificationOptions } from "./clarification-options";
 
 export interface AgentStep {
   turn: number;
@@ -10,6 +11,16 @@ export interface AgentStep {
   tokens: { input: number; output: number };
   durationMs: number;
   isFinal: boolean;
+  hitlKind?: "clarification" | "approval";
+  hitlPrompt?: string;
+}
+
+export interface HitlController {
+  waitForHuman: (
+    prompt: string,
+    kind: "clarification" | "approval",
+    details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] }
+  ) => Promise<string>;
 }
 
 export interface ConversationContext {
@@ -194,7 +205,8 @@ Step 2: Is the question about schema/metadata only?
   YES → Answer command with value derived from column list.
 
 Step 3: Is the user request ambiguous, underspecified, or missing the target column/metric?
-  YES → Answer with one concise clarification question. Do not guess.
+  YES → Answer with one concise clarification question and an "options" array (2–6 concrete choices). Do not guess.
+  Example: {"command":"Answer","args":{"value":"Which column should count as revenue?","options":["total_sales","net_revenue","gross_amount"]}}
 
 Step 4: Does the question need ONE supported operation to produce the final answer?
   YES → ExecuteFinalQuery with the right operation.
@@ -1525,26 +1537,37 @@ export async function* runAgent(
   const messages: { role: string; content: string }[] = [];
   const prompt = systemPromptOverride || SYSTEM_PROMPT;
   let turn = 0;
-  const maxTurns = 6;
+  // ── Step budget: LLM is told so it plans efficiently ──
+  const maxTurns = 8;
 
   // ── Pre-process question for better LLM comprehension ──
   const normalizedQuestion = normalizeQuestion(question, sheetData.columns);
   const intentHint = classifyIntent(normalizedQuestion);
   const columnHints = buildColumnHints(normalizedQuestion, sheetData.columns);
 
-  // ── Conversational history context ──
+  // ── LangChain-style BufferWindowMemory: last 3 Q/A turns (compact) ──
+  // Accepts both old ConversationContext[] and a pre-built contextBlock string.
   let contextBlock = "";
   if (conversationHistory && conversationHistory.length > 0) {
-    const recent = conversationHistory.slice(-5);
-    contextBlock = "\n\nPrior conversation (use for follow-up context):\n" +
-      recent.map((c, i) =>
-        `  Q${i + 1}: ${c.question}\n  A${i + 1}: ${typeof c.answer === "string" ? c.answer : JSON.stringify(c.answer).slice(0, 300)}`
-      ).join("\n");
+    // Keep last 3 turns, truncate each A to 200 chars — mirrors LangChain's window memory
+    const recent = conversationHistory.slice(-3);
+    contextBlock =
+      "\n\nPrior conversation (last " + recent.length + " turn" + (recent.length !== 1 ? "s" : "") + " — use for follow-up context):\n" +
+      recent
+        .map((c, i) => {
+          const q = c.question.slice(0, 120);
+          const aRaw = typeof c.answer === "string" ? c.answer : JSON.stringify(c.answer);
+          const a = aRaw.slice(0, 200);
+          return `  Human[${i + 1}]: ${q}\n  AI[${i + 1}]: ${a}`;
+        })
+        .join("\n");
   }
 
   // ── Build the enriched first user message ──
+  // Step budget disclosure: helps LLM plan (don't waste turns on unnecessary GetColumns loops)
   const firstMessage = [
     `Dataset: ${sheetData.rows.length} rows × ${sheetData.columns.length} columns`,
+    `\nStep budget: you have at most ${maxTurns} steps total (including this one). Be efficient.`,
     `\nThe schema is available through GetColumns. Call GetColumns before writing QuerySheet or ExecuteFinalQuery.`,
     contextBlock,
     `\nQuestion: "${normalizedQuestion}"`,
@@ -1726,8 +1749,9 @@ You have access to these commands:
 4. ExecuteFinalQuery(sheet_name, operation, params)
    Runs the final data operation that answers the question.
 
-5. Answer(value)
+5. Answer(value, options?)
    Use only for clarification questions or schema-only final answers.
+   For clarifications, always include args.options with 2–6 clickable choices (exact column names, metrics, or time ranges).
 
 For backward compatibility, QuerySheet and ExecuteFinalQuery may also use pandas_query instead of operation/params.
 Prefer operation/params unless the user or custom prompt explicitly relies on pandas_query.
@@ -1795,8 +1819,17 @@ You have access to these commands:
 6. ExecuteFinalQuery(table_name, operation, params)
    Runs the final data operation that answers the question.
 
-7. Answer(value)
+7. Answer(value, options?)
    Use only for clarification questions or schema-only final answers.
+   For clarifications, always include args.options with 2–6 clickable choices (tables, columns, metrics, or filters).
+
+SQL mode rules:
+- Use QuerySQL/ExecuteSQL for SQL databases whenever possible.
+- Only generate a single read-only SELECT or WITH query.
+- Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, MERGE, CALL, EXEC, GRANT, REVOKE, COPY, VACUUM, PRAGMA, transaction, or multi-statement SQL.
+- For detail/listing queries, include a sensible LIMIT/TOP/FETCH FIRST cap, usually 50 or 100. Aggregates and counts do not need a row limit.
+- Use exact table and column names from GetSchema/GetColumns.
+- Quote qualified identifiers according to the selected database dialect.
 
 SQL mode rules:
 - Use QuerySQL/ExecuteSQL for SQL databases whenever possible.
@@ -2797,7 +2830,8 @@ export async function* runDatabaseAgent(
   systemPromptOverride?: string,
   conversationHistory?: ConversationContext[],
   providerOptions: LLMProviderOptions = {},
-  tools: DatabaseAgentTools = {}
+  tools: DatabaseAgentTools = {},
+  hitlController?: HitlController
 ): AsyncGenerator<AgentStep> {
   const tables = buildDatabaseTableMap(databaseTables);
   const defaultTableName = resolveDefaultTableName(tables, selectedTableName);
@@ -2829,6 +2863,7 @@ export async function* runDatabaseAgent(
     `Question: ${question}`,
     `Database type: ${dbTypeLabel}`,
     buildSqlDialectGuidance(dbTypeLabel),
+    `Step budget: you have at most ${maxTurns} steps total. Be efficient — combine schema lookup and query in as few steps as possible.`,
     `Current selected table: "${defaultTableName}"`,
     `Available tables: ${Object.keys(tables).length} (${Object.keys(tables).slice(0, 5).join(", ")}${Object.keys(tables).length > 5 ? ", ..." : ""})`,
   ];
@@ -2838,11 +2873,15 @@ export async function* runDatabaseAgent(
     introParts.push(`NOTE: This appears to be an identifier/lookup query. Start with GetSchema() to understand all available tables, then search the most relevant tables for this identifier.`);
   }
 
+  // ── LangChain BufferWindowMemory: last 3 turns, compact (120-char Q / 200-char A) ──
   if (conversationHistory && conversationHistory.length > 0) {
-    const recent = conversationHistory.slice(-3).map((entry, index) =>
-      `Q${index + 1}: ${entry.question}\nA${index + 1}: ${typeof entry.answer === "string" ? entry.answer : JSON.stringify(entry.answer).slice(0, 300)}`
-    );
-    introParts.push(`Recent conversation:\n${recent.join("\n")}`);
+    const recent = conversationHistory.slice(-3).map((entry, index) => {
+      const q = entry.question.slice(0, 120);
+      const aRaw = typeof entry.answer === "string" ? entry.answer : JSON.stringify(entry.answer);
+      const a = aRaw.slice(0, 200);
+      return `Human[${index + 1}]: ${q}\nAI[${index + 1}]: ${a}`;
+    });
+    introParts.push(`Prior conversation (last ${recent.length} turn${recent.length !== 1 ? "s" : ""}):\n${recent.join("\n")}`);
   }
 
   introParts.push("Respond with one JSON command only.");
@@ -2970,6 +3009,57 @@ export async function* runDatabaseAgent(
           break;
         }
 
+        // --- HITL: Large Operation Gate ---
+        let rowCount = 0;
+        let targetTableName = requestedTableName;
+        if (tables[requestedTableName]?.rowCount) {
+          rowCount = tables[requestedTableName].rowCount!;
+        } else {
+          const largeTable = Object.values(tables).find(t => t.rowCount && t.rowCount > 10000);
+          if (largeTable) {
+            rowCount = largeTable.rowCount!;
+            targetTableName = largeTable.name;
+          }
+        }
+
+        if (rowCount > 10000 && hitlController) {
+          yield {
+            turn,
+            command: "HumanApproval",
+            args: {
+              prompt: `This operation runs on a large table "${targetTableName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+              operation: "SQL Query",
+              rowCount,
+              sql
+            },
+            result: "Waiting for user approval...",
+            tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+            durationMs: Date.now() - startTime,
+            isFinal: false,
+            hitlKind: "approval",
+            hitlPrompt: `This operation runs on a large table "${targetTableName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+          };
+
+          const approved = await hitlController.waitForHuman(
+            `This operation runs on a large table "${targetTableName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+            "approval",
+            { rowCount, operation: "SQL Query", sql }
+          );
+
+          if (approved !== "approve") {
+            yield {
+              turn,
+              command: "Error",
+              args: {},
+              result: "SQL query execution was rejected by the user.",
+              tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+              durationMs: Date.now() - startTime,
+              isFinal: true,
+            };
+            return;
+          }
+        }
+        // --- End HITL ---
         const toolResult = await tools.executeSql({
           sql,
           isFinal: command === "ExecuteSQL",
@@ -2991,6 +3081,49 @@ export async function* runDatabaseAgent(
           : rawArgs.params || {};
 
         normalizedArgs = { ...rawArgs, table_name: normalizedTableName, operation, params: operationParams };
+
+        // --- HITL: Large Operation Gate ---
+        const table = tables[normalizedTableName];
+        const rowCount = table?.rowCount || 0;
+        if (rowCount > 10000 && hitlController) {
+          yield {
+            turn,
+            command: "HumanApproval",
+            args: {
+              prompt: `This operation "${operation || 'query'}" runs on table "${normalizedTableName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+              operation: operation || "query",
+              rowCount,
+              table_name: normalizedTableName
+            },
+            result: "Waiting for user approval...",
+            tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+            durationMs: Date.now() - startTime,
+            isFinal: false,
+            hitlKind: "approval",
+            hitlPrompt: `This operation "${operation || 'query'}" runs on table "${normalizedTableName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+          };
+
+          const approved = await hitlController.waitForHuman(
+            `This operation "${operation || 'query'}" runs on table "${normalizedTableName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+            "approval",
+            { rowCount, operation: operation || "query" }
+          );
+
+          if (approved !== "approve") {
+            yield {
+              turn,
+              command: "Error",
+              args: {},
+              result: `Operation "${operation || 'query'}" on table "${normalizedTableName}" was rejected by the user.`,
+              tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+              durationMs: Date.now() - startTime,
+              isFinal: true,
+            };
+            return;
+          }
+        }
+        // --- End HITL ---
+
         if (tools.executeTableOperation && operation) {
           const toolResult = await tools.executeTableOperation({
             tableName: normalizedTableName,
@@ -3021,6 +3154,45 @@ export async function* runDatabaseAgent(
       }
       default:
         result = `ERROR: Unknown command '${command}'`;
+    }
+
+    const answerText = command === "NarrativeAnswer"
+      ? (rawArgs.text || rawArgs.narrative || defaultRawResult)
+      : (typeof result === "string" ? result : JSON.stringify(result));
+    const clarificationOptions = mergeClarificationOptions(answerText, rawArgs);
+    const isClarification = isClarificationAnswer(command, answerText, rawArgs);
+
+    if (isClarification && hitlController) {
+      yield {
+        turn,
+        command: "HumanClarification",
+        args: { prompt: answerText, options: clarificationOptions },
+        result: "Waiting for user clarification...",
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+        hitlKind: "clarification",
+        hitlPrompt: answerText,
+      };
+
+      const userReply = await hitlController.waitForHuman(answerText, "clarification", {
+        options: clarificationOptions,
+      });
+      if (userReply && userReply.trim() && userReply !== "reject" && userReply !== "cancel") {
+        llmInput = `User clarification: "${userReply}". Please use this clarification to proceed and execute the correct query.`;
+        continue;
+      } else {
+        yield {
+          turn,
+          command: "Error",
+          args: {},
+          result: "Query was cancelled by the user.",
+          tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+          durationMs: Date.now() - startTime,
+          isFinal: true,
+        };
+        return;
+      }
     }
 
     const isFinal =
@@ -3076,7 +3248,8 @@ export async function* runLegacyAgent(
   maxTokens: number,
   systemPromptOverride?: string,
   conversationHistory?: ConversationContext[],
-  providerOptions: LLMProviderOptions = {}
+  providerOptions: LLMProviderOptions = {},
+  hitlController?: HitlController
 ): AsyncGenerator<AgentStep> {
   const defaultSheetName = resolveDefaultSheetName(sheets, selectedSheetName);
   if (!defaultSheetName) {
@@ -3213,6 +3386,49 @@ export async function* runLegacyAgent(
           && canRunOnPreviousSheetRows(operation, operationParams, previousRows)
           ? previousRows
           : undefined;
+
+        // --- HITL: Large Operation Gate ---
+        const sheet = sheets[requestedSheetName] || sheets[defaultSheetName];
+        const rowCount = sheet?.rows?.length || 0;
+        if (rowCount > 10000 && hitlController) {
+          yield {
+            turn,
+            command: "HumanApproval",
+            args: {
+              prompt: `This operation "${operation || 'query'}" runs on sheet "${requestedSheetName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+              operation: operation || "query",
+              rowCount,
+              sheet_name: requestedSheetName
+            },
+            result: "Waiting for user approval...",
+            tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+            durationMs: Date.now() - startTime,
+            isFinal: false,
+            hitlKind: "approval",
+            hitlPrompt: `This operation "${operation || 'query'}" runs on sheet "${requestedSheetName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+          };
+
+          const approved = await hitlController.waitForHuman(
+            `This operation "${operation || 'query'}" runs on sheet "${requestedSheetName}" (${rowCount.toLocaleString()} rows). Do you want to proceed?`,
+            "approval",
+            { rowCount, operation: operation || "query" }
+          );
+
+          if (approved !== "approve") {
+            yield {
+              turn,
+              command: "Error",
+              args: {},
+              result: `Operation "${operation || 'query'}" on sheet "${requestedSheetName}" was rejected by the user.`,
+              tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+              durationMs: Date.now() - startTime,
+              isFinal: true,
+            };
+            return;
+          }
+        }
+        // --- End HITL ---
+
         const executed = executeSheetCommand(commandArgs, sheets, defaultSheetName, sourceRows);
         normalizedArgs = executed.args;
         result = command === "QuerySheet" && Array.isArray(executed.result)
@@ -3232,6 +3448,45 @@ export async function* runLegacyAgent(
       }
       default:
         result = `ERROR: Unknown command '${command}'`;
+    }
+
+    const answerText = command === "NarrativeAnswer"
+      ? (rawArgs.text || rawArgs.narrative || defaultRawResult)
+      : (typeof result === "string" ? result : JSON.stringify(result));
+    const clarificationOptions = mergeClarificationOptions(answerText, rawArgs);
+    const isClarification = isClarificationAnswer(command, answerText, rawArgs);
+
+    if (isClarification && hitlController) {
+      yield {
+        turn,
+        command: "HumanClarification",
+        args: { prompt: answerText, options: clarificationOptions },
+        result: "Waiting for user clarification...",
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+        hitlKind: "clarification",
+        hitlPrompt: answerText,
+      };
+
+      const userReply = await hitlController.waitForHuman(answerText, "clarification", {
+        options: clarificationOptions,
+      });
+      if (userReply && userReply.trim() && userReply !== "reject" && userReply !== "cancel") {
+        llmInput = `User clarification: "${userReply}". Please use this clarification to proceed and execute the correct query.`;
+        continue;
+      } else {
+        yield {
+          turn,
+          command: "Error",
+          args: {},
+          result: "Query was cancelled by the user.",
+          tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+          durationMs: Date.now() - startTime,
+          isFinal: true,
+        };
+        return;
+      }
     }
 
     const isFinal =

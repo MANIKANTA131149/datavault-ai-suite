@@ -14,6 +14,7 @@ const planRoutes = require("./routes/plans");
 const llmRoutes = require("./routes/llm");
 const connectionsRoutes = require("./routes/connections");
 const dbQueryRoutes = require("./routes/db-query");
+const chatMemoryRoutes = require("./routes/chat-memory");
 
 
 const app = express();
@@ -28,6 +29,7 @@ app.use(
         origin.includes("localhost") ||
         origin.includes("127.0.0.1") ||
         origin.includes(".vercel.app") ||
+        origin.includes(".amplifyapp.com") ||
         (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL)
       ) {
         callback(null, true);
@@ -54,6 +56,7 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/llm", llmRoutes);
 app.use("/api/connections", connectionsRoutes);
 app.use("/api/db-query", dbQueryRoutes);
+app.use("/api/chat-memory", chatMemoryRoutes);
 
 
 app.get("/api/health", (_req, res) =>

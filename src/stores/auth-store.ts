@@ -177,6 +177,14 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           // Ignore store cleanup errors on logout
         }
+        try {
+          const { useSettingsStore } = await import("./settings-store");
+          useSettingsStore.setState({
+            selectedDatasetId: "",
+            selectedSheet: "",
+            selectedTable: "",
+          });
+        } catch {}
         set({ user: null, token: null, isFirstLogin: false });
       },
 

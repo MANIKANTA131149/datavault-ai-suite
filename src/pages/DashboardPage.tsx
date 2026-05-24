@@ -1,8 +1,10 @@
-import { useMemo } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useRef } from "react";
+import { motion, useMotionValue, animate } from "framer-motion";
 import {
   Activity,
   ArrowRight,
+  BarChart2,
+  Cable,
   CheckCircle,
   Clock,
   Database,
@@ -34,10 +36,12 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/PageHeader";
 import { useAuthStore } from "@/stores/auth-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useLLMStore, PROVIDER_LABELS } from "@/stores/llm-store";
+import { useConnectionStore } from "@/stores/connection-store";
 import type { Provider } from "@/lib/llm-client";
 
 const CHART_COLORS = [
@@ -90,9 +94,16 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { datasets } = useDatasetStore();
-  const { entries } = useHistoryStore();
+  const { datasets, fetchDatasets } = useDatasetStore();
+  const { entries, fetchHistory } = useHistoryStore();
+  const { connections, fetchConnections } = useConnectionStore();
   const { providerConfigs } = useLLMStore();
+
+  useEffect(() => {
+    fetchHistory();
+    fetchDatasets();
+    fetchConnections();
+  }, [fetchHistory, fetchDatasets, fetchConnections]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -112,6 +123,8 @@ export default function DashboardPage() {
   const averageDuration = entries.length
     ? Math.round(entries.reduce((sum, entry) => sum + entry.durationMs, 0) / entries.length)
     : 0;
+
+  const activeConnectionsCount = connections.filter((c) => c.status === "connected").length;
 
   const configuredProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((provider) => !!providerConfigs[provider]?.apiKey);
 
@@ -165,127 +178,148 @@ export default function DashboardPage() {
   const kpis = [
     {
       label: "Datasets",
+      rawValue: datasets.length,
       value: datasets.length.toLocaleString(),
       sub: `${totalRows.toLocaleString()} rows total`,
       icon: Database,
       color: "text-primary",
       bg: "bg-primary/10",
+      glow: "card-glow-blue",
+      trend: null,
+    },
+    {
+      label: "Connections",
+      rawValue: connections.length,
+      value: connections.length.toLocaleString(),
+      sub: `${activeConnectionsCount} active ${activeConnectionsCount === 1 ? "connection" : "connections"}`,
+      icon: Cable,
+      color: "text-pink-500",
+      bg: "bg-pink-500/10",
+      glow: "card-glow-pink",
       trend: null,
     },
     {
       label: "Queries Run",
+      rawValue: entries.length,
       value: entries.length.toLocaleString(),
       sub: `${last7Queries} this week`,
       icon: MessageSquare,
       color: "text-accent",
       bg: "bg-accent/10",
+      glow: "card-glow-purple",
       trend: { current: last7Queries, previous: previous7Queries },
     },
     {
       label: "Tokens Used",
+      rawValue: totalTokens,
       value: totalTokens.toLocaleString(),
       sub: `${(last7Tokens / 1000).toFixed(1)}k this week`,
       icon: Zap,
       color: "text-warning",
       bg: "bg-warning/10",
+      glow: "card-glow-amber",
       trend: { current: last7Tokens, previous: previous7Tokens },
     },
     {
       label: "Success Rate",
+      rawValue: successRate,
       value: `${successRate}%`,
       sub: `${averageDuration.toLocaleString()}ms avg response`,
       icon: Activity,
       color: "text-success",
       bg: "bg-success/10",
+      glow: "card-glow-green",
       trend: null,
     },
   ];
 
   return (
     <div className="page-shell-wide space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Workspace overview</p>
-            <h1 className="page-title">
-              {greeting}, {user?.name?.split(" ")[0]}
-            </h1>
-            <p className="page-copy">
-              See the health of your analytics workspace at a glance, from provider readiness to dataset coverage
-              and recent query activity, across every screen size.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <div className="inline-stat">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Last updated</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{lastUpdated}</p>
-              </div>
-              <div className="inline-stat">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Providers ready</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{configuredProviders.length}</p>
-              </div>
-              <div className="inline-stat">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Rows available</p>
-                <p className="mt-1 text-sm font-medium text-foreground">{totalRows.toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="w-full sm:w-auto">
-            <div className="grid grid-cols-1 overflow-hidden rounded-[24px] border border-border/70 bg-background/60 shadow-[0_20px_38px_-28px_hsl(var(--foreground)/0.5)] sm:grid-cols-2">
-              <Button
-                onClick={() => toast.success("Dashboard refreshed")}
-                variant="outline"
-                className="h-12 rounded-none border-0 bg-transparent justify-center px-6 shadow-none hover:bg-background/60 sm:min-w-[170px]"
-              >
-                <RefreshCw size={15} /> Refresh
-              </Button>
-              <Button
-                onClick={() => navigate("/app/query")}
-                className="h-12 rounded-none border-0 justify-center px-6 shadow-none sm:min-w-[190px]"
-              >
-                <MessageSquare size={15} /> New Query
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={`${greeting}, ${user?.name?.split(" ")[0]}`}
+        info="See the health of your analytics workspace at a glance, from provider readiness to dataset coverage and recent query activity."
+        stats={[
+          { label: "Last updated", value: lastUpdated, live: true },
+          { label: "Providers ready", value: configuredProviders.length, tone: "success" },
+          { label: "Rows available", value: totalRows.toLocaleString(), tone: "info" },
+        ]}
+        actions={
+          <>
+          <Button
+            onClick={async () => {
+              try {
+                await Promise.all([fetchHistory(), fetchDatasets(), fetchConnections()]);
+                toast.success("Dashboard refreshed");
+              } catch (e) {
+                toast.error("Failed to refresh dashboard");
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="h-9 flex-1 gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:flex-none"
+          >
+            <RefreshCw size={14} /> Refresh
+          </Button>
+          <Button
+            onClick={() => navigate("/app/query")}
+            size="sm"
+            className="h-9 flex-1 gap-1.5 sm:flex-none"
+          >
+            <MessageSquare size={14} /> New Query
+          </Button>
+          </>
+        }
+      />
 
       <div className="space-y-6 animate-in fade-in duration-300">
         {datasets.length === 0 && entries.length === 0 && (
-          <Card className="p-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-foreground">Start your workspace</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Upload a dataset, configure a provider, then ask your first question.
-                </p>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.4 }}
+          >
+            <Card className="relative overflow-hidden p-6">
+              {/* Decorative background gradient */}
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_hsl(var(--primary)/0.1),_transparent_60%)]" />
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                    <BarChart2 size={22} className="text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-foreground">Welcome to Querify Agent</h3>
+                    <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                      Upload a dataset or connect a database, configure your AI provider, then ask questions in plain English.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:shrink-0">
+                  <Button className="w-full whitespace-nowrap shadow-[0_4px_14px_-4px_hsl(var(--primary)/0.4)]" onClick={() => navigate("/app/datasets")}>
+                    <Upload size={14} className="mr-2" /> Upload dataset
+                  </Button>
+                  <Button variant="outline" className="w-full whitespace-nowrap" onClick={() => navigate("/app/settings")}>
+                    <Shield size={14} className="mr-2" /> Configure provider
+                  </Button>
+                  <Button variant="outline" className="w-full whitespace-nowrap" onClick={() => navigate("/app/query")}>
+                    <MessageSquare size={14} className="mr-2" /> Ask query
+                  </Button>
+                </div>
               </div>
-              <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:shrink-0">
-                <Button className="w-full whitespace-nowrap" onClick={() => navigate("/app/datasets")}>
-                  <Upload size={14} className="mr-2" /> Upload dataset
-                </Button>
-                <Button variant="outline" className="w-full whitespace-nowrap" onClick={() => navigate("/app/settings")}>
-                  <Shield size={14} className="mr-2" /> Configure provider
-                </Button>
-                <Button variant="outline" className="w-full whitespace-nowrap" onClick={() => navigate("/app/query")}>
-                  <MessageSquare size={14} className="mr-2" /> Ask query
-                </Button>
-              </div>
-            </div>
-          </Card>
+            </Card>
+          </motion.div>
         )}
 
         <div className="metric-strip">
           {kpis.map((kpi, index) => (
             <motion.div key={kpi.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
-              <Card className="metric-card group hover:border-primary/30 transition-all duration-200">
+              <Card className={`metric-card ${kpi.glow}`}>
                 <div className="mb-3 flex items-center justify-between">
                   <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
                   <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${kpi.bg}`}>
                     <kpi.icon size={15} className={kpi.color} />
                   </div>
                 </div>
-                <p className="text-2xl font-bold text-foreground">{kpi.value}</p>
+                <CountUpValue value={kpi.rawValue} formatted={kpi.value} />
                 <div className="mt-1 flex items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">{kpi.sub}</p>
                   {kpi.trend && <TrendBadge current={kpi.trend.current} previous={kpi.trend.previous} />}
@@ -302,8 +336,11 @@ export default function DashboardPage() {
               <p className="text-xs text-muted-foreground">Queries and token usage over the last 14 days</p>
             </div>
             {entries.length === 0 ? (
-              <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-                No activity yet. Run your first query to see data here.
+              <div className="flex h-40 flex-col items-center justify-center gap-3">
+                <div className="breathe">
+                  <BarChart2 size={36} className="text-muted-foreground/30" />
+                </div>
+                <p className="text-sm text-muted-foreground">Run your first query to see activity here</p>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={190}>
@@ -333,7 +370,10 @@ export default function DashboardPage() {
           <Card className="p-6">
             <h3 className="mb-4 text-sm font-semibold text-foreground">Provider Usage</h3>
             {providerData.length === 0 ? (
-              <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">No data yet</div>
+              <div className="flex h-32 flex-col items-center justify-center gap-2">
+                <div className="breathe"><Database size={28} className="text-muted-foreground/25" /></div>
+                <p className="text-xs text-muted-foreground">No provider data yet</p>
+              </div>
             ) : (
               <>
                 <ResponsiveContainer width="100%" height={120}>
@@ -364,7 +404,10 @@ export default function DashboardPage() {
           <Card className="p-6">
             <h3 className="mb-4 text-sm font-semibold text-foreground">Top Datasets</h3>
             {datasetUsage.length === 0 ? (
-              <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">No data yet</div>
+              <div className="flex h-32 flex-col items-center justify-center gap-2">
+                <div className="breathe"><BarChart2 size={28} className="text-muted-foreground/25" /></div>
+                <p className="text-xs text-muted-foreground">No dataset queries yet</p>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart data={datasetUsage} layout="vertical" margin={{ left: 0, right: 10 }}>
@@ -405,6 +448,10 @@ export default function DashboardPage() {
                 <span className="font-medium text-foreground">{datasets.length}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Connections</span>
+                <span className="font-medium text-foreground">{connections.length}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">History entries</span>
                 <span className="font-medium text-foreground">{entries.length}</span>
               </div>
@@ -423,9 +470,14 @@ export default function DashboardPage() {
               )}
             </div>
             {entries.length === 0 ? (
-              <div className="py-8 text-center">
-                <MessageSquare size={32} className="mx-auto mb-3 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">No queries yet</p>
+              <div className="flex flex-col items-center py-8">
+                <div className="breathe mb-3">
+                  <MessageSquare size={32} className="text-muted-foreground/30" />
+                </div>
+                <p className="text-sm text-muted-foreground">No queries yet — ask your first question</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate("/app/query")}>
+                  <MessageSquare size={13} className="mr-1.5" /> Start querying
+                </Button>
               </div>
             ) : (
               <div className="space-y-2">
@@ -478,6 +530,35 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── CountUp animated KPI value ─────────────────────────────────────────────
+function CountUpValue({ value, formatted }: { value: number; formatted: string }) {
+  const motionValue = useMotionValue(0);
+  const displayRef  = useRef<HTMLParagraphElement>(null);
+  const prevValue   = useRef(value);
+
+  useEffect(() => {
+    const controls = animate(motionValue, value, {
+      duration: 0.9,
+      ease: "easeOut",
+      onUpdate(latest) {
+        if (!displayRef.current) return;
+        // Format the same way as the original (keep % suffix if present)
+        const hasSuffix = formatted.endsWith("%");
+        const numStr    = Math.round(latest).toLocaleString();
+        displayRef.current.textContent = hasSuffix ? `${numStr}%` : numStr;
+      },
+    });
+    prevValue.current = value;
+    return controls.stop;
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <p ref={displayRef} className="text-2xl font-bold text-foreground tabular-nums">
+      {formatted}
+    </p>
   );
 }
 

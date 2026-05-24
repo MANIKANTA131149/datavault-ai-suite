@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Users, Shield, UserPlus, Search, MoreHorizontal, Trash2, Ban, CheckCircle, Crown, Eye, BarChart3, Database, MessageSquare, Activity, ClipboardList, FileDown, AlertTriangle, Filter, CreditCard } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -83,6 +84,7 @@ const PLAN_COLORS: Record<PlanTier, string> = {
 };
 
 export default function AdminPage() {
+  const navigate = useNavigate();
   const { user: currentUser } = useAuthStore();
   const { context: planContext, fetchPlan, checkExport } = usePlanStore();
   const [activeTab, setActiveTab] = useState("users");
@@ -240,7 +242,12 @@ export default function AdminPage() {
       URL.revokeObjectURL(url);
       toast.success("Audit log exported");
     } catch (err: any) {
-      toast.error(err.message || "Audit export requires Enterprise plan");
+      toast.error(err.message || "Audit export requires Enterprise plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 

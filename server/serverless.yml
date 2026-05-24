@@ -1,0 +1,41 @@
+service: datavault-ai-backend
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1 # Adjust this to your preferred AWS region
+  stage: prod
+  memorySize: 1024 # Custom resource limits (sufficient for database drivers)
+  timeout: 30 # AWS Lambda timeout (seconds)
+  environment:
+    MONGODB_URI: ${env:MONGODB_URI}
+    JWT_SECRET: ${env:JWT_SECRET}
+    FRONTEND_URL: ${env:FRONTEND_URL}
+    AUTH0_DOMAIN: ${env:AUTH0_DOMAIN}
+    AUTH0_CLIENT_SECRET: ${env:AUTH0_CLIENT_SECRET}
+
+package:
+  patterns:
+    - '!node_modules/**/test/**'
+    - '!node_modules/**/tests/**'
+    - '!node_modules/**/README*'
+    - '!node_modules/**/*.md'
+    - '!node_modules/**/LICENSE'
+    - '!node_modules/**/*.ts'
+    - '!node_modules/**/*.map'
+    - '!node_modules/**/docs/**'
+    - '!node_modules/**/example/**'
+    - '!node_modules/**/examples/**'
+
+
+functions:
+  api:
+    handler: lambda.handler
+    events:
+      - httpApi:
+          path: /api/{proxy+}
+          method: any
+      - httpApi:
+          path: /api
+          method: any
