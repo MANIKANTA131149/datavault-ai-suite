@@ -28,7 +28,8 @@ export function CommandPalette() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      const isBackquote = e.key === "`" || e.key === "~" || (e as any).code === "Backquote";
+      if ((e.metaKey || e.ctrlKey) && isBackquote) {
         e.preventDefault();
         setOpen((p) => !p);
         setQuery("");
