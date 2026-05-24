@@ -1,4 +1,16 @@
-import { memo, useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
+import React, {
+  memo,
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useId,
+  useCallback,
+  Fragment,
+  type CSSProperties,
+  type ReactNode,
+  type KeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,8 +20,9 @@ import {
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
-  Share2, Mic
+  Share2, Mic,
 } from "lucide-react";
+import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
 import { ShareCard } from "@/components/ShareCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +48,7 @@ import { usePlanStore } from "@/stores/plan-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
 import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import { parseOptionsFromText, cleanPromptText } from "@/lib/clarification-options";
 import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
 import { executeDatabaseQuery, fetchDatabaseSchema, type DatabaseSchema, type DatabaseTableData } from "@/lib/db-query-client";
@@ -60,6 +74,8 @@ const COMMAND_COLORS: Record<string, string> = {
   FinalAnswer: "bg-success/10 text-success",
   NarrativeAnswer: "bg-purple-500/10 text-purple-400",
   Answer: "bg-success/10 text-success",
+  HumanClarification: "bg-primary/10 text-primary",
+  HumanApproval: "bg-warning/10 text-warning",
   MaxTurnsReached: "bg-destructive/10 text-destructive",
   Error: "bg-destructive/10 text-destructive",
 };
@@ -464,6 +480,12 @@ function getFinalStep(steps?: AgentStep[]) {
       return step;
     }
   }
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (step.command === "HumanClarification" && step.hitlPrompt) {
+      return { ...step, result: step.hitlPrompt };
+    }
+  }
   return null;
 }
 
@@ -649,8 +671,150 @@ const VirtualizedResultTable = memo(function VirtualizedResultTable({
   );
 });
 
+// ─── Lightweight Markdown Parser ─────────────────────────────────────────────
+function renderMarkdown(text: string) {
+  if (typeof text !== "string") return String(text);
+
+  const lines = text.split("\n");
+  const elements: ReactNode[] = [];
+  let inList = false;
+  let listItems: string[] = [];
+
+  const parseInline = (line: string): ReactNode[] => {
+    const tokens: ReactNode[] = [];
+    let currentText = line;
+    let keyIndex = 0;
+
+    while (currentText) {
+      const boldMatch = currentText.match(/\*\*(.*?)\*\*/);
+      const italicMatch = currentText.match(/\*(.*?)\*/);
+      const codeMatch = currentText.match(/`(.*?)`/);
+
+      const matches = [
+        { type: "bold", index: boldMatch?.index ?? -1, text: boldMatch?.[0], content: boldMatch?.[1] },
+        { type: "italic", index: italicMatch?.index ?? -1, text: italicMatch?.[0], content: italicMatch?.[1] },
+        { type: "code", index: codeMatch?.index ?? -1, text: codeMatch?.[0], content: codeMatch?.[1] },
+      ].filter((m) => m.index !== -1);
+
+      if (matches.length === 0) {
+        tokens.push(<Fragment key={keyIndex++}>{currentText}</Fragment>);
+        break;
+      }
+
+      matches.sort((a, b) => a.index! - b.index!);
+      const firstMatch = matches[0];
+
+      if (firstMatch.index! > 0) {
+        tokens.push(
+          <Fragment key={keyIndex++}>
+            {currentText.slice(0, firstMatch.index)}
+          </Fragment>
+        );
+      }
+
+      if (firstMatch.type === "bold") {
+        tokens.push(
+          <strong key={keyIndex++} className="font-bold text-foreground">
+            {firstMatch.content}
+          </strong>
+        );
+      } else if (firstMatch.type === "italic") {
+        tokens.push(
+          <em key={keyIndex++} className="italic text-muted-foreground">
+            {firstMatch.content}
+          </em>
+        );
+      } else if (firstMatch.type === "code") {
+        tokens.push(
+          <code key={keyIndex++} className="bg-foreground/5 text-foreground px-1.5 py-0.5 rounded font-mono text-xs border border-border/30">
+            {firstMatch.content}
+          </code>
+        );
+      }
+
+      currentText = currentText.slice(firstMatch.index! + firstMatch.text!.length);
+    }
+
+    return tokens;
+  };
+
+  const flushList = (key: number) => {
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={`ul-${key}`} className="list-disc pl-5 my-2 space-y-1">
+          {listItems.map((item, idx) => (
+            <li key={idx} className="text-sm text-foreground leading-relaxed">
+              {parseInline(item)}
+            </li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.trim().startsWith("- ") || line.trim().startsWith("* ")) {
+      inList = true;
+      const content = line.trim().slice(2);
+      listItems.push(content);
+      continue;
+    } else {
+      if (inList) {
+        flushList(i);
+        inList = false;
+      }
+    }
+
+    if (line.startsWith("### ")) {
+      elements.push(
+        <h4 key={i} className="text-sm font-semibold text-foreground mt-4 mb-2">
+          {parseInline(line.slice(4))}
+        </h4>
+      );
+    } else if (line.startsWith("## ")) {
+      elements.push(
+        <h3 key={i} className="text-base font-semibold text-foreground mt-4 mb-2">
+          {parseInline(line.slice(3))}
+        </h3>
+      );
+    } else if (line.startsWith("# ")) {
+      elements.push(
+        <h2 key={i} className="text-lg font-bold text-foreground mt-4 mb-2">
+          {parseInline(line.slice(2))}
+        </h2>
+      );
+    } else if (line.trim()) {
+      elements.push(
+        <p key={i} className="text-sm text-foreground leading-relaxed mb-2">
+          {parseInline(line)}
+        </p>
+      );
+    } else {
+      elements.push(<div key={i} className="h-2" />);
+    }
+  }
+
+  if (inList) {
+    flushList(lines.length);
+  }
+
+  return <div className="space-y-1">{elements}</div>;
+}
+
 // ─── NarrativeResult Component ────────────────────────────────────────────────
-function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
+function NarrativeResult({ 
+  result, 
+  onSubmitQuickReply 
+}: { 
+  result: { narrative: string; highlights?: { label: string; value: string }[] }; 
+  onSubmitQuickReply?: (text: string) => void;
+}) {
+  const options = useMemo(() => parseOptionsFromText(result.narrative), [result.narrative]);
+  const cleanBody = useMemo(() => cleanPromptText(result.narrative, options), [result.narrative, options]);
+
   return (
     <div className="ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
       <div className="flex items-center gap-2 mb-1">
@@ -667,7 +831,11 @@ function NarrativeResult({ result }: { result: { narrative: string; highlights?:
           ))}
         </div>
       )}
-      <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{result.narrative}</div>
+      <div className="text-sm text-foreground leading-relaxed">{renderMarkdown(options.length > 0 ? cleanBody : result.narrative)}</div>
+
+      {onSubmitQuickReply && options.length > 0 && (
+        <HitlQuickChoices options={options} onSubmit={onSubmitQuickReply} />
+      )}
     </div>
   );
 }
@@ -822,6 +990,7 @@ const ResultPanel = memo(function ResultPanel({
   result: any; query: string; onClose: () => void; onBookmark: () => void;
   datasetName: string; onShare: () => void;
 }) {
+  const navigate = useNavigate();
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
@@ -1057,7 +1226,7 @@ const ResultPanel = memo(function ResultPanel({
                 ))}
               </div>
             )}
-            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{result.narrative}</p>
+            <div className="text-sm leading-relaxed">{renderMarkdown(result.narrative)}</div>
           </div>
         )}
 
@@ -1395,7 +1564,7 @@ const ResultPanel = memo(function ResultPanel({
         )}
         {typeof result === "string" && !isBlankString && (
           <div className="bg-card rounded-md p-4 border border-border">
-            <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{result}</p>
+            <div className="text-sm leading-relaxed">{renderMarkdown(result)}</div>
           </div>
         )}
 
@@ -1447,7 +1616,12 @@ const ResultPanel = memo(function ResultPanel({
 });
 
 // ─── InlineFinalResult ────────────────────────────────────────────────────────
-const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: any }) {
+interface InlineFinalResultProps {
+  result: any;
+  onSubmitQuickReply?: (text: string) => void;
+}
+
+const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuickReply }: InlineFinalResultProps) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
@@ -1465,10 +1639,21 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
   );
   const inlineChartLimited = chartRows.length > inlineChartRows.length;
 
+  const options = useMemo(() => {
+    if (typeof result !== "string") return [];
+    return parseOptionsFromText(result);
+  }, [result]);
+
+  const cleanBody = useMemo(() => {
+    if (typeof result !== "string") return "";
+    const cleaned = cleanPromptText(result, options);
+    return cleaned.trim() ? cleaned : result;
+  }, [result, options]);
+
   useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
 
   if (isNarrative) {
-    return <NarrativeResult result={result} />;
+    return <NarrativeResult result={result} onSubmitQuickReply={onSubmitQuickReply} />;
   }
 
   return (
@@ -1565,12 +1750,29 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
         </>
       )}
 
+      {isEmptyArray && (
+        <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+          Query completed but returned no rows.
+        </div>
+      )}
+      {isEmptyObject && (
+        <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+          Query completed with an empty result.
+        </div>
+      )}
       {isBlankString && (
         <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
           No answer returned from the model.
         </div>
       )}
-      {!isBlankString && typeof result === "string" && <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{result}</p>}
+      {!isBlankString && typeof result === "string" && (
+        <div className="space-y-3">
+          <div className="text-sm leading-relaxed">{renderMarkdown(options.length > 0 ? cleanBody : result)}</div>
+          {onSubmitQuickReply && options.length > 0 && (
+            <HitlQuickChoices options={options} onSubmit={onSubmitQuickReply} />
+          )}
+        </div>
+      )}
       {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && (
         <pre className="max-h-52 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-border bg-background-secondary p-2 text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
           {JSON.stringify(result, null, 2)}
@@ -2214,6 +2416,13 @@ export default function QueryPage() {
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
   const [queryExpanded, setQueryExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [hitlState, setHitlState] = useState<{
+    kind: "clarification" | "approval";
+    prompt: string;
+    options?: string[];
+    details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] };
+  } | null>(null);
+  const hitlResolverRef = useRef<((value: string) => void) | null>(null);
   const [lastFailedQuery, setLastFailedQuery] = useState("");
   const [apiWarning, setApiWarning] = useState("");
 
@@ -2313,7 +2522,7 @@ export default function QueryPage() {
     const scroller = chatScrollRef.current;
     if (!scroller) return;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
-  }, [messages, currentSteps]);
+  }, [messages, currentSteps, hitlState]);
   useEffect(() => {
     if (!isRunning) {
       setElapsedMs(0);
@@ -2536,10 +2745,23 @@ export default function QueryPage() {
     const steps: AgentStep[] = [];
     const startTime = Date.now();
 
+    const hitlController = {
+      waitForHuman: (
+        prompt: string,
+        kind: "clarification" | "approval",
+        details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] }
+      ) => {
+        return new Promise<string>((resolve) => {
+          setHitlState({ kind, prompt, options: details?.options, details });
+          hitlResolverRef.current = resolve;
+        });
+      },
+    };
+
     try {
       for await (const step of runLegacyAgent(
         question, workbookSheets, selectedSheet, activeProvider, activeModel, apiKey, temperature, maxTokens,
-        systemPrompt || undefined, conversationContext, providerOptions
+        systemPrompt || undefined, conversationContext, providerOptions, hitlController
       )) {
         if (cancelRequestedRef.current) {
           steps.push({
@@ -2659,6 +2881,19 @@ export default function QueryPage() {
     const startTime = Date.now();
     let runner: AsyncGenerator<AgentStep>;
 
+    const hitlController = {
+      waitForHuman: (
+        prompt: string,
+        kind: "clarification" | "approval",
+        details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] }
+      ) => {
+        return new Promise<string>((resolve) => {
+          setHitlState({ kind, prompt, options: details?.options, details });
+          hitlResolverRef.current = resolve;
+        });
+      },
+    };
+
     if (isDbConnection) {
       if (!selectedConnection || !selectedConnectionId) {
         toast.error("Select a connected database first");
@@ -2667,7 +2902,10 @@ export default function QueryPage() {
       }
 
       const schema = await loadDbSchema(selectedConnectionId, { refresh: true });
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRunning(false);
+        return;
+      }
       if (!schema || schema.tables.length === 0) {
         toast.error("Database schema is unavailable for this connection.");
         setIsRunning(false);
@@ -2679,7 +2917,10 @@ export default function QueryPage() {
       const selectedTableSchema = activeTableName
         ? await loadDbTableSchema(selectedConnectionId, activeTableName)
         : null;
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRunning(false);
+        return;
+      }
       if (selectedTableSchema) {
         databaseTables = databaseTables.map((table) =>
           table.name === selectedTableSchema.name ? { ...table, ...selectedTableSchema } : table
@@ -2715,7 +2956,8 @@ export default function QueryPage() {
             });
             return response;
           },
-        }
+        },
+        hitlController
       );
     } else {
       let workbookSheets = selectedDataset?.data?.sheets;
@@ -2725,7 +2967,10 @@ export default function QueryPage() {
         const fetched = await loadDatasetData(selectedDatasetId);
         workbookSheets = fetched?.sheets;
       }
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRunning(false);
+        return;
+      }
       if (!workbookSheets || !workbookSheets[selectedSheet]) {
         toast.error("Dataset data unavailable. Please re-upload the file.");
         setIsRunning(false);
@@ -2743,7 +2988,8 @@ export default function QueryPage() {
         maxTokens,
         systemPrompt || undefined,
         conversationContext,
-        providerOptions
+        providerOptions,
+        hitlController
       );
     }
 
@@ -2799,11 +3045,17 @@ export default function QueryPage() {
         fetchPlan();
       }
     } catch (err: any) {
+      if (hitlResolverRef.current) {
+        hitlResolverRef.current("reject");
+        hitlResolverRef.current = null;
+      }
+      setHitlState(null);
       toast.error(err.message);
       setLastFailedQuery(question);
       setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
     } finally {
       setIsRunning(false);
+      setHitlState(null);
     }
   };
 
@@ -2812,6 +3064,11 @@ export default function QueryPage() {
   const handleStopQuery = () => {
     cancelRequestedRef.current = true;
     setIsRunning(false);
+    if (hitlResolverRef.current) {
+      hitlResolverRef.current("reject");
+      hitlResolverRef.current = null;
+    }
+    setHitlState(null);
     setMessages((prev) => [...prev, { role: "agent", content: "Query stopped by user.", steps: [] }]);
     setCurrentSteps([]);
     toast.info("Query stopped");
@@ -2848,7 +3105,7 @@ export default function QueryPage() {
     return "";
   }, [input, smartSuggestions, activeColumns]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Tab" && activeSuggestion) {
       e.preventDefault();
       setInput((prev) => prev + activeSuggestion);
@@ -3275,7 +3532,14 @@ export default function QueryPage() {
                         )}
                       </div>
                     )}
-                    {finalStep && <InlineFinalResult result={finalStep.result} />}
+                    {finalStep && (
+                      <InlineFinalResult 
+                        result={finalStep.result} 
+                        onSubmitQuickReply={(text) => {
+                          handleSend(text);
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -3283,24 +3547,52 @@ export default function QueryPage() {
           })}
 
           {isRunning && (
-            <div className="space-y-1">
-              {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
-              {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
-              <div className="flex flex-wrap items-center gap-2 sm:pl-10">
-                {/* Premium 3-dot thinking indicator */}
-                <div className="flex items-center gap-1.5">
-                  <span className="thinking-dot" />
-                  <span className="thinking-dot" />
-                  <span className="thinking-dot" />
+            <div className="space-y-3 min-w-0 w-full">
+              {currentSteps.length > 0 && !hitlState && (
+                <StepsTimeline steps={currentSteps} live />
+              )}
+              {currentFinalStep && !hitlState && (
+                <InlineFinalResult 
+                  result={currentFinalStep.result} 
+                  onSubmitQuickReply={(text) => {
+                    handleSend(text);
+                  }}
+                />
+              )}
+
+              <AnimatePresence mode="wait">
+                {hitlState ? (
+                  <HitlPanel
+                    key="hitl-active"
+                    state={hitlState}
+                    onSubmit={(val) => {
+                      if (hitlResolverRef.current) {
+                        hitlResolverRef.current(val);
+                        hitlResolverRef.current = null;
+                        setHitlState(null);
+                      }
+                    }}
+                    onStop={handleStopQuery}
+                  />
+                ) : null}
+              </AnimatePresence>
+              {!hitlState && (
+                <div className="flex flex-wrap items-center gap-2 sm:pl-10">
+                  {/* Premium 3-dot thinking indicator */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="thinking-dot" />
+                    <span className="thinking-dot" />
+                    <span className="thinking-dot" />
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    Agent is thinking... {Math.floor(elapsedMs / 1000)}s
+                    {elapsedMs > 30000 ? " — taking longer than usual" : ""}
+                  </span>
+                  <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
+                    <X size={12} className="mr-1" /> Stop
+                  </Button>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  Agent is thinking... {Math.floor(elapsedMs / 1000)}s
-                  {elapsedMs > 30000 ? " — taking longer than usual" : ""}
-                </span>
-                <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
-                  <X size={12} className="mr-1" /> Stop
-                </Button>
-              </div>
+              )}
             </div>
           )}
           <div ref={chatEndRef} />

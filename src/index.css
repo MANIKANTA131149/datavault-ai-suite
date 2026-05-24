@@ -445,6 +445,27 @@
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
+/* ── Human-in-the-loop panel ─────────────────────────────────────────────── */
+.hitl-panel-root {
+  scroll-margin: 1rem 0;
+}
+
+.hitl-kbd {
+  display: inline-flex;
+  min-width: 1.125rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.25rem;
+  margin: 0 0.1rem;
+  border-radius: 0.25rem;
+  border: 1px solid hsl(var(--border) / 0.8);
+  background: hsl(var(--muted) / 0.5);
+  font-size: 0.625rem;
+  font-family: ui-monospace, monospace;
+  line-height: 1.25;
+  color: hsl(var(--muted-foreground));
+}
+
 /* ── Count-up number flash ───────────────────────────────────────────────── */
 @keyframes value-pop {
   0%   { transform: scale(1); }
