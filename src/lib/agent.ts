@@ -1831,6 +1831,14 @@ SQL mode rules:
 - Use exact table and column names from GetSchema/GetColumns.
 - Quote qualified identifiers according to the selected database dialect.
 
+SQL mode rules:
+- Use QuerySQL/ExecuteSQL for SQL databases whenever possible.
+- Only generate a single read-only SELECT or WITH query.
+- Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, MERGE, CALL, EXEC, GRANT, REVOKE, COPY, VACUUM, PRAGMA, transaction, or multi-statement SQL.
+- For detail/listing queries, include a sensible LIMIT/TOP/FETCH FIRST cap, usually 50 or 100. Aggregates and counts do not need a row limit.
+- Use exact table and column names from GetSchema/GetColumns.
+- Quote qualified identifiers according to the selected database dialect.
+
 Supported operations:
 - count {}
 - head {"n": 10}
@@ -3052,7 +3060,6 @@ export async function* runDatabaseAgent(
           }
         }
         // --- End HITL ---
-
         const toolResult = await tools.executeSql({
           sql,
           isFinal: command === "ExecuteSQL",
