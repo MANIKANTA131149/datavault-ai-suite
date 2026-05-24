@@ -26,6 +26,8 @@ interface AuthState {
   user: User | null;
   token: string | null;
   isFirstLogin: boolean;
+  hasHydrated: boolean;
+  setHasHydrated: (v: boolean) => void;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   loginWithAuth0: (accessToken: string) => Promise<void>;
@@ -58,6 +60,8 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isFirstLogin: false,
+      hasHydrated: false,
+      setHasHydrated: (v) => set({ hasHydrated: v }),
 
       // ─── Sign In ───────────────────────────────────────────────────────────
       login: async (email: string, password: string) => {
@@ -264,6 +268,9 @@ export const useAuthStore = create<AuthState>()(
         token: state.token,
         isFirstLogin: state.isFirstLogin,
       }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
     }
   )
 );

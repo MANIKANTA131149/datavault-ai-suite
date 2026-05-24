@@ -29,6 +29,7 @@ import { useConnectionStore } from "@/stores/connection-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/ProviderLogo";
+import { toast } from "sonner";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/get-started": "Get Started",
@@ -172,7 +173,7 @@ function MobileBottomNav() {
 
 // ─── AppLayout ────────────────────────────────────────────────────────────────
 export default function AppLayout() {
-  const { user, hydrateRole }         = useAuthStore();
+  const { user, hasHydrated, hydrateRole, logout } = useAuthStore();
   const location                       = useLocation();
   const navigate                       = useNavigate();
   const { activeProvider, activeModel } = useLLMStore();
@@ -184,27 +185,73 @@ export default function AppLayout() {
   const { fetchNotifications }         = useNotificationsStore();
   const { fetchConnections }           = useConnectionStore();
   const [sidebarOpen, setSidebarOpen]  = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(false);
 
   useEffect(() => {
     if (user) {
-      fetchDatasets();
-      fetchHistory();
-      fetchSettings();
-      fetchInsights();
-      fetchNotifications();
-      fetchConnections();
-      fetchPlan();
-      hydrateRole();
+      let cancelled = false;
+      setBootstrapping(true);
+      void (async () => {
+        await Promise.allSettled([
+          fetchDatasets(),
+          fetchHistory(),
+          fetchSettings(),
+          fetchInsights(),
+          fetchNotifications(),
+          fetchConnections(),
+          fetchPlan(),
+          hydrateRole(),
+        ]);
+        if (!cancelled) setBootstrapping(false);
+      })();
+      return () => {
+        cancelled = true;
+      };
     } else {
       applyTheme(theme);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    const handler = () => {
+      void (async () => {
+        toast.error("Session expired. Please sign in again.");
+        await logout();
+        navigate("/auth", { replace: true });
+      })();
+    };
+
+    window.addEventListener("datavault:unauthorized", handler, { once: true });
+    return () => window.removeEventListener("datavault:unauthorized", handler);
+  }, [logout, navigate]);
+
+  if (!hasHydrated) {
+    return (
+      <div className="flex min-h-svh items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) return <Navigate to="/auth" replace />;
+
+  if (bootstrapping) {
+    return (
+      <div className="flex min-h-svh items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm">Loading your workspace…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-background">

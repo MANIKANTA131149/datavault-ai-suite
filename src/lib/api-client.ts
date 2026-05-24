@@ -2,6 +2,8 @@ import { getApiBaseUrl } from "@/lib/api-base";
 
 const BASE_URL = getApiBaseUrl();
 
+let unauthorizedDispatched = false;
+
 /** Pull the JWT from the persisted auth store in localStorage */
 function getToken(): string | null {
   try {
@@ -27,8 +29,33 @@ async function apiFetch<T = unknown>(
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body?.error ?? "Request failed");
+    const text = await res.text();
+    const body = (() => {
+      try {
+        return JSON.parse(text || "{}");
+      } catch {
+        return { error: text || res.statusText };
+      }
+    })();
+
+    // Only treat 401 as an expired/invalid session token signal.
+    // Do NOT auto-logout on 403 because it may be a permissions/RBAC error.
+    if (!unauthorizedDispatched && res.status === 401) {
+      const msg = String(body?.error ?? body?.message ?? "").toLowerCase();
+      const looksLikeTokenIssue =
+        msg.includes("token") || msg.includes("jwt") || msg.includes("expired") || msg.includes("unauthorized");
+
+      if (looksLikeTokenIssue || !msg) {
+        unauthorizedDispatched = true;
+        window.dispatchEvent(
+          new CustomEvent("datavault:unauthorized", {
+            detail: { status: res.status, path, message: body?.error ?? body?.message ?? "" },
+          })
+        );
+      }
+    }
+
+    throw new Error(body?.error ?? body?.message ?? "Request failed");
   }
 
   return res.json() as Promise<T>;
