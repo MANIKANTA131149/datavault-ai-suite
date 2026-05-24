@@ -44,24 +44,30 @@ app.use(
 app.use(express.json({ limit: "50mb" }));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRoutes);
-app.use("/api/datasets", datasetRoutes);
-app.use("/api/history", historyRoutes);
-app.use("/api/settings", settingsRoutes);
-app.use("/api/insights", insightsRoutes);
-app.use("/api/plans", planRoutes);
-app.use("/api/admin", adminRoutes);
-app.use("/api/audit", auditRoutes);
-app.use("/api/notifications", notificationsRoutes);
-app.use("/api/llm", llmRoutes);
-app.use("/api/connections", connectionsRoutes);
-app.use("/api/db-query", dbQueryRoutes);
-app.use("/api/chat-memory", chatMemoryRoutes);
+function mountApiRoutes(basePath) {
+  app.use(`${basePath}/auth`, authRoutes);
+  app.use(`${basePath}/datasets`, datasetRoutes);
+  app.use(`${basePath}/history`, historyRoutes);
+  app.use(`${basePath}/settings`, settingsRoutes);
+  app.use(`${basePath}/insights`, insightsRoutes);
+  app.use(`${basePath}/plans`, planRoutes);
+  app.use(`${basePath}/admin`, adminRoutes);
+  app.use(`${basePath}/audit`, auditRoutes);
+  app.use(`${basePath}/notifications`, notificationsRoutes);
+  app.use(`${basePath}/llm`, llmRoutes);
+  app.use(`${basePath}/connections`, connectionsRoutes);
+  app.use(`${basePath}/db-query`, dbQueryRoutes);
+  app.use(`${basePath}/chat-memory`, chatMemoryRoutes);
+}
+
+// Primary API routes.
+mountApiRoutes("/api");
+// Some API Gateway / reverse-proxy setups strip the `/api` base path before forwarding to the app.
+// Mounting at root keeps the same handlers reachable as `/<route>` (e.g. `/llm/alibaba/chat`).
+mountApiRoutes("");
 
 
-app.get("/api/health", (_req, res) =>
-  res.json({ status: "ok", ts: new Date().toISOString() })
-);
+app.get(["/api/health", "/health"], (_req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 const clientDistPath = path.join(__dirname, "..", "dist");

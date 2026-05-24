@@ -150,6 +150,9 @@ Provider/model selection and API keys are managed in the app Settings.
 
 - Frontend is Vite-based and can be deployed to Vercel/Netlify/static hosting.
 - Backend is an Express API and should be deployed where Node.js + MongoDB connectivity are available.
+- If frontend and backend are deployed separately, set `VITE_API_URL` in the frontend environment to your backend base URL (for example `https://your-backend.example.com/api`). Otherwise the frontend will call `https://<your-frontend-domain>/api/*` by default.
+- Alibaba DashScope (Qwen) and Hugging Face are proxied through the backend (`/api/llm/alibaba/chat` and `/api/llm/huggingface/chat`). Static-only hosting (for example AWS Amplify Hosting with the provided `amplify.yml`) will not serve these `/api/*` routes unless you deploy the backend separately and configure `VITE_API_URL`.
+- Vercel deployments can host both frontend and backend using `vercel.json` + `api/index.js` (serverless handler).
 
 ## License
 
