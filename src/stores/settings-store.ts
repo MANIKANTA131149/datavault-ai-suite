@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "@/lib/api-client";
+import { useAuthStore } from "./auth-store";
 
 export type Theme = "dark" | "light" | "system";
 export type CodeFont = "jetbrains" | "fira" | "cascadia";
@@ -9,10 +10,20 @@ interface SettingsState {
   compactMode: boolean;
   codeFont: CodeFont;
   loading: boolean;
+  hasFetched: boolean;
+
+  // Selected Query Page Workspace preferences
+  selectedDatasetId: string;
+  selectedSheet: string;
+  selectedTable: string;
 
   setTheme: (theme: Theme) => void;
   setCompactMode: (v: boolean) => void;
   setCodeFont: (font: CodeFont) => void;
+
+  setSelectedDatasetId: (id: string) => void;
+  setSelectedSheet: (sheet: string) => void;
+  setSelectedTable: (table: string) => void;
 
   fetchSettings: () => Promise<void>;
   saveSettings: (providerConfigs?: Record<string, unknown>) => Promise<void>;
@@ -30,11 +41,40 @@ function applyThemeToDom(theme: Theme) {
   }
 }
 
+// ─── User-Scoped LocalStorage Query Cache Helpers ──────────────────────────
+function getLocalQueryCache(userId: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(`datavault-query-settings-${userId}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalQueryCache(userId: string, data: Record<string, string>) {
+  try {
+    if (userId === "anonymous" || !userId) return;
+    const current = getLocalQueryCache(userId);
+    localStorage.setItem(
+      `datavault-query-settings-${userId}`,
+      JSON.stringify({ ...current, ...data })
+    );
+  } catch (err) {
+    console.error("Failed to save local query cache:", err);
+  }
+}
+
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   theme: "dark",
   compactMode: false,
   codeFont: "jetbrains",
   loading: false,
+  hasFetched: false,
+
+  // Selected workspace settings
+  selectedDatasetId: "",
+  selectedSheet: "",
+  selectedTable: "",
 
   applyTheme: applyThemeToDom,
 
@@ -46,34 +86,125 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setCompactMode: (compactMode: boolean) => set({ compactMode }),
   setCodeFont: (codeFont: CodeFont) => set({ codeFont }),
 
+  setSelectedDatasetId: (selectedDatasetId: string) => {
+    set({ selectedDatasetId });
+    const userId = useAuthStore.getState().user?.id || "anonymous";
+    if (userId !== "anonymous") {
+      saveLocalQueryCache(userId, { selectedDatasetId });
+    }
+    // Sync to MongoDB in the background
+    import("./llm-store").then(({ useLLMStore }) => {
+      get().saveSettings(useLLMStore.getState().providerConfigs).catch(() => {});
+    });
+  },
+
+  setSelectedSheet: (selectedSheet: string) => {
+    set({ selectedSheet });
+    const userId = useAuthStore.getState().user?.id || "anonymous";
+    if (userId !== "anonymous") {
+      saveLocalQueryCache(userId, { selectedSheet });
+    }
+    // Sync to MongoDB in the background
+    import("./llm-store").then(({ useLLMStore }) => {
+      get().saveSettings(useLLMStore.getState().providerConfigs).catch(() => {});
+    });
+  },
+
+  setSelectedTable: (selectedTable: string) => {
+    set({ selectedTable });
+    const userId = useAuthStore.getState().user?.id || "anonymous";
+    if (userId !== "anonymous") {
+      saveLocalQueryCache(userId, { selectedTable });
+    }
+    // Sync to MongoDB in the background
+    import("./llm-store").then(({ useLLMStore }) => {
+      get().saveSettings(useLLMStore.getState().providerConfigs).catch(() => {});
+    });
+  },
+
   fetchSettings: async () => {
     set({ loading: true });
     try {
-      const data = await api.get<Record<string, unknown>>("/settings");
+      const userId = useAuthStore.getState().user?.id || "anonymous";
       const { useLLMStore } = await import("./llm-store");
       const llm = useLLMStore.getState();
-      llm.replaceProviderConfigs({});
+
+      // 1. Instant hydration from user-scoped localStorage cache
+      if (userId !== "anonymous") {
+        const cache = getLocalQueryCache(userId);
+        set({
+          selectedDatasetId: cache.selectedDatasetId || "",
+          selectedSheet: cache.selectedSheet || "",
+          selectedTable: cache.selectedTable || "",
+        });
+
+        if (cache.activeProvider) {
+          llm.setActiveProvider(cache.activeProvider as any);
+        }
+        if (cache.activeModel) {
+          llm.setActiveModel(cache.activeModel);
+        }
+        llm.hydrateSecrets(userId);
+      }
+
+      // 2. Fetch fresh settings from MongoDB server
+      const data = await api.get<Record<string, any>>("/settings");
+
+      // Re-hydrate local secrets to memory
+      if (userId !== "anonymous") {
+        llm.hydrateSecrets(userId);
+      }
 
       if (data && Object.keys(data).length > 0) {
         const theme = (data.theme as Theme) || "dark";
+        const selectedDatasetId = (data.selectedDatasetId as string) || "";
+        const selectedSheet = (data.selectedSheet as string) || "";
+        const selectedTable = (data.selectedTable as string) || "";
+
         set({
           theme,
           compactMode: (data.compactMode as boolean) ?? false,
           codeFont: (data.codeFont as CodeFont) || "jetbrains",
+          selectedDatasetId,
+          selectedSheet,
+          selectedTable,
         });
         applyThemeToDom(theme);
 
-        // Hydrate LLM store only with this user's saved provider config.
+        // Update local cache with MongoDB values
+        if (userId !== "anonymous") {
+          saveLocalQueryCache(userId, {
+            selectedDatasetId,
+            selectedSheet,
+            selectedTable,
+            activeProvider: (data.activeProvider as string) || llm.activeProvider,
+            activeModel: (data.activeModel as string) || llm.activeModel,
+          });
+        }
+
+        // Apply active provider and model from server
+        if (data.activeProvider) {
+          llm.setActiveProvider(data.activeProvider);
+        }
+        if (data.activeModel) {
+          llm.setActiveModel(data.activeModel);
+        }
+
+        // Safely merge provider configs (API keys etc.) with server configs
         if (data.providerConfigs && typeof data.providerConfigs === "object") {
-          const nextConfigs: Record<string, Record<string, string>> = {};
+          const nextConfigs = { ...llm.providerConfigs };
           for (const [provider, config] of Object.entries(
             data.providerConfigs as Record<string, Record<string, string>>
           )) {
-            nextConfigs[provider] = config || {};
+            nextConfigs[provider] = {
+              ...(nextConfigs[provider] || {}),
+              ...(config || {}),
+            } as any;
           }
-          llm.replaceProviderConfigs(nextConfigs as Parameters<typeof llm.replaceProviderConfigs>[0]);
+          llm.replaceProviderConfigs(nextConfigs);
         }
       }
+      set({ hasFetched: true });
     } catch (err) {
       console.error("fetchSettings:", err);
     } finally {
@@ -82,7 +213,36 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   saveSettings: async (providerConfigs = {}) => {
-    const { theme, compactMode, codeFont } = get();
-    await api.put("/settings", { theme, compactMode, codeFont, providerConfigs });
+    const { theme, compactMode, codeFont, selectedDatasetId, selectedSheet, selectedTable } = get();
+    const userId = useAuthStore.getState().user?.id || "anonymous";
+    const { useLLMStore } = await import("./llm-store");
+    const llm = useLLMStore.getState();
+
+    const activeProvider = llm.activeProvider;
+    const activeModel = llm.activeModel;
+
+    // Save to user-scoped local cache
+    if (userId !== "anonymous") {
+      saveLocalQueryCache(userId, {
+        selectedDatasetId,
+        selectedSheet,
+        selectedTable,
+        activeProvider,
+        activeModel,
+      });
+    }
+
+    // Save to MongoDB
+    await api.put("/settings", {
+      theme,
+      compactMode,
+      codeFont,
+      providerConfigs,
+      activeProvider,
+      activeModel,
+      selectedDatasetId,
+      selectedSheet,
+      selectedTable,
+    });
   },
 }));

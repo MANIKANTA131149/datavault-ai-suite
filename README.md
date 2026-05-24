@@ -1,7 +1,7 @@
 
-# DataVault Agent
+# Querify Agent
 
-DataVault Agent is a full-stack app for querying CSV/Excel datasets in plain English using multiple LLM providers.
+Querify Agent is a full-stack app for querying CSV/Excel datasets in plain English using multiple LLM providers.
 
 You can upload datasets, ask questions in natural language, view agent reasoning steps, and explore results as tables or charts.
 

@@ -1,4 +1,16 @@
-import { memo, useState, useRef, useEffect, useMemo, useId, useCallback, type CSSProperties } from "react";
+import React, {
+  memo,
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useId,
+  useCallback,
+  Fragment,
+  type CSSProperties,
+  type ReactNode,
+  type KeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,7 +20,10 @@ import {
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
+  Share2, Mic,
 } from "lucide-react";
+import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
+import { ShareCard } from "@/components/ShareCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -30,9 +45,11 @@ import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
 import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import { parseOptionsFromText, cleanPromptText } from "@/lib/clarification-options";
 import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
 import { executeDatabaseQuery, fetchDatabaseSchema, type DatabaseSchema, type DatabaseTableData } from "@/lib/db-query-client";
@@ -58,6 +75,8 @@ const COMMAND_COLORS: Record<string, string> = {
   FinalAnswer: "bg-success/10 text-success",
   NarrativeAnswer: "bg-purple-500/10 text-purple-400",
   Answer: "bg-success/10 text-success",
+  HumanClarification: "bg-primary/10 text-primary",
+  HumanApproval: "bg-warning/10 text-warning",
   MaxTurnsReached: "bg-destructive/10 text-destructive",
   Error: "bg-destructive/10 text-destructive",
 };
@@ -462,6 +481,12 @@ function getFinalStep(steps?: AgentStep[]) {
       return step;
     }
   }
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (step.command === "HumanClarification" && step.hitlPrompt) {
+      return { ...step, result: step.hitlPrompt };
+    }
+  }
   return null;
 }
 
@@ -503,7 +528,7 @@ function exportHTML(result: any, query: string, filename = "result.html") {
   } else {
     tableHtml = `<pre style="font-family:monospace">${JSON.stringify(result, null, 2)}</pre>`;
   }
-  const html = `<!DOCTYPE html><html><head><title>DataVault Export</title></head><body>
+  const html = `<!DOCTYPE html><html><head><title>Querify Export</title></head><body>
     <h2 style="font-family:sans-serif">Query: ${query}</h2>
     <p style="font-family:sans-serif;color:#888">${new Date().toLocaleString()}</p>
     ${tableHtml}</body></html>`;
@@ -647,8 +672,150 @@ const VirtualizedResultTable = memo(function VirtualizedResultTable({
   );
 });
 
+// ─── Lightweight Markdown Parser ─────────────────────────────────────────────
+function renderMarkdown(text: string) {
+  if (typeof text !== "string") return String(text);
+
+  const lines = text.split("\n");
+  const elements: ReactNode[] = [];
+  let inList = false;
+  let listItems: string[] = [];
+
+  const parseInline = (line: string): ReactNode[] => {
+    const tokens: ReactNode[] = [];
+    let currentText = line;
+    let keyIndex = 0;
+
+    while (currentText) {
+      const boldMatch = currentText.match(/\*\*(.*?)\*\*/);
+      const italicMatch = currentText.match(/\*(.*?)\*/);
+      const codeMatch = currentText.match(/`(.*?)`/);
+
+      const matches = [
+        { type: "bold", index: boldMatch?.index ?? -1, text: boldMatch?.[0], content: boldMatch?.[1] },
+        { type: "italic", index: italicMatch?.index ?? -1, text: italicMatch?.[0], content: italicMatch?.[1] },
+        { type: "code", index: codeMatch?.index ?? -1, text: codeMatch?.[0], content: codeMatch?.[1] },
+      ].filter((m) => m.index !== -1);
+
+      if (matches.length === 0) {
+        tokens.push(<Fragment key={keyIndex++}>{currentText}</Fragment>);
+        break;
+      }
+
+      matches.sort((a, b) => a.index! - b.index!);
+      const firstMatch = matches[0];
+
+      if (firstMatch.index! > 0) {
+        tokens.push(
+          <Fragment key={keyIndex++}>
+            {currentText.slice(0, firstMatch.index)}
+          </Fragment>
+        );
+      }
+
+      if (firstMatch.type === "bold") {
+        tokens.push(
+          <strong key={keyIndex++} className="font-bold text-foreground">
+            {firstMatch.content}
+          </strong>
+        );
+      } else if (firstMatch.type === "italic") {
+        tokens.push(
+          <em key={keyIndex++} className="italic text-muted-foreground">
+            {firstMatch.content}
+          </em>
+        );
+      } else if (firstMatch.type === "code") {
+        tokens.push(
+          <code key={keyIndex++} className="bg-foreground/5 text-foreground px-1.5 py-0.5 rounded font-mono text-xs border border-border/30">
+            {firstMatch.content}
+          </code>
+        );
+      }
+
+      currentText = currentText.slice(firstMatch.index! + firstMatch.text!.length);
+    }
+
+    return tokens;
+  };
+
+  const flushList = (key: number) => {
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={`ul-${key}`} className="list-disc pl-5 my-2 space-y-1">
+          {listItems.map((item, idx) => (
+            <li key={idx} className="text-sm text-foreground leading-relaxed">
+              {parseInline(item)}
+            </li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.trim().startsWith("- ") || line.trim().startsWith("* ")) {
+      inList = true;
+      const content = line.trim().slice(2);
+      listItems.push(content);
+      continue;
+    } else {
+      if (inList) {
+        flushList(i);
+        inList = false;
+      }
+    }
+
+    if (line.startsWith("### ")) {
+      elements.push(
+        <h4 key={i} className="text-sm font-semibold text-foreground mt-4 mb-2">
+          {parseInline(line.slice(4))}
+        </h4>
+      );
+    } else if (line.startsWith("## ")) {
+      elements.push(
+        <h3 key={i} className="text-base font-semibold text-foreground mt-4 mb-2">
+          {parseInline(line.slice(3))}
+        </h3>
+      );
+    } else if (line.startsWith("# ")) {
+      elements.push(
+        <h2 key={i} className="text-lg font-bold text-foreground mt-4 mb-2">
+          {parseInline(line.slice(2))}
+        </h2>
+      );
+    } else if (line.trim()) {
+      elements.push(
+        <p key={i} className="text-sm text-foreground leading-relaxed mb-2">
+          {parseInline(line)}
+        </p>
+      );
+    } else {
+      elements.push(<div key={i} className="h-2" />);
+    }
+  }
+
+  if (inList) {
+    flushList(lines.length);
+  }
+
+  return <div className="space-y-1">{elements}</div>;
+}
+
 // ─── NarrativeResult Component ────────────────────────────────────────────────
-function NarrativeResult({ result }: { result: { narrative: string; highlights?: { label: string; value: string }[] } }) {
+function NarrativeResult({ 
+  result, 
+  onSubmitQuickReply 
+}: { 
+  result: { narrative: string; highlights?: { label: string; value: string }[] }; 
+  onSubmitQuickReply?: (text: string) => void;
+}) {
+  const options = useMemo(() => parseOptionsFromText(result.narrative), [result.narrative]);
+  const cleanBody = useMemo(() => cleanPromptText(result.narrative, options), [result.narrative, options]);
+
   return (
     <div className="ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
       <div className="flex items-center gap-2 mb-1">
@@ -665,7 +832,11 @@ function NarrativeResult({ result }: { result: { narrative: string; highlights?:
           ))}
         </div>
       )}
-      <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{result.narrative}</div>
+      <div className="text-sm text-foreground leading-relaxed">{renderMarkdown(options.length > 0 ? cleanBody : result.narrative)}</div>
+
+      {onSubmitQuickReply && options.length > 0 && (
+        <HitlQuickChoices options={options} onSubmit={onSubmitQuickReply} />
+      )}
     </div>
   );
 }
@@ -815,11 +986,12 @@ const StepsTimeline = memo(function StepsTimeline({
 
 // ─── ResultPanel (Right Sidebar) ─────────────────────────────────────────────
 const ResultPanel = memo(function ResultPanel({
-  result, query, onClose, onBookmark,
+  result, query, onClose, onBookmark, datasetName, onShare,
 }: {
   result: any; query: string; onClose: () => void; onBookmark: () => void;
-  datasetName: string;
+  datasetName: string; onShare: () => void;
 }) {
+  const navigate = useNavigate();
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
@@ -981,7 +1153,12 @@ const ResultPanel = memo(function ResultPanel({
       action();
       toast.success(`${label} downloaded`);
     } catch (err: any) {
-      toast.error(err.message || `${label} export is not available on your plan`);
+      toast.error(err.message || `${label} export is not available on your plan`, {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 
@@ -993,7 +1170,9 @@ const ResultPanel = memo(function ResultPanel({
           {isArray && <p className="text-xs text-muted-foreground">{displayedRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows</p>}
         </div>
         <div className="flex flex-wrap gap-1 sm:justify-end">
-
+          <button onClick={onShare} title="Share Story Card" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
+            <Share2 size={14} />
+          </button>
           <button onClick={onBookmark} title="Save as Insight" className="p-1.5 rounded hover:bg-card text-muted-foreground hover:text-primary transition-colors">
             <BookmarkPlus size={14} />
           </button>
@@ -1048,7 +1227,7 @@ const ResultPanel = memo(function ResultPanel({
                 ))}
               </div>
             )}
-            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{result.narrative}</p>
+            <div className="text-sm leading-relaxed">{renderMarkdown(result.narrative)}</div>
           </div>
         )}
 
@@ -1386,7 +1565,7 @@ const ResultPanel = memo(function ResultPanel({
         )}
         {typeof result === "string" && !isBlankString && (
           <div className="bg-card rounded-md p-4 border border-border">
-            <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{result}</p>
+            <div className="text-sm leading-relaxed">{renderMarkdown(result)}</div>
           </div>
         )}
 
@@ -1438,7 +1617,12 @@ const ResultPanel = memo(function ResultPanel({
 });
 
 // ─── InlineFinalResult ────────────────────────────────────────────────────────
-const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: any }) {
+interface InlineFinalResultProps {
+  result: any;
+  onSubmitQuickReply?: (text: string) => void;
+}
+
+const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuickReply }: InlineFinalResultProps) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
@@ -1456,10 +1640,21 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
   );
   const inlineChartLimited = chartRows.length > inlineChartRows.length;
 
+  const options = useMemo(() => {
+    if (typeof result !== "string") return [];
+    return parseOptionsFromText(result);
+  }, [result]);
+
+  const cleanBody = useMemo(() => {
+    if (typeof result !== "string") return "";
+    const cleaned = cleanPromptText(result, options);
+    return cleaned.trim() ? cleaned : result;
+  }, [result, options]);
+
   useEffect(() => { setChartType(defaultChart); }, [defaultChart]);
 
   if (isNarrative) {
-    return <NarrativeResult result={result} />;
+    return <NarrativeResult result={result} onSubmitQuickReply={onSubmitQuickReply} />;
   }
 
   return (
@@ -1556,12 +1751,29 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: { result: 
         </>
       )}
 
+      {isEmptyArray && (
+        <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+          Query completed but returned no rows.
+        </div>
+      )}
+      {isEmptyObject && (
+        <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+          Query completed with an empty result.
+        </div>
+      )}
       {isBlankString && (
         <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
           No answer returned from the model.
         </div>
       )}
-      {!isBlankString && typeof result === "string" && <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{result}</p>}
+      {!isBlankString && typeof result === "string" && (
+        <div className="space-y-3">
+          <div className="text-sm leading-relaxed">{renderMarkdown(options.length > 0 ? cleanBody : result)}</div>
+          {onSubmitQuickReply && options.length > 0 && (
+            <HitlQuickChoices options={options} onSubmit={onSubmitQuickReply} />
+          )}
+        </div>
+      )}
       {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && (
         <pre className="max-h-52 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-border bg-background-secondary p-2 text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
           {JSON.stringify(result, null, 2)}
@@ -2111,7 +2323,12 @@ function SaveInsightDialog({
       toast.success("Saved to Insights");
       onClose();
     } catch (err: any) {
-      toast.error(err.message || "Insight limit reached for your plan");
+      toast.error(err.message || "Insight limit reached for your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     } finally {
       setSaving(false);
     }
@@ -2164,9 +2381,21 @@ export default function QueryPage() {
   const { addEntry, entries } = useHistoryStore();
   const { checkMetric, checkExport, fetchPlan } = usePlanStore();
 
-  const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
-  const [selectedSheet, setSelectedSheet] = useState("");
-  const [selectedTable, setSelectedTable] = useState("");
+  const {
+    selectedDatasetId,
+    selectedSheet,
+    selectedTable,
+    setSelectedDatasetId,
+    setSelectedSheet,
+    setSelectedTable,
+  } = useSettingsStore();
+
+  useEffect(() => {
+    const urlDataset = searchParams.get("dataset");
+    if (urlDataset && urlDataset !== selectedDatasetId) {
+      setSelectedDatasetId(urlDataset);
+    }
+  }, [searchParams, selectedDatasetId, setSelectedDatasetId]);
   const [dbSchema, setDbSchema] = useState<DatabaseSchema | null>(null);
   const [loadingDbSchema, setLoadingDbSchema] = useState(false);
 
@@ -2192,11 +2421,21 @@ export default function QueryPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSaveInsight, setShowSaveInsight] = useState(false);
+  const [showShareCard, setShowShareCard] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [showMobileSettings, setShowMobileSettings] = useState(false);
   const [showMobileAdvanced, setShowMobileAdvanced] = useState(false);
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
   const [queryExpanded, setQueryExpanded] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [hitlState, setHitlState] = useState<{
+    kind: "clarification" | "approval";
+    prompt: string;
+    options?: string[];
+    details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] };
+  } | null>(null);
+  const hitlResolverRef = useRef<((value: string) => void) | null>(null);
   const [lastFailedQuery, setLastFailedQuery] = useState("");
   const [apiWarning, setApiWarning] = useState("");
 
@@ -2296,7 +2535,7 @@ export default function QueryPage() {
     const scroller = chatScrollRef.current;
     if (!scroller) return;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
-  }, [messages, currentSteps]);
+  }, [messages, currentSteps, hitlState]);
   useEffect(() => {
     if (!isRunning) {
       setElapsedMs(0);
@@ -2311,6 +2550,62 @@ export default function QueryPage() {
   useEffect(() => {
     localStorage.setItem(FAVORITE_PROMPTS_KEY, JSON.stringify(favoritePrompts));
   }, [favoritePrompts]);
+
+
+
+  const handleSpeech = () => {
+    const SpeechRecognition = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+    if (!SpeechRecognition) {
+      toast.error("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = "en-US";
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        const text = event.results[0][0].transcript;
+        if (text) {
+          setInput((prev) => prev ? prev + " " + text : text);
+          toast.success("Speech recognized!");
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        if (event.error === "not-allowed") {
+          toast.error("Microphone access denied.");
+        } else {
+          toast.error(`Error: ${event.error}`);
+        }
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to start speech recognition.");
+      setIsListening(false);
+    }
+  };
 
   const toggleFavoritePrompt = (prompt: string) => {
     if (!prompt.trim()) return;
@@ -2400,7 +2695,12 @@ export default function QueryPage() {
       await checkMetric("monthlyQueries", 1);
       await checkMetric("monthlyTokens", maxTokens);
     } catch (err: any) {
-      toast.error(err.message || "Query limit reached for your plan");
+      toast.error(err.message || "Query limit reached for your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
       setIsRunning(false);
       return;
     }
@@ -2458,10 +2758,23 @@ export default function QueryPage() {
     const steps: AgentStep[] = [];
     const startTime = Date.now();
 
+    const hitlController = {
+      waitForHuman: (
+        prompt: string,
+        kind: "clarification" | "approval",
+        details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] }
+      ) => {
+        return new Promise<string>((resolve) => {
+          setHitlState({ kind, prompt, options: details?.options, details });
+          hitlResolverRef.current = resolve;
+        });
+      },
+    };
+
     try {
       for await (const step of runLegacyAgent(
         question, workbookSheets, selectedSheet, activeProvider, activeModel, apiKey, temperature, maxTokens,
-        systemPrompt || undefined, conversationContext, providerOptions
+        systemPrompt || undefined, conversationContext, providerOptions, hitlController
       )) {
         if (cancelRequestedRef.current) {
           steps.push({
@@ -2557,7 +2870,12 @@ export default function QueryPage() {
       await checkMetric("monthlyQueries", 1);
       await checkMetric("monthlyTokens", maxTokens);
     } catch (err: any) {
-      toast.error(err.message || "Query limit reached for your plan");
+      toast.error(err.message || "Query limit reached for your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
       setIsRunning(false);
       return;
     }
@@ -2576,6 +2894,19 @@ export default function QueryPage() {
     const startTime = Date.now();
     let runner: AsyncGenerator<AgentStep>;
 
+    const hitlController = {
+      waitForHuman: (
+        prompt: string,
+        kind: "clarification" | "approval",
+        details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] }
+      ) => {
+        return new Promise<string>((resolve) => {
+          setHitlState({ kind, prompt, options: details?.options, details });
+          hitlResolverRef.current = resolve;
+        });
+      },
+    };
+
     if (isDbConnection) {
       if (!selectedConnection || !selectedConnectionId) {
         toast.error("Select a connected database first");
@@ -2584,7 +2915,10 @@ export default function QueryPage() {
       }
 
       const schema = await loadDbSchema(selectedConnectionId, { refresh: true });
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRunning(false);
+        return;
+      }
       if (!schema || schema.tables.length === 0) {
         toast.error("Database schema is unavailable for this connection.");
         setIsRunning(false);
@@ -2596,7 +2930,10 @@ export default function QueryPage() {
       const selectedTableSchema = activeTableName
         ? await loadDbTableSchema(selectedConnectionId, activeTableName)
         : null;
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRunning(false);
+        return;
+      }
       if (selectedTableSchema) {
         databaseTables = databaseTables.map((table) =>
           table.name === selectedTableSchema.name ? { ...table, ...selectedTableSchema } : table
@@ -2632,7 +2969,8 @@ export default function QueryPage() {
             });
             return response;
           },
-        }
+        },
+        hitlController
       );
     } else {
       let workbookSheets = selectedDataset?.data?.sheets;
@@ -2642,7 +2980,10 @@ export default function QueryPage() {
         const fetched = await loadDatasetData(selectedDatasetId);
         workbookSheets = fetched?.sheets;
       }
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setIsRunning(false);
+        return;
+      }
       if (!workbookSheets || !workbookSheets[selectedSheet]) {
         toast.error("Dataset data unavailable. Please re-upload the file.");
         setIsRunning(false);
@@ -2660,7 +3001,8 @@ export default function QueryPage() {
         maxTokens,
         systemPrompt || undefined,
         conversationContext,
-        providerOptions
+        providerOptions,
+        hitlController
       );
     }
 
@@ -2716,11 +3058,17 @@ export default function QueryPage() {
         fetchPlan();
       }
     } catch (err: any) {
+      if (hitlResolverRef.current) {
+        hitlResolverRef.current("reject");
+        hitlResolverRef.current = null;
+      }
+      setHitlState(null);
       toast.error(err.message);
       setLastFailedQuery(question);
       setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
     } finally {
       setIsRunning(false);
+      setHitlState(null);
     }
   };
 
@@ -2729,14 +3077,67 @@ export default function QueryPage() {
   const handleStopQuery = () => {
     cancelRequestedRef.current = true;
     setIsRunning(false);
+    if (hitlResolverRef.current) {
+      hitlResolverRef.current("reject");
+      hitlResolverRef.current = null;
+    }
+    setHitlState(null);
     setMessages((prev) => [...prev, { role: "agent", content: "Query stopped by user.", steps: [] }]);
     setCurrentSteps([]);
     toast.info("Query stopped");
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
+  // Active columns for matching
+  const activeColumns = useMemo(() => {
+    if (isDbConnection && selectedDbTableData?.columns) {
+      return selectedDbTableData.columns.map((c: any) => c.name);
+    }
+    const sheet = selectedDataset?.data?.sheets[selectedSheet];
+    if (sheet?.columns) {
+      return sheet.columns.map((c: any) => c.name);
+    }
+    return [];
+  }, [selectedDataset, selectedSheet, isDbConnection, selectedDbTableData]);
+
+  const activeSuggestion = useMemo(() => {
+    if (!input.trim()) return "";
+    const lowercaseInput = input.toLowerCase();
+    
+    // Try smart suggestions first
+    const match = smartSuggestions.find(s => s.toLowerCase().startsWith(lowercaseInput));
+    if (match) {
+      return match.slice(input.length);
+    }
+    
+    // Fallback to column names
+    const colMatch = activeColumns.find(c => c.toLowerCase().startsWith(lowercaseInput));
+    if (colMatch) {
+      return colMatch.slice(input.length);
+    }
+    
+    return "";
+  }, [input, smartSuggestions, activeColumns]);
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Tab" && activeSuggestion) {
+      e.preventDefault();
+      setInput((prev) => prev + activeSuggestion);
+      return;
+    }
+    if (e.key === "ArrowRight" && activeSuggestion) {
+      const cursorPosition = e.currentTarget.selectionStart;
+      if (cursorPosition === input.length) {
+        e.preventDefault();
+        setInput((prev) => prev + activeSuggestion);
+        return;
+      }
+    }
+    if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSend();
+    }
   };
+
 
   const handlePdfReport = async (query: string, result: any) => {
     try {
@@ -2748,7 +3149,12 @@ export default function QueryPage() {
         narrative: result?.narrative || undefined,
       });
     } catch (err: any) {
-      toast.error(err.message || "PDF export is not available on your plan");
+      toast.error(err.message || "PDF export is not available on your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 
@@ -3139,7 +3545,14 @@ export default function QueryPage() {
                         )}
                       </div>
                     )}
-                    {finalStep && <InlineFinalResult result={finalStep.result} />}
+                    {finalStep && (
+                      <InlineFinalResult 
+                        result={finalStep.result} 
+                        onSubmitQuickReply={(text) => {
+                          handleSend(text);
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -3147,23 +3560,52 @@ export default function QueryPage() {
           })}
 
           {isRunning && (
-            <div className="space-y-1">
-              {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
-              {currentFinalStep && <InlineFinalResult result={currentFinalStep.result} />}
-              <div className="flex flex-wrap items-center gap-2 sm:pl-10">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0s" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-dot" style={{ animationDelay: "0.4s" }} />
+            <div className="space-y-3 min-w-0 w-full">
+              {currentSteps.length > 0 && !hitlState && (
+                <StepsTimeline steps={currentSteps} live />
+              )}
+              {currentFinalStep && !hitlState && (
+                <InlineFinalResult 
+                  result={currentFinalStep.result} 
+                  onSubmitQuickReply={(text) => {
+                    handleSend(text);
+                  }}
+                />
+              )}
+
+              <AnimatePresence mode="wait">
+                {hitlState ? (
+                  <HitlPanel
+                    key="hitl-active"
+                    state={hitlState}
+                    onSubmit={(val) => {
+                      if (hitlResolverRef.current) {
+                        hitlResolverRef.current(val);
+                        hitlResolverRef.current = null;
+                        setHitlState(null);
+                      }
+                    }}
+                    onStop={handleStopQuery}
+                  />
+                ) : null}
+              </AnimatePresence>
+              {!hitlState && (
+                <div className="flex flex-wrap items-center gap-2 sm:pl-10">
+                  {/* Premium 3-dot thinking indicator */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="thinking-dot" />
+                    <span className="thinking-dot" />
+                    <span className="thinking-dot" />
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    Agent is thinking... {Math.floor(elapsedMs / 1000)}s
+                    {elapsedMs > 30000 ? " — taking longer than usual" : ""}
+                  </span>
+                  <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
+                    <X size={12} className="mr-1" /> Stop
+                  </Button>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  Agent is thinking... {Math.floor(elapsedMs / 1000)}s
-                  {elapsedMs > 30000 ? " - taking longer than usual" : ""}
-                </span>
-                <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
-                  <X size={12} className="mr-1" /> Stop
-                </Button>
-              </div>
+              )}
             </div>
           )}
           <div ref={chatEndRef} />
@@ -3184,19 +3626,66 @@ export default function QueryPage() {
               </Button>
             </div>
           )}
-          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm">
+          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
             <div className="relative min-w-0 flex-1">
+              {/* Ghost text backdrop overlay */}
+              {activeSuggestion && !isRunning && !isListening && (
+                <div 
+                  className="absolute inset-0 bg-transparent text-transparent pointer-events-none whitespace-pre-wrap break-all select-none px-3 py-2 text-sm leading-normal border border-transparent font-normal font-sans"
+                  style={{
+                    fontFamily: "inherit",
+                    fontSize: "0.875rem",
+                    lineHeight: "1.25rem",
+                    padding: "0.5rem 0.75rem",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <span>{input}</span>
+                  <span className="text-muted-foreground/30 dark:text-muted-foreground/35">{activeSuggestion}</span>
+                </div>
+              )}
+
+              {/* Listening waveforms overlay */}
+              {isListening && (
+                <div className="absolute inset-0 flex items-center justify-between bg-background-secondary/95 backdrop-blur-sm rounded-[24px] px-4 py-2 border border-primary/20 z-20">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
+                      <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
+                      <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
+                      <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
+                      <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
+                      <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
+                    </div>
+                    <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSpeech}
+                    className="h-7 px-3 text-xs border-border bg-card hover:bg-background"
+                  >
+                    Done
+                  </Button>
+                </div>
+              )}
+
               <Textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  // Auto-grow
+                  const el = e.target;
+                  el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, queryExpanded ? 260 : 120)}px`;
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
                 disabled={isRunning}
                 className={`bg-background-secondary border-border resize-none min-h-[44px] disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
                 rows={queryExpanded ? 5 : 1}
               />
-              {input && (
+              {input && !isListening && (
                 <button
                   type="button"
                   aria-label="Clear query"
@@ -3209,6 +3698,15 @@ export default function QueryPage() {
               )}
             </div>
             <div className="flex shrink-0 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleSpeech}
+                size="icon"
+                title={isListening ? "Stop listening" : "Voice search"}
+                className={`h-[44px] w-[44px] shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
+              >
+                <Mic size={16} className={isListening ? "animate-pulse" : ""} />
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setQueryExpanded((prev) => !prev)}
@@ -3237,6 +3735,7 @@ export default function QueryPage() {
             onClose={() => setShowResult(false)}
             onBookmark={() => setShowSaveInsight(true)}
             datasetName={sourceName}
+            onShare={() => setShowShareCard(true)}
           />
         </div>
       )}
@@ -3494,6 +3993,14 @@ export default function QueryPage() {
       <SaveInsightDialog
         open={showSaveInsight}
         onClose={() => setShowSaveInsight(false)}
+        query={lastQuery}
+        result={finalResult}
+        datasetName={selectedConnection?.name || selectedDataset?.fileName || ""}
+      />
+
+      <ShareCard
+        open={showShareCard}
+        onClose={() => setShowShareCard(false)}
         query={lastQuery}
         result={finalResult}
         datasetName={selectedConnection?.name || selectedDataset?.fileName || ""}

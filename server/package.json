@@ -9,6 +9,7 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "@codegenie/serverless-express": "^4.14.1",
     "@databricks/sql": "^1.13.0",
     "@duckdb/node-api": "^1.5.2-r.1",
     "@elastic/elasticsearch": "^8.19.0",

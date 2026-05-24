@@ -8,7 +8,7 @@ export interface LLMResponse {
 
 export type Provider =
   | "groq" | "openai" | "gemini" | "anthropic" | "bedrock"
-  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface";
+  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface" | "alibaba";
 
 export interface LLMProviderOptions {
   secretAccessKey?: string;
@@ -22,6 +22,7 @@ const PROVIDER_ENDPOINTS: Record<string, string> = {
   mistral: "https://api.mistral.ai/v1/chat/completions",
   together: "https://api.together.xyz/v1/chat/completions",
   huggingface: `${getApiBaseUrl()}/llm/huggingface/chat`,
+  alibaba: `${getApiBaseUrl()}/llm/alibaba/chat`,
 };
 
 async function callBedrock(
@@ -66,10 +67,13 @@ async function callOpenAICompatible(
   maxTokens: number
 ): Promise<LLMResponse> {
   const isLocalHuggingFaceProxy = endpoint.endsWith("/llm/huggingface/chat");
+  const isAlibabaProxy = endpoint.endsWith("/llm/alibaba/chat");
   const res = await fetch(endpoint, {
     method: "POST",
     headers: {
-      ...(isLocalHuggingFaceProxy ? { "X-Provider-Api-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
+      ...(isLocalHuggingFaceProxy || isAlibabaProxy
+        ? { "X-Provider-Api-Key": apiKey }
+        : { Authorization: `Bearer ${apiKey}` }),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false }),
@@ -79,7 +83,9 @@ async function callOpenAICompatible(
     const text = await res.text();
     const providerHint = isLocalHuggingFaceProxy
       ? "Hugging Face router error. Make sure the backend was restarted and the model uses the full router ID, for example zai-org/GLM-5.1:together."
-      : "Provider API error.";
+      : isAlibabaProxy
+        ? "Alibaba DashScope router error."
+        : "Provider API error.";
     throw new Error(`${providerHint} (${res.status}): ${text}`);
   }
 

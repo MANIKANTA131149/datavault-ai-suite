@@ -1,16 +1,21 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
-import { motion } from "framer-motion";
-import { ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
+import { motion, animate } from "framer-motion";
+import { ArrowRight, BarChart2, Brain, Database, Eye, EyeOff, Layers, Loader2, Moon, Sun, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuthStore } from "@/stores/auth-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { toast } from "sonner";
 
-const FEATURES = ["Multi-LLM Support", "CSV & Excel Native", "Agent Reasoning Trace"];
+const FEATURES = [
+  { label: "Multi-LLM Support",         icon: Brain },
+  { label: "CSV & Excel Native",         icon: Layers },
+  { label: "Agent Reasoning Trace",      icon: BarChart2 },
+];
 
 function FeaturePills() {
   const [active, setActive] = useState(0);
@@ -19,16 +24,15 @@ function FeaturePills() {
     const interval = window.setInterval(() => {
       setActive((previous) => (previous + 1) % FEATURES.length);
     }, 2500);
-
     return () => window.clearInterval(interval);
   }, []);
 
   return (
     <div className="mt-6 flex flex-wrap gap-2">
-      {FEATURES.map((feature, index) => (
+      {FEATURES.map(({ label, icon: Icon }, index) => (
         <motion.span
-          key={feature}
-          className={`rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+          key={label}
+          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
             index === active
               ? "border-primary bg-primary/10 text-primary"
               : "border-border text-muted-foreground"
@@ -36,7 +40,8 @@ function FeaturePills() {
           animate={{ scale: index === active ? 1.04 : 1 }}
           transition={{ duration: 0.3 }}
         >
-          {feature}
+          <Icon size={13} />
+          {label}
         </motion.span>
       ))}
     </div>
@@ -97,6 +102,23 @@ export default function AuthPage() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const { theme, setTheme, saveSettings, hasFetched } = useSettingsStore();
+
+  // Default to light on auth page if settings haven't been fetched from backend yet
+  useEffect(() => {
+    if (!hasFetched) {
+      setTheme("light");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  const handleToggleTheme = async () => {
+    const next = isDark ? "light" : "dark";
+    setTheme(next);
+    try { await saveSettings(); } catch { /* not logged in yet — DOM updated */ }
+  };
 
   // ─── Auth0 callback: detect when Auth0 login completes, sync with backend ──
   useEffect(() => {
@@ -206,20 +228,40 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+    <div className="relative min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+      {/* Theme toggle — top right */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={handleToggleTheme}
+        className="absolute right-4 top-4 z-50 h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground"
+        aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {isDark ? <Sun size={18} /> : <Moon size={18} />}
+      </Button>
       <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col xl:flex-row">
-        <section className="flex flex-1 flex-col justify-between border-b border-border/70 px-4 py-6 sm:px-6 lg:px-10 xl:border-b-0 xl:border-r">
+        {/* ── Left marketing panel ──────────────────────────────────────────── */}
+        <section className="relative flex flex-1 flex-col justify-between overflow-hidden border-b border-border/70 px-4 py-6 sm:px-6 lg:px-10 xl:border-b-0 xl:border-r">
+
+          {/* Floating decorative orbs — desktop only */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden xl:block hidden">
+            <div className="orb-1 absolute -top-16 -right-16 h-72 w-72 rounded-full bg-primary/8 blur-3xl" />
+            <div className="orb-2 absolute top-1/2 -left-24 h-56 w-56 rounded-full bg-accent/6 blur-3xl" />
+            <div className="orb-3 absolute bottom-24 right-24 h-40 w-40 rounded-full bg-primary/5 blur-2xl" />
+          </div>
+
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="flex-1"
+            className="relative flex-1"
           >
             <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary font-semibold text-primary-foreground">
-                DV
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 p-1.5 logo-pulse overflow-hidden">
+                <img src="/logo.png" alt="Querify Agent Logo" className="h-full w-full object-contain" />
               </div>
-              <span className="text-lg font-semibold text-foreground sm:text-xl">DataVault Agent</span>
+              <span className="text-lg font-semibold text-foreground sm:text-xl">Querify Agent</span>
             </div>
 
             <div className="max-w-2xl">
@@ -231,17 +273,24 @@ export default function AuthPage() {
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
                 Upload CSV or Excel files, connect your preferred LLM provider, and get instant insights with a full
-                reasoning trace whether you are on mobile, tablet, or desktop.
+                reasoning trace — whether you are on mobile, tablet, or desktop.
               </p>
               <FeaturePills />
             </div>
+
+            {/* Animated live-counting stats */}
+            <div className="mt-10 hidden xl:grid grid-cols-3 gap-4">
+              <AnimatedStat end={12} label="LLM Providers" icon={Brain} />
+              <AnimatedStat end={8} label="Export Formats" icon={Layers} />
+              <AnimatedStat end={99} label="% Uptime SLA" icon={Zap} suffix="%" />
+            </div>
           </motion.div>
 
-          <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="relative mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
-              { label: "Datasets", value: "CSV, XLSX, XLS" },
+              { label: "Datasets",  value: "CSV, XLSX, XLS" },
               { label: "Providers", value: "OpenAI, Gemini, Bedrock+" },
-              { label: "Output", value: "Answers, history, insights" },
+              { label: "Output",    value: "Answers, history, insights" },
             ].map((item) => (
               <div key={item.label} className="rounded-2xl border border-border/70 bg-background/60 p-4 backdrop-blur">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">{item.label}</p>
@@ -425,6 +474,44 @@ export default function AuthPage() {
           </motion.div>
         </section>
       </div>
+    </div>
+  );
+}
+
+// ─── Animated stat block (Auth left panel) ──────────────────────────────────
+function AnimatedStat({
+  end,
+  label,
+  icon: Icon,
+  suffix = "",
+}: {
+  end: number;
+  label: string;
+  icon: React.ElementType;
+  suffix?: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const controls = animate(0, end, {
+      duration: 1.4,
+      ease: "easeOut",
+      onUpdate(latest) {
+        if (ref.current) ref.current.textContent = `${Math.round(latest)}${suffix}`;
+      },
+    });
+    return controls.stop;
+  }, [end, suffix]);
+
+  return (
+    <div className="stat-count-in rounded-2xl border border-border/60 bg-background/50 p-4 backdrop-blur">
+      <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+        <Icon size={15} className="text-primary" />
+      </div>
+      <span ref={ref} className="block text-2xl font-bold tabular-nums text-foreground">
+        0{suffix}
+      </span>
+      <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }

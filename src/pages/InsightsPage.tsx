@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bookmark, Search, Trash2, Edit3, Tag, X, Calendar, Database, Copy, Filter, FileDown, Pin, Star } from "lucide-react";
 import { generatePDF } from "@/lib/pdf-report";
@@ -93,6 +94,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
 }
 
 export default function InsightsPage() {
+  const navigate = useNavigate();
   const { insights, updateInsight, removeInsight } = useInsightsStore();
   const { checkExport } = usePlanStore();
   const [search, setSearch] = useState("");
@@ -167,7 +169,12 @@ export default function InsightsPage() {
         rows: Array.isArray(insight.result) ? insight.result : undefined,
       });
     } catch (err: any) {
-      toast.error(err.message || "PDF export is not available on your plan");
+      toast.error(err.message || "PDF export is not available on your plan", {
+        action: {
+          label: "View Plans",
+          onClick: () => navigate("/app/pricing"),
+        },
+      });
     }
   };
 

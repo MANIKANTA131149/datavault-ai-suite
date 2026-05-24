@@ -139,20 +139,29 @@ router.post("/auth0-login", async (req, res) => {
     if (!auth0Domain)
       return res.status(500).json({ error: "Auth0 is not configured on the server" });
 
-    // Verify the ID token using Auth0's JWKS public keys
-    const jwksRsa = require("jwks-rsa");
-    const jwksClient = jwksRsa({
-      jwksUri: `https://${auth0Domain}/.well-known/jwks.json`,
-      cache: true,
-      rateLimit: true,
-    });
-
     // Decode the token header to get the key id (kid)
     const tokenHeader = JSON.parse(
       Buffer.from(idToken.split(".")[0], "base64url").toString()
     );
-    const signingKey = await jwksClient.getSigningKey(tokenHeader.kid);
-    const publicKey = signingKey.getPublicKey();
+
+    // Fetch the JWKS keys directly from Auth0 using native Node 20 fetch
+    const jwksRes = await fetch(`https://${auth0Domain}/.well-known/jwks.json`);
+    if (!jwksRes.ok) throw new Error("Failed to fetch Auth0 JWKS public keys");
+    const jwks = await jwksRes.json();
+
+    // Find the key matching the kid from the token header
+    const jwk = jwks.keys.find(key => key.kid === tokenHeader.kid);
+    if (!jwk) throw new Error(`No public key found for kid: ${tokenHeader.kid}`);
+
+    // Import the JWK directly into a native Node.js public key
+    const crypto = require("crypto");
+    const publicKey = crypto.createPublicKey({
+      format: "jwk",
+      key: jwk
+    }).export({
+      type: "spki",
+      format: "pem"
+    });
 
     // Verify the ID token signature and claims
     const decoded = jwt.verify(idToken, publicKey, {
