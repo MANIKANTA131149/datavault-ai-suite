@@ -198,6 +198,7 @@ interface LLMState {
   clearProviderConfigs: () => void;
   clearProviderApiKeys: () => void;
   getApiKey: (provider: Provider) => string;
+  hydrateSecrets: (userId: string) => void;
 }
 
 function stripProviderSecrets(configs: Partial<Record<Provider, ProviderConfig>> = {}) {
@@ -209,9 +210,20 @@ function stripProviderSecrets(configs: Partial<Record<Provider, ProviderConfig>>
   ) as Partial<Record<Provider, ProviderConfig>>;
 }
 
+import { useAuthStore } from "./auth-store";
+
+function getUserId(): string {
+  try {
+    return useAuthStore.getState().user?.id || "anonymous";
+  } catch {
+    return "anonymous";
+  }
+}
+
 function getSessionSecrets(): Record<string, { apiKey?: string; secretAccessKey?: string }> {
   try {
-    const raw = sessionStorage.getItem("datavault-llm-secrets");
+    const userId = getUserId();
+    const raw = localStorage.getItem(`datavault-llm-secrets-${userId}`);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -220,6 +232,8 @@ function getSessionSecrets(): Record<string, { apiKey?: string; secretAccessKey?
 
 function saveSessionSecrets(configs: Partial<Record<Provider, ProviderConfig>>) {
   try {
+    const userId = getUserId();
+    if (userId === "anonymous") return;
     const secrets: Record<string, { apiKey?: string; secretAccessKey?: string }> = {};
     Object.entries(configs).forEach(([provider, config]) => {
       if (config?.apiKey || config?.secretAccessKey) {
@@ -229,9 +243,9 @@ function saveSessionSecrets(configs: Partial<Record<Provider, ProviderConfig>>) 
         };
       }
     });
-    sessionStorage.setItem("datavault-llm-secrets", JSON.stringify(secrets));
+    localStorage.setItem(`datavault-llm-secrets-${userId}`, JSON.stringify(secrets));
   } catch (err) {
-    console.error("Failed to save secrets to sessionStorage:", err);
+    console.error("Failed to save secrets to localStorage:", err);
   }
 }
 
@@ -253,12 +267,63 @@ export const useLLMStore = create<LLMState>()(
       setActiveProvider: (provider) => {
         const models = PROVIDER_MODELS[provider];
         const existing = get().providerConfigs[provider]?.model;
+        const newModel = getValidModel(provider, existing) || models[0];
         set({
           activeProvider: provider,
-          activeModel: getValidModel(provider, existing) || models[0],
+          activeModel: newModel,
         });
+
+        // Sync to local query cache and server settings in the background
+        try {
+          const userId = getUserId();
+          if (userId !== "anonymous") {
+            const cacheKey = `datavault-query-settings-${userId}`;
+            const currentCache = localStorage.getItem(cacheKey);
+            const cacheObj = currentCache ? JSON.parse(currentCache) : {};
+            localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ ...cacheObj, activeProvider: provider, activeModel: newModel })
+            );
+
+            // Import useSettingsStore dynamically to prevent circular dependencies
+            import("./settings-store").then(({ useSettingsStore }) => {
+              const settings = useSettingsStore.getState();
+              if (settings.hasFetched) {
+                settings.saveSettings(get().providerConfigs).catch(() => {});
+              }
+            });
+          }
+        } catch (err) {
+          console.error("Failed to sync activeProvider:", err);
+        }
       },
-      setActiveModel: (model) => set({ activeModel: model }),
+      setActiveModel: (model) => {
+        set({ activeModel: model });
+
+        // Sync to local query cache and server settings in the background
+        try {
+          const userId = getUserId();
+          if (userId !== "anonymous") {
+            const cacheKey = `datavault-query-settings-${userId}`;
+            const currentCache = localStorage.getItem(cacheKey);
+            const cacheObj = currentCache ? JSON.parse(currentCache) : {};
+            localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ ...cacheObj, activeModel: model })
+            );
+
+            // Import useSettingsStore dynamically to prevent circular dependencies
+            import("./settings-store").then(({ useSettingsStore }) => {
+              const settings = useSettingsStore.getState();
+              if (settings.hasFetched) {
+                settings.saveSettings(get().providerConfigs).catch(() => {});
+              }
+            });
+          }
+        } catch (err) {
+          console.error("Failed to sync activeModel:", err);
+        }
+      },
       setTemperature: (temperature) => set({ temperature }),
       setMaxTokens: (maxTokens) => set({ maxTokens }),
       setSystemPrompt: (systemPrompt) => set({ systemPrompt }),
@@ -277,9 +342,29 @@ export const useLLMStore = create<LLMState>()(
       },
       clearProviderConfigs: () => {
         try {
-          sessionStorage.removeItem("datavault-llm-secrets");
+          const userId = getUserId();
+          localStorage.removeItem(`datavault-llm-secrets-${userId}`);
         } catch {}
         set({ providerConfigs: {} });
+      },
+      hydrateSecrets: (userId) => {
+        try {
+          const raw = localStorage.getItem(`datavault-llm-secrets-${userId}`);
+          const secrets = raw ? JSON.parse(raw) : {};
+          if (Object.keys(secrets).length > 0) {
+            const nextConfigs = { ...get().providerConfigs };
+            Object.entries(secrets).forEach(([provider, secretObj]) => {
+              const p = provider as Provider;
+              nextConfigs[p] = {
+                ...(nextConfigs[p] || {}),
+                ...(secretObj as any),
+              } as ProviderConfig;
+            });
+            set({ providerConfigs: nextConfigs });
+          }
+        } catch (err) {
+          console.error("Failed to hydrate secrets:", err);
+        }
       },
       clearProviderApiKeys: () =>
         set((state) => {

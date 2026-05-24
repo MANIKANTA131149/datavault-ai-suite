@@ -45,6 +45,7 @@ import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 
 import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
@@ -2380,9 +2381,21 @@ export default function QueryPage() {
   const { addEntry, entries } = useHistoryStore();
   const { checkMetric, checkExport, fetchPlan } = usePlanStore();
 
-  const [selectedDatasetId, setSelectedDatasetId] = useState(searchParams.get("dataset") || "");
-  const [selectedSheet, setSelectedSheet] = useState("");
-  const [selectedTable, setSelectedTable] = useState("");
+  const {
+    selectedDatasetId,
+    selectedSheet,
+    selectedTable,
+    setSelectedDatasetId,
+    setSelectedSheet,
+    setSelectedTable,
+  } = useSettingsStore();
+
+  useEffect(() => {
+    const urlDataset = searchParams.get("dataset");
+    if (urlDataset && urlDataset !== selectedDatasetId) {
+      setSelectedDatasetId(urlDataset);
+    }
+  }, [searchParams, selectedDatasetId, setSelectedDatasetId]);
   const [dbSchema, setDbSchema] = useState<DatabaseSchema | null>(null);
   const [loadingDbSchema, setLoadingDbSchema] = useState(false);
 

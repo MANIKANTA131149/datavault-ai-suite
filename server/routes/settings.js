@@ -18,6 +18,11 @@ router.get("/", async (req, res) => {
             compactMode: doc.compactMode ?? false,
             codeFont: doc.codeFont ?? "jetbrains",
             providerConfigs: doc.providerConfigs ?? {},
+            activeProvider: doc.activeProvider ?? undefined,
+            activeModel: doc.activeModel ?? undefined,
+            selectedDatasetId: doc.selectedDatasetId ?? "",
+            selectedSheet: doc.selectedSheet ?? "",
+            selectedTable: doc.selectedTable ?? "",
           }
         : {}
     );
@@ -30,7 +35,17 @@ router.get("/", async (req, res) => {
 // ─── PUT /api/settings — upsert user preferences ─────────────────────────────
 router.put("/", async (req, res) => {
   try {
-    const { theme, compactMode, codeFont, providerConfigs } = req.body;
+    const {
+      theme,
+      compactMode,
+      codeFont,
+      providerConfigs,
+      activeProvider,
+      activeModel,
+      selectedDatasetId,
+      selectedSheet,
+      selectedTable,
+    } = req.body;
     const db = await getDb();
     await db.collection("settings").updateOne(
       { userId: req.userId },
@@ -41,6 +56,11 @@ router.put("/", async (req, res) => {
           compactMode,
           codeFont,
           providerConfigs: providerConfigs ?? {},
+          activeProvider,
+          activeModel,
+          selectedDatasetId,
+          selectedSheet,
+          selectedTable,
           updatedAt: new Date().toISOString(),
         },
       },
