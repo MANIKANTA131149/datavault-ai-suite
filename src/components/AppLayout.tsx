@@ -214,7 +214,7 @@ export default function AppLayout() {
         <SheetContent side="left" className="w-full max-w-xs border-r border-border bg-background-secondary p-0 md:hidden">
           <SheetHeader className="sr-only">
             <SheetTitle>Navigation</SheetTitle>
-            <SheetDescription>Browse DataVault sections and account controls.</SheetDescription>
+            <SheetDescription>Browse Querify sections and account controls.</SheetDescription>
           </SheetHeader>
           <AppSidebar mobile onNavigate={() => setSidebarOpen(false)} />
         </SheetContent>
@@ -240,7 +240,7 @@ export default function AppLayout() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-xs sm:text-sm">
                   <span className="shrink-0 rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-primary sm:text-[11px]">
-                    DataVault
+                    Querify
                   </span>
                   <span className="truncate font-medium text-foreground">
                     {BREADCRUMBS[location.pathname] || "Page"}

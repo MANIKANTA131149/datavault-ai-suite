@@ -81,8 +81,8 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
       >
         <div className="flex min-w-0 items-center gap-2.5">
           {/* Logo badge with pulsing glow */}
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-sm font-semibold text-primary-foreground logo-pulse">
-            DV
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/10 logo-pulse overflow-hidden p-1.5">
+            <img src="/logo.png" alt="Querify Agent Logo" className="h-full w-full object-contain" />
           </div>
 
           {/* Brand name — fades in/out on collapse */}
@@ -96,7 +96,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                 transition={{ duration: 0.18 }}
                 className="min-w-0"
               >
-                <span className="block truncate text-sm font-semibold text-foreground">DataVault Agent</span>
+                <span className="block truncate text-sm font-semibold text-foreground">Querify Agent</span>
                 {mobile && (
                   <span className="text-[11px] text-muted-foreground">Workspace navigation</span>
                 )}

@@ -349,4 +349,42 @@ router.post("/bedrock/chat", async (req, res) => {
   }
 });
 
+router.post("/alibaba/chat", async (req, res) => {
+  const apiKey = req.header("x-provider-api-key");
+  if (!apiKey) {
+    return res.status(400).json({ error: "Alibaba DashScope API key is missing" });
+  }
+
+  const { model, messages, temperature, max_tokens, stream = false } = req.body || {};
+  if (!model || !Array.isArray(messages)) {
+    return res.status(400).json({ error: "Model and messages are required" });
+  }
+
+  try {
+    const upstream = await fetch("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        stream,
+      }),
+    });
+
+    const text = await upstream.text();
+    res.status(upstream.status);
+    res.type(upstream.headers.get("content-type") || "application/json");
+    return res.send(text);
+  } catch (error) {
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : "Alibaba DashScope request failed",
+    });
+  }
+});
+
 module.exports = router;

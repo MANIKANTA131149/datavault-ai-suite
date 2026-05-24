@@ -258,10 +258,10 @@ export default function AuthPage() {
             className="relative flex-1"
           >
             <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary font-semibold text-primary-foreground logo-pulse">
-                DV
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 p-1.5 logo-pulse overflow-hidden">
+                <img src="/logo.png" alt="Querify Agent Logo" className="h-full w-full object-contain" />
               </div>
-              <span className="text-lg font-semibold text-foreground sm:text-xl">DataVault Agent</span>
+              <span className="text-lg font-semibold text-foreground sm:text-xl">Querify Agent</span>
             </div>
 
             <div className="max-w-2xl">

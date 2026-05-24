@@ -37,7 +37,7 @@ const ARCHITECTURE_STEPS = [
   {
     id: "sql-sandbox",
     title: "3. Secure Execution Sandbox",
-    desc: "DataVault executes generated queries inside a strictly sandboxed read-only database transaction loop. Write operations are caught and terminated by database transaction locks.",
+    desc: "Querify executes generated queries inside a strictly sandboxed read-only database transaction loop. Write operations are caught and terminated by database transaction locks.",
     metric: "Write Lock: Strictly Enforced",
     icon: Shield,
   },

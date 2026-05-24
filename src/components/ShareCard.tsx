@@ -126,7 +126,7 @@ export function ShareCard({ open, onClose, query, result, datasetName }: ShareCa
 
             {/* Header: Brand and Source */}
             <div className="relative z-10 flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest text-primary font-bold">DataVault AI Suite</span>
+              <span className="text-[10px] uppercase tracking-widest text-primary font-bold">Querify AI Suite</span>
               <span className="text-[10px] text-muted-foreground bg-white/5 border border-white/10 rounded-full px-2 py-0.5 max-w-[140px] truncate">
                 {datasetName || "data_source"}
               </span>

@@ -232,7 +232,7 @@ function PlanCard({ plan, currentTier }: { plan: PlanDefinition; currentTier: Pl
   const handleUpgrade = () => {
     if (plan.tier === "enterprise") {
       toast.info("Enterprise inquiries", {
-        description: "Contact sales@datavault.ai for a custom enterprise plan tailored to your organization.",
+        description: "Contact sales@querify.ai for a custom enterprise plan tailored to your organization.",
       });
     } else {
       toast.info("Upgrade request received", {

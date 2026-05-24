@@ -287,7 +287,7 @@ export default function DashboardPage() {
                     <BarChart2 size={22} className="text-primary" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold text-foreground">Welcome to DataVault Agent</h3>
+                    <h3 className="text-base font-semibold text-foreground">Welcome to Querify Agent</h3>
                     <p className="mt-1 max-w-md text-sm text-muted-foreground">
                       Upload a dataset or connect a database, configure your AI provider, then ask questions in plain English.
                     </p>

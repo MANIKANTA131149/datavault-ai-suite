@@ -298,7 +298,7 @@ export default function SettingsPage() {
           <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-foreground">{configuredCount} of {Object.keys(PROVIDER_LABELS).length} providers configured</p>
-              <p className="text-xs text-muted-foreground">Provider keys are used for running queries via DataVault UI</p>
+              <p className="text-xs text-muted-foreground">Provider keys are used for running queries via Querify UI</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Select value={activeProvider} onValueChange={(value) => setActiveProvider(value as Provider)}>

@@ -505,7 +505,7 @@ function exportHTML(result: any, query: string, filename = "result.html") {
   } else {
     tableHtml = `<pre style="font-family:monospace">${JSON.stringify(result, null, 2)}</pre>`;
   }
-  const html = `<!DOCTYPE html><html><head><title>DataVault Export</title></head><body>
+  const html = `<!DOCTYPE html><html><head><title>Querify Export</title></head><body>
     <h2 style="font-family:sans-serif">Query: ${query}</h2>
     <p style="font-family:sans-serif;color:#888">${new Date().toLocaleString()}</p>
     ${tableHtml}</body></html>`;
