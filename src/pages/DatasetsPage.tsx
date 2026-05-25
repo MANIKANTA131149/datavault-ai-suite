@@ -23,6 +23,7 @@ import { usePlanStore } from "@/stores/plan-store";
 import { formatFileSizeLimit, type PlanDefinition } from "@/lib/plans";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { api } from "@/lib/api-client";
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 
 type DatasetSort = "newest" | "oldest" | "name" | "type" | "rows";
@@ -250,11 +251,10 @@ function ColumnIntelligenceTab({ sheet }: { sheet: { columns: ColumnInfo[]; rows
   );
 }
 
-function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: StoredDataset; onClose: () => void; displayName?: string }) {
+function DatasetDetailPanel({ dataset, onClose, displayName, onDeleteClick }: { dataset: StoredDataset; onClose: () => void; displayName?: string; onDeleteClick: (ds: StoredDataset) => void }) {
   const [activeSheet, setActiveSheet] = useState(dataset.sheetNames[0]);
   const { removeDataset, loadDatasetData } = useDatasetStore();
   const navigate = useNavigate();
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [localData, setLocalData] = useState<ParsedFile | null>(dataset.data || null);
   const [columnSearch, setColumnSearch] = useState("");
@@ -462,23 +462,10 @@ function DatasetDetailPanel({ dataset, onClose, displayName }: { dataset: Stored
         <Button className="flex-1" onClick={() => navigate(`/app/query?dataset=${dataset.id}`)}>
           <MessageSquare size={14} className="mr-2" /> Query this dataset
         </Button>
-        <Button variant="outline" className="border-border text-destructive hover:bg-destructive/10 sm:w-auto" onClick={() => setDeleteOpen(true)}>
+        <Button variant="outline" className="border-border text-destructive hover:bg-destructive/10 sm:w-auto" onClick={() => { onDeleteClick(dataset); onClose(); }}>
           <Trash2 size={14} />
         </Button>
       </div>
-
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="bg-background-secondary border-border">
-          <DialogHeader>
-            <DialogTitle>Delete dataset</DialogTitle>
-            <DialogDescription>This will permanently delete "{dataset.fileName}" and its stored data.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)} className="border-border">Cancel</Button>
-            <Button variant="destructive" onClick={async () => { await removeDataset(dataset.id); setDeleteOpen(false); toast.success("Dataset deleted"); onClose(); }}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </motion.div>
   );
 }
@@ -492,6 +479,8 @@ export default function DatasetsPage() {
   const [parsing, setParsing] = useState(false);
   const [selectedDataset, setSelectedDataset] = useState<StoredDataset | null>(null);
   const [datasetToDelete, setDatasetToDelete] = useState<StoredDataset | null>(null);
+  const [dependencyWarningData, setDependencyWarningData] = useState<{ isUsed: boolean; deployments: any[] } | null>(null);
+  const [checkingDependency, setCheckingDependency] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingDataset, setEditingDataset] = useState<StoredDataset | null>(null);
@@ -675,6 +664,24 @@ export default function DatasetsPage() {
     }
   };
 
+  const handleAttemptDeleteDataset = async (ds: StoredDataset) => {
+    setCheckingDependency(true);
+    try {
+      const data = await api.get<{ isUsed: boolean; deployments: any[] }>(
+        `/deployments/check-dependency?datasetId=${ds.id}`
+      );
+      if (data.isUsed) {
+        setDependencyWarningData({ isUsed: true, deployments: data.deployments });
+      }
+      setDatasetToDelete(ds);
+    } catch (err) {
+      console.error(err);
+      setDatasetToDelete(ds);
+    } finally {
+      setCheckingDependency(false);
+    }
+  };
+
   const confirmDeleteDataset = async () => {
     if (!datasetToDelete) return;
     await removeDataset(datasetToDelete.id);
@@ -688,6 +695,7 @@ export default function DatasetsPage() {
     toast.success(`${datasetToDelete.fileName} deleted`);
     addLocalNotification({ type: "system", title: "Dataset deleted", message: `${datasetToDelete.fileName} was deleted.`, icon: "database", link: "/app/datasets" });
     setDatasetToDelete(null);
+    setDependencyWarningData(null);
   };
 
   const toggleSelected = (id: string) => {
@@ -1046,7 +1054,7 @@ export default function DatasetsPage() {
                           type="button"
                           aria-label="Delete dataset"
                           title="Delete dataset"
-                          onClick={(event) => { event.stopPropagation(); setDatasetToDelete(ds); }}
+                          onClick={(event) => { event.stopPropagation(); handleAttemptDeleteDataset(ds); }}
                           className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
                         >
                           <Trash2 size={13} />
@@ -1130,7 +1138,7 @@ export default function DatasetsPage() {
                         type="button"
                         aria-label="Delete dataset"
                         title="Delete dataset"
-                        onClick={(event) => { event.stopPropagation(); setDatasetToDelete(ds); }}
+                        onClick={(event) => { event.stopPropagation(); handleAttemptDeleteDataset(ds); }}
                         className="p-1 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive md:opacity-0 md:group-hover:opacity-100"
                       >
                         <Trash2 size={12} />
@@ -1174,6 +1182,7 @@ export default function DatasetsPage() {
           <DatasetDetailPanel
             dataset={selectedDataset}
             displayName={selectedDataset.displayName}
+            onDeleteClick={handleAttemptDeleteDataset}
             onClose={() => setSelectedDataset(null)}
           />
         )}
@@ -1223,15 +1232,43 @@ export default function DatasetsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!datasetToDelete} onOpenChange={(open) => { if (!open) setDatasetToDelete(null); }}>
+      <Dialog open={!!datasetToDelete} onOpenChange={(open) => { if (!open) { setDatasetToDelete(null); setDependencyWarningData(null); } }}>
         <DialogContent className="bg-background-secondary border-border">
           <DialogHeader>
-            <DialogTitle>Delete dataset</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {dependencyWarningData ? (
+                <AlertTriangle className="text-warning shrink-0" size={18} />
+              ) : null}
+              {dependencyWarningData ? "Resource In Use" : "Delete dataset"}
+            </DialogTitle>
             <DialogDescription>
-              This will permanently delete "{datasetToDelete?.fileName}" and its stored data.
+              {dependencyWarningData ? (
+                <span className="text-warning font-medium">
+                  WARNING: This dataset is connected to active, deployed chatbots. Deleting it will break their functionality!
+                </span>
+              ) : (
+                `This will permanently delete "${datasetToDelete?.fileName}" and its stored data.`
+              )}
             </DialogDescription>
           </DialogHeader>
-          {datasetToDelete && (
+          
+          {dependencyWarningData && dependencyWarningData.deployments.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">Affected deployments:</p>
+              <div className="max-h-36 overflow-y-auto space-y-1.5 rounded-md border border-border bg-card p-2.5">
+                {dependencyWarningData.deployments.map((dep: any) => (
+                  <div key={dep.id || dep._id} className="flex items-center justify-between text-xs text-foreground">
+                    <span className="font-medium truncate max-w-[180px]">{dep.name}</span>
+                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                      {dep.status || "active"}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {datasetToDelete && !dependencyWarningData && (
             <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
               <div className="rounded-md border border-border bg-card p-2">Rows: {getDatasetTotals(datasetToDelete).rows.toLocaleString()}</div>
               <div className="rounded-md border border-border bg-card p-2">Columns: {getDatasetTotals(datasetToDelete).columns.toLocaleString()}</div>
@@ -1239,10 +1276,10 @@ export default function DatasetsPage() {
               <div className="rounded-md border border-border bg-card p-2">Uploaded: {new Date(datasetToDelete.uploadDate).toLocaleDateString()}</div>
             </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDatasetToDelete(null)} className="border-border">Cancel</Button>
-            <Button variant="destructive" onClick={confirmDeleteDataset}>
-              <Trash2 size={14} className="mr-2" /> Delete file
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => { setDatasetToDelete(null); setDependencyWarningData(null); }} className="border-border">Cancel</Button>
+            <Button variant="destructive" onClick={confirmDeleteDataset} disabled={checkingDependency}>
+              <Trash2 size={14} className="mr-2" /> {dependencyWarningData ? "Force Delete" : "Delete file"}
             </Button>
           </DialogFooter>
         </DialogContent>

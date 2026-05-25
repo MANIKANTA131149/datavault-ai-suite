@@ -45,6 +45,8 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { toast } from "sonner";
+import { api } from "@/lib/api-client";
+import { AlertTriangle } from "lucide-react";
 import {
   useConnectionStore,
   DB_TYPE_LABELS,
@@ -468,6 +470,27 @@ function DeleteDialog({
 }) {
   const { deleteConnection } = useConnectionStore();
   const [deleting, setDeleting] = useState(false);
+  const [dependencyWarningData, setDependencyWarningData] = useState<{ isUsed: boolean; deployments: any[] } | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    if (!open || !connection) {
+      setDependencyWarningData(null);
+      return;
+    }
+    setChecking(true);
+    api
+      .get<{ isUsed: boolean; deployments: any[] }>(
+        `/deployments/check-dependency?connectionId=${connection._id}`
+      )
+      .then((data) => {
+        if (data.isUsed) {
+          setDependencyWarningData({ isUsed: true, deployments: data.deployments });
+        }
+      })
+      .catch((err) => console.error("Dependency check failed:", err))
+      .finally(() => setChecking(false));
+  }, [open, connection]);
 
   const handleDelete = async () => {
     if (!connection) return;
@@ -488,17 +511,45 @@ function DeleteDialog({
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
       <DialogContent className="border-border bg-background-secondary">
         <DialogHeader>
-          <DialogTitle>Delete connection</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {dependencyWarningData ? (
+              <AlertTriangle className="text-warning shrink-0" size={18} />
+            ) : null}
+            {dependencyWarningData ? "Database Connection In Use" : "Delete connection"}
+          </DialogTitle>
           <DialogDescription>
-            This will permanently remove "{connection?.name}". This action cannot be undone.
+            {dependencyWarningData ? (
+              <span className="text-warning font-medium">
+                WARNING: This database connection is connected to active, deployed chatbots. Deleting it will break their functionality!
+              </span>
+            ) : (
+              `This will permanently remove "${connection?.name}". This action cannot be undone.`
+            )}
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter>
+
+        {dependencyWarningData && dependencyWarningData.deployments.length > 0 && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">Affected deployments:</p>
+            <div className="max-h-36 overflow-y-auto space-y-1.5 rounded-md border border-border bg-card p-2.5">
+              {dependencyWarningData.deployments.map((dep: any) => (
+                <div key={dep.id || dep._id} className="flex items-center justify-between text-xs text-foreground">
+                  <span className="font-medium truncate max-w-[180px]">{dep.name}</span>
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    {dep.status || "active"}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={onClose} className="border-border">
             Cancel
           </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? "Deleting..." : "Delete"}
+          <Button variant="destructive" onClick={handleDelete} disabled={deleting || checking}>
+            {deleting ? "Deleting..." : dependencyWarningData ? "Force Delete" : "Delete"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -186,6 +186,19 @@ router.post("/:id/duplicate", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     const db = await getDb();
+    const dataset = await db.collection("datasets").findOne({ _id: req.params.id, userId: req.userId });
+    if (dataset) {
+      await db.collection("deployments").updateMany(
+        { userId: req.userId, "snapshot.selectedDatasetId": req.params.id },
+        {
+          $set: {
+            status: "broken",
+            statusReason: `Dataset "${dataset.fileName}" was deleted`,
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      );
+    }
     await db.collection("datasets").deleteOne({ _id: req.params.id, userId: req.userId });
     res.json({ success: true });
     logAudit(req.userId, req.userEmail || "", "dataset.delete", { id: req.params.id }, "warn");
