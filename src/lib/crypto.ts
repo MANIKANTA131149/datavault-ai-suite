@@ -1,7 +1,9 @@
 // Robust cryptographic utility using a byte-based RC4 stream cipher.
 // Functions identically and reliably across both Browser and Node.js environments.
 
-const DEFAULT_KEY = "datavault-ai-suite-shared-secret-key-2026-safe";
+const DEFAULT_KEY =
+  (import.meta.env && import.meta.env.VITE_API_ENCRYPTION_KEY) ||
+  "datavault-ai-suite-shared-secret-key-2026-safe";
 
 function rc4Bytes(bytes: Uint8Array, key: string): Uint8Array {
   const s = new Array(256);
