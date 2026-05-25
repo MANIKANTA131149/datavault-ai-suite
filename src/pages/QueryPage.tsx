@@ -20,7 +20,7 @@ import {
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
-  Share2, Mic,
+  Share2, Mic, Globe, Loader2, Layers, AlertTriangle,
 } from "lucide-react";
 import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
 import { ShareCard } from "@/components/ShareCard";
@@ -36,7 +36,7 @@ import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useConnectionStore, DB_TYPE_LABELS, DB_TYPE_ICONS } from "@/stores/connection-store";
@@ -55,6 +55,8 @@ import type { ColumnInfo } from "@/lib/file-parser";
 import { executeDatabaseQuery, fetchDatabaseSchema, type DatabaseSchema, type DatabaseTableData } from "@/lib/db-query-client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { getApiBaseUrl } from "@/lib/api-base";
+import { api } from "@/lib/api-client";
 import { generatePDF } from "@/lib/pdf-report";
 import html2canvas from "html2canvas";
 import {
@@ -2399,6 +2401,150 @@ export default function QueryPage() {
   const [dbSchema, setDbSchema] = useState<DatabaseSchema | null>(null);
   const [loadingDbSchema, setLoadingDbSchema] = useState(false);
 
+  // Isolated Chatbot Deployment States
+  const [activeTab, setActiveTab] = useState<"workspace" | "deployments">("workspace");
+  const [deployments, setDeployments] = useState<any[]>([]);
+  const [loadingDeployments, setLoadingDeployments] = useState(false);
+  const [showDeployDialog, setShowDeployDialog] = useState(false);
+  const [deployName, setDeployName] = useState("");
+  const [deployDescription, setDeployDescription] = useState("");
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deployedInfo, setDeployedInfo] = useState<any>(null);
+  const [deploymentToRedeploy, setDeploymentToRedeploy] = useState<any>(null);
+  const [redeploying, setRedeploying] = useState(false);
+
+  const fetchDeployments = useCallback(async () => {
+    setLoadingDeployments(true);
+    try {
+      const data = await api.get<{ deployments: any[] }>("/deployments");
+      setDeployments(data.deployments || []);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load deployments");
+    } finally {
+      setLoadingDeployments(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "deployments") {
+      fetchDeployments();
+    }
+  }, [activeTab, fetchDeployments]);
+
+  const handleCreateDeployment = async () => {
+    if (!deployName.trim()) {
+      toast.error("Please provide a name for the deployment");
+      return;
+    }
+    setIsDeploying(true);
+    try {
+      const snapshot = {
+        sourceType: isDbConnection ? "connection" : "dataset",
+        selectedDatasetId,
+        selectedSheet,
+        selectedTable,
+        activeProvider,
+        activeModel,
+        providerConfigs: {
+          [activeProvider]: {
+            ...providerConfigs[activeProvider],
+            apiKey: getApiKey(activeProvider) || providerConfigs[activeProvider]?.apiKey,
+          },
+        },
+        temperature,
+        maxTokens,
+        systemPrompt,
+        connectionSnapshot: selectedConnection ? {
+          _id: selectedConnection._id,
+          name: selectedConnection.name,
+          dbType: selectedConnection.dbType,
+        } : undefined,
+        databaseTables: dbSchema?.tables || [],
+        datasetSnapshot: selectedDataset ? {
+          id: selectedDataset.id,
+          fileName: selectedDataset.fileName,
+          fileType: selectedDataset.fileType,
+        } : undefined,
+      };
+
+      const data = await api.post<{ deployment: { _id: string } }>(
+        "/deployments",
+        {
+          name: deployName.trim(),
+          description: deployDescription.trim(),
+          snapshot,
+        }
+      );
+      setDeployedInfo({ deployId: data.deployment?._id });
+      toast.success("Chatbot deployed successfully!");
+      if (activeTab === "deployments") {
+        fetchDeployments();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to deploy chatbot");
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
+  const handleRedeployDeployment = async (dep: any) => {
+    setRedeploying(true);
+    try {
+      const snapshot = {
+        sourceType: isDbConnection ? "connection" : "dataset",
+        selectedDatasetId,
+        selectedSheet,
+        selectedTable,
+        activeProvider,
+        activeModel,
+        providerConfigs: {
+          [activeProvider]: {
+            ...providerConfigs[activeProvider],
+            apiKey: getApiKey(activeProvider) || providerConfigs[activeProvider]?.apiKey,
+          },
+        },
+        temperature,
+        maxTokens,
+        systemPrompt,
+        connectionSnapshot: selectedConnection ? {
+          _id: selectedConnection._id,
+          name: selectedConnection.name,
+          dbType: selectedConnection.dbType,
+        } : undefined,
+        databaseTables: dbSchema?.tables || [],
+        datasetSnapshot: selectedDataset ? {
+          id: selectedDataset.id,
+          fileName: selectedDataset.fileName,
+          fileType: selectedDataset.fileType,
+        } : undefined,
+      };
+
+      await api.put(`/deployments/${dep._id}`, {
+        name: dep.name,
+        description: dep.description,
+        snapshot,
+      });
+      toast.success(`Chatbot "${dep.name}" redeployed with current settings!`);
+      fetchDeployments();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to redeploy chatbot");
+    } finally {
+      setRedeploying(false);
+      setDeploymentToRedeploy(null);
+    }
+  };
+
+  const handleDeleteDeployment = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this deployed chatbot? This link will stop working for all users.")) return;
+    try {
+      await api.delete(`/deployments/${id}`);
+      toast.success("Deployment deleted");
+      fetchDeployments();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete deployment");
+    }
+  };
+
   // Determine if the selected source is a DB connection (prefixed with "conn:") or a dataset
   const isDbConnection = selectedDatasetId.startsWith("conn:");
   const selectedConnectionId = isDbConnection ? selectedDatasetId.slice(5) : null;
@@ -3164,587 +3310,765 @@ export default function QueryPage() {
   const bedrockRegionForProvider = activeProviderConfig.region || "us-east-1";
 
   return (
-    <div className="relative flex h-[calc(100dvh-3.5rem-4.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] md:h-[calc(100dvh-3.5rem)] xl:flex-row">
-      <AnimatePresence>
-        {showPreview && selectedDataset && (
-          <DataPreviewPanel dataset={selectedDataset} sheet={selectedSheet} onClose={() => setShowPreview(false)} />
-        )}
-        {showPreview && selectedConnection && dbSchema && (
-          <DatabasePreviewPanel connectionId={selectedConnection._id} schema={dbSchema} tableName={selectedTable} onSelectTable={setSelectedTable} onClose={() => setShowPreview(false)} />
-        )}
-      </AnimatePresence>
+    <div className="relative flex h-[calc(100dvh-3.5rem-4.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] md:h-[calc(100dvh-3.5rem)]">
+      {/* Top switcher/actions bar */}
+      <div className="shrink-0 border-b border-border bg-background-secondary/85 backdrop-blur-md px-4 py-2.5 flex items-center justify-between z-40 gap-4">
+        <div className="flex items-center gap-2">
+          <Layers className="text-primary h-4 w-4" />
+          <span className="font-semibold text-sm text-foreground tracking-tight hidden sm:inline-block">Query Control Room</span>
+        </div>
+        
+        {/* HSL Tabs Switcher */}
+        <div className="flex items-center rounded-lg border border-border bg-card p-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab("workspace")}
+            className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+              activeTab === "workspace"
+                ? "bg-primary text-primary-foreground shadow"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Chatbot Workspace
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("deployments")}
+            className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+              activeTab === "deployments"
+                ? "bg-primary text-primary-foreground shadow"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Deployed Chatbots
+          </button>
+        </div>
 
-      {/* Left: Context Panel */}
-      <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-auto border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
-        <div className="p-4 space-y-4">
-          <div>
-            <Label className="text-xs text-muted-foreground">Data Source</Label>
-            <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
-              <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue placeholder="Select data source" /></SelectTrigger>
-              <SelectContent className="bg-popover border-border max-h-72">
-                {datasets.length > 0 && (
-                  <>
-                    <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Uploaded Files</div>
-                    {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.fileName}</SelectItem>)}
-                  </>
-                )}
-                {connectedDbs.length > 0 && (
-                  <>
-                    <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Database Connections</div>
-                    {connectedDbs.map((c) => (
-                      <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
-                        <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
-                      </SelectItem>
-                    ))}
-                  </>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {selectedDataset && selectedDataset.sheetNames.length > 1 && (
-            <div>
-              <Label className="text-xs text-muted-foreground">Sheet</Label>
-              <div className="flex gap-1 mt-1.5 flex-wrap">
-                {selectedDataset.sheetNames.map((s) => (
-                  <button key={s} onClick={() => setSelectedSheet(s)} className={`text-xs px-2 py-1 rounded ${s === selectedSheet ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground bg-card"}`}>{s}</button>
-                ))}
-              </div>
-            </div>
+        {/* Deploy Button */}
+        <div>
+          {activeTab === "workspace" && (
+            <Button
+              size="sm"
+              onClick={() => {
+                setDeployName(sourceName ? `${sourceName} Agent` : "My Custom Agent");
+                setDeployDescription("");
+                setDeployedInfo(null);
+                setShowDeployDialog(true);
+              }}
+              disabled={!selectedDatasetId}
+              className="bg-primary/90 text-primary-foreground hover:bg-primary font-semibold text-xs h-8 px-3 gap-1.5 shadow-[0_4px_12px_-4px_hsl(var(--primary)/0.5)] border border-primary/20"
+            >
+              <Share2 size={13} />
+              Deploy Chatbot
+            </Button>
           )}
-
-          {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
-            <div>
-              <Label className="text-xs text-muted-foreground">Table</Label>
-              <div className="mt-1.5">
-                <DatabaseTablePicker
-                  tables={dbSchema.tables}
-                  value={selectedDbTableData?.name || selectedTable}
-                  onChange={setSelectedTable}
-                  placeholder="Choose a table"
-                />
-              </div>
-            </div>
-          )}
-
-          {selectedConnection && (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">{DB_TYPE_ICONS[selectedConnection.dbType]}</span>
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-foreground truncate">{selectedConnection.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{DB_TYPE_LABELS[selectedConnection.dbType]}</p>
-                </div>
-              </div>
-              {selectedConnection.config.host && <p className="text-[10px] text-muted-foreground">Host: <span className="font-mono text-foreground">{selectedConnection.config.host}</span></p>}
-              {selectedConnection.config.database && <p className="text-[10px] text-muted-foreground">DB: <span className="font-mono text-foreground">{selectedConnection.config.database}</span></p>}
-              {loadingDbSchema && <p className="text-[10px] text-muted-foreground">Loading table schema...</p>}
-            </div>
-          )}
-
-          {selectedDataset && selectedSheet && (
-            <div className="flex gap-2 flex-wrap">
-              <Badge variant="outline" className="border-border text-xs">{selectedDataset.rowCounts[selectedSheet]} rows</Badge>
-              <Badge variant="outline" className="border-border text-xs">{selectedDataset.columnCounts[selectedSheet]} cols</Badge>
-            </div>
-          )}
-
-          {selectedConnection && selectedDbTableData && (
-            <div className="flex gap-2 flex-wrap">
-              <Badge variant="outline" className="border-border text-xs">
-                {selectedDbTableData.rowCount != null ? `${selectedDbTableData.rowCount} rows` : "Rows pending"}
-              </Badge>
-              <Badge variant="outline" className="border-border text-xs">
-                {selectedDbTableData.columns.length > 0 ? `${selectedDbTableData.columns.length} cols` : "Cols pending"}
-              </Badge>
-              <Badge variant="outline" className="border-border text-xs uppercase">{selectedDbTableData.kind}</Badge>
-            </div>
-          )}
-
-          {(selectedDataset || selectedConnection) && (
-            <button onClick={() => setShowPreview(true)} className="flex items-center gap-2 w-full text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-card/80 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
-              <Table2 size={12} /> Preview data <Eye size={11} className="ml-auto" />
-            </button>
-          )}
-
-          <Separator className="bg-border" />
-
-          {/* Conversation Context Indicator */}
-          {conversationContext.length > 0 && (
-            <div className="flex items-center justify-between px-3 py-2 rounded-md bg-primary/5 border border-primary/20">
-              <div className="flex items-center gap-1.5">
-                <TrendingUp size={12} className="text-primary" />
-                <span className="text-xs text-primary">{conversationContext.length} context turn{conversationContext.length !== 1 ? "s" : ""}</span>
-              </div>
-              <button onClick={handleClearContext} className="text-xs text-muted-foreground hover:text-destructive transition-colors">
-                <Trash2 size={11} />
-              </button>
-            </div>
-          )}
-
-          <div>
-            <Label className="text-xs text-muted-foreground">LLM Provider</Label>
-            <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
-              <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-                  <SelectItem key={p} value={p}>
-                    <span className="flex items-center gap-2">
-                      <ProviderLogo provider={p} size="sm" />
-                      {PROVIDER_LABELS[p]}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {activeProvider === "bedrock" ? (
-            <>
-              <div>
-                <Label className="text-xs text-muted-foreground">Access Key ID</Label>
-                <Input
-                  type="password"
-                  placeholder="Enter AWS access key ID"
-                  value={apiKeyForProvider}
-                  onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })}
-                  className="mt-1.5 bg-card border-border text-xs font-mono"
-                />
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Secret Access Key</Label>
-                <Input
-                  type="password"
-                  placeholder="Enter AWS secret access key"
-                  value={secretAccessKeyForProvider}
-                  onChange={(e) => setProviderConfig(activeProvider, { secretAccessKey: e.target.value })}
-                  className="mt-1.5 bg-card border-border text-xs font-mono"
-                />
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Region</Label>
-                <Input
-                  placeholder="us-east-1"
-                  value={bedrockRegionForProvider}
-                  onChange={(e) => setProviderConfig(activeProvider, { region: e.target.value })}
-                  className="mt-1.5 bg-card border-border text-xs font-mono"
-                />
-              </div>
-            </>
-          ) : (
-            <div>
-              <Label className="text-xs text-muted-foreground">API Key</Label>
-              <Input type="password" placeholder="Enter API key" value={apiKeyForProvider} onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })} className="mt-1.5 bg-card border-border text-xs font-mono" />
-            </div>
-          )}
-
-          <div>
-            <Label className="text-xs text-muted-foreground">Model</Label>
-            {activeProvider === "bedrock" ? (
-              <Input
-                value={activeModel}
-                onChange={(e) => {
-                  setActiveModel(e.target.value);
-                  setProviderConfig(activeProvider, { model: e.target.value });
-                }}
-                placeholder="Enter Bedrock model ID"
-                className="mt-1.5 bg-card border-border text-xs font-mono"
-              />
-            ) : (
-              <Select value={activeModel} onValueChange={setActiveModel}>
-                <SelectTrigger className="mt-1.5 bg-card border-border min-w-0 [&>span]:truncate">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
-                  {PROVIDER_MODELS[activeProvider]?.map((m) => (
-                    <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
-                      <span className="min-w-0 whitespace-normal break-words leading-snug">
-                        {getModelDisplayName(m)}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          <div>
-            <div className="flex justify-between">
-              <Label className="text-xs text-muted-foreground">Temperature</Label>
-              <span className="text-xs font-mono text-muted-foreground">{temperature.toFixed(1)}</span>
-            </div>
-            <Slider value={[temperature]} onValueChange={([v]) => setTemperature(v)} min={0} max={1} step={0.1} className="mt-2" />
-          </div>
-
-          <div>
-            <Label className="text-xs text-muted-foreground">Max Tokens</Label>
-            <Select value={String(maxTokens)} onValueChange={(v) => setMaxTokens(Number(v))}>
-              <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                {[256, 512, 1024, 2048, 4096].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
-            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              <Settings2 size={12} /> Advanced {showAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2">
-              <Textarea placeholder={`Override the ${defaultPromptLabel} prompt...`} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
-              <p className="mt-1 text-[10px] text-muted-foreground">Default mode: {defaultPromptLabel}</p>
-            </CollapsibleContent>
-          </Collapsible>
-
-          {/* Quick tools */}
-          <div className="flex gap-1.5">
-            <button onClick={() => setShowTemplates(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
-              <LayoutTemplate size={11} /> Templates
-            </button>
-            <button onClick={() => setShowShortcuts(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
-              <Keyboard size={11} /> Shortcuts
-            </button>
-          </div>
         </div>
       </div>
 
-      {/* Center: Chat */}
-      <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
-        <div className="shrink-0 space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
-              <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Data source" /></SelectTrigger>
-              <SelectContent className="bg-popover border-border max-h-72">
-                {datasets.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Files</div>}
-                {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
-                {connectedDbs.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Databases</div>}
-                {connectedDbs.map((c) => (
-                  <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
-                    <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
-              <SelectTrigger className="bg-card border-border text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-                  <SelectItem key={p} value={p}>
-                    <span className="flex items-center gap-2"><ProviderLogo provider={p} size="sm" />{PROVIDER_LABELS[p]}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {selectedDataset && selectedDataset.sheetNames.length > 1 && (
-            <div className="flex gap-1 overflow-x-auto">
-              {selectedDataset.sheetNames.map((s) => (
-                <button key={s} onClick={() => setSelectedSheet(s)} className={`shrink-0 rounded px-2 py-1 text-xs ${s === selectedSheet ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"}`}>{s}</button>
-              ))}
-            </div>
+      <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden relative xl:flex-row flex-col">
+        <AnimatePresence>
+          {showPreview && selectedDataset && (
+            <DataPreviewPanel dataset={selectedDataset} sheet={selectedSheet} onClose={() => setShowPreview(false)} />
           )}
-          {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
-            <div className="w-full">
-              <DatabaseTablePicker
-                tables={dbSchema.tables}
-                value={selectedDbTableData?.name || selectedTable}
-                onChange={setSelectedTable}
-                placeholder="Choose a table"
-                triggerClassName="py-1.5"
-              />
-            </div>
+          {showPreview && selectedConnection && dbSchema && (
+            <DatabasePreviewPanel connectionId={selectedConnection._id} schema={dbSchema} tableName={selectedTable} onSelectTable={setSelectedTable} onClose={() => setShowPreview(false)} />
           )}
-          <div className="flex flex-wrap gap-2">
-            {(selectedDataset || selectedConnection) && (
-              <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowPreview(true)}>
-                <Eye size={12} className="mr-1" /> Preview
-              </Button>
-            )}
-            <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowMobileSettings(true)}>
-              <Settings2 size={12} className="mr-1" /> Provider
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowTemplates(true)}>
-              <LayoutTemplate size={12} className="mr-1" /> Templates
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowShortcuts(true)}>
-              <Keyboard size={12} className="mr-1" /> Shortcuts
-            </Button>
-          </div>
-        </div>
-        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-4 scrollbar-thin sm:p-4">
-          {messages.length === 0 && !isRunning && (
-            <div className="flex h-full flex-col items-center justify-center gap-4 rounded-[28px] border border-dashed border-border/70 bg-card/45 px-6 py-10 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-                <Sparkles size={24} className="text-primary" />
-              </div>
-              <p className="text-sm font-medium text-foreground">Ask anything about your data</p>
-              <p className="max-w-xl text-sm text-muted-foreground">
-                Use smart suggestions, prompt templates, or your own question. The workspace stays optimized for both
-                handheld and desktop query sessions.
-              </p>
-              <div className="flex max-w-lg flex-wrap justify-center gap-2">
-                {smartSuggestions.map((p) => (
-                  <button key={p} onClick={() => { setInput(p); textareaRef.current?.focus(); }}
-                    className="rounded-full border border-border/70 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground">
-                    {p}
-                  </button>
-                ))}
-              </div>
-              <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1.5 text-xs text-primary hover:underline mt-1">
-                <LayoutTemplate size={12} /> Browse template library
-              </button>
-            </div>
-          )}
+        </AnimatePresence>
 
-          {messages.map((msg, i) => {
-            const finalStep = getFinalStep(msg.steps);
-            return (
-              <div key={i}>
-                {msg.role === "user" ? (
-                  <div className="flex justify-end">
-                    <div className="max-w-[85%] min-w-0 rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
-                      <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                        {msg.content}
-                      </p>
+        {activeTab === "workspace" ? (
+          <>
+            {/* Left: Context Panel */}
+            <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-auto border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
+              <div className="p-4 space-y-4">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Data Source</Label>
+                  <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
+                    <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue placeholder="Select data source" /></SelectTrigger>
+                    <SelectContent className="bg-popover border-border max-h-72">
+                      {datasets.length > 0 && (
+                        <>
+                          <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Uploaded Files</div>
+                          {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.fileName}</SelectItem>)}
+                        </>
+                      )}
+                      {connectedDbs.length > 0 && (
+                        <>
+                          <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Database Connections</div>
+                          {connectedDbs.map((c) => (
+                            <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
+                              <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
+                            </SelectItem>
+                          ))}
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedDataset && selectedDataset.sheetNames.length > 1 && (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Sheet</Label>
+                    <div className="flex gap-1 mt-1.5 flex-wrap">
+                      {selectedDataset.sheetNames.map((s) => (
+                        <button key={s} onClick={() => setSelectedSheet(s)} className={`text-xs px-2 py-1 rounded ${s === selectedSheet ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground bg-card"}`}>{s}</button>
+                      ))}
                     </div>
                   </div>
+                )}
+
+                {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Table</Label>
+                    <div className="mt-1.5">
+                      <DatabaseTablePicker
+                        tables={dbSchema.tables}
+                        value={selectedDbTableData?.name || selectedTable}
+                        onChange={setSelectedTable}
+                        placeholder="Choose a table"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {selectedConnection && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{DB_TYPE_ICONS[selectedConnection.dbType]}</span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{selectedConnection.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{DB_TYPE_LABELS[selectedConnection.dbType]}</p>
+                      </div>
+                    </div>
+                    {selectedConnection.config.host && <p className="text-[10px] text-muted-foreground">Host: <span className="font-mono text-foreground">{selectedConnection.config.host}</span></p>}
+                    {selectedConnection.config.database && <p className="text-[10px] text-muted-foreground">DB: <span className="font-mono text-foreground">{selectedConnection.config.database}</span></p>}
+                    {loadingDbSchema && <p className="text-[10px] text-muted-foreground">Loading table schema...</p>}
+                  </div>
+                )}
+
+                {selectedDataset && selectedSheet && (
+                  <div className="flex gap-2 flex-wrap">
+                    <Badge variant="outline" className="border-border text-xs">{selectedDataset.rowCounts[selectedSheet]} rows</Badge>
+                    <Badge variant="outline" className="border-border text-xs">{selectedDataset.columnCounts[selectedSheet]} cols</Badge>
+                  </div>
+                )}
+
+                {selectedConnection && selectedDbTableData && (
+                  <div className="flex gap-2 flex-wrap">
+                    <Badge variant="outline" className="border-border text-xs">
+                      {selectedDbTableData.rowCount != null ? `${selectedDbTableData.rowCount} rows` : "Rows pending"}
+                    </Badge>
+                    <Badge variant="outline" className="border-border text-xs">
+                      {selectedDbTableData.columns.length > 0 ? `${selectedDbTableData.columns.length} cols` : "Cols pending"}
+                    </Badge>
+                    <Badge variant="outline" className="border-border text-xs uppercase">{selectedDbTableData.kind}</Badge>
+                  </div>
+                )}
+
+                {(selectedDataset || selectedConnection) && (
+                  <button onClick={() => setShowPreview(true)} className="flex items-center gap-2 w-full text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-card/80 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+                    <Table2 size={12} /> Preview data <Eye size={11} className="ml-auto" />
+                  </button>
+                )}
+
+                <Separator className="bg-border" />
+
+                {/* Conversation Context Indicator */}
+                {conversationContext.length > 0 && (
+                  <div className="flex items-center justify-between px-3 py-2 rounded-md bg-primary/5 border border-primary/20">
+                    <div className="flex items-center gap-1.5">
+                      <TrendingUp size={12} className="text-primary" />
+                      <span className="text-xs text-primary">{conversationContext.length} context turn{conversationContext.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    <button onClick={handleClearContext} className="text-xs text-muted-foreground hover:text-destructive transition-colors">
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                )}
+
+                <div>
+                  <Label className="text-xs text-muted-foreground">LLM Provider</Label>
+                  <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
+                    <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-popover border-border">
+                      {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+                        <SelectItem key={p} value={p}>
+                          <span className="flex items-center gap-2">
+                            <ProviderLogo provider={p} size="sm" />
+                            {PROVIDER_LABELS[p]}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {activeProvider === "bedrock" ? (
+                  <>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Access Key ID</Label>
+                      <Input
+                        type="password"
+                        placeholder="Enter AWS access key ID"
+                        value={apiKeyForProvider}
+                        onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })}
+                        className="mt-1.5 bg-card border-border text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Secret Access Key</Label>
+                      <Input
+                        type="password"
+                        placeholder="Enter AWS secret access key"
+                        value={secretAccessKeyForProvider}
+                        onChange={(e) => setProviderConfig(activeProvider, { secretAccessKey: e.target.value })}
+                        className="mt-1.5 bg-card border-border text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Region</Label>
+                      <Input
+                        placeholder="us-east-1"
+                        value={bedrockRegionForProvider}
+                        onChange={(e) => setProviderConfig(activeProvider, { region: e.target.value })}
+                        className="mt-1.5 bg-card border-border text-xs font-mono"
+                      />
+                    </div>
+                  </>
                 ) : (
-                  <div className="space-y-1">
-                    {msg.steps && msg.steps.length > 0 ? (
-                      <StepsTimeline steps={msg.steps} />
-                    ) : (
-                      <div className="max-w-full min-w-0 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2.5 sm:max-w-[85%]">
-                        <p className="text-sm text-destructive whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                          {msg.content}
-                        </p>
-                      </div>
-                    )}
-                    {msg.steps && msg.steps.length > 0 && (
-                      <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground sm:pl-10">
-                        <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
-                        <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
-                        {finalStep && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setFinalResult(finalStep.result);
-                                setLastQuery(msg.query || "");
-                                setShowSaveInsight(true);
+                  <div>
+                    <Label className="text-xs text-muted-foreground">API Key</Label>
+                    <Input type="password" placeholder="Enter API key" value={apiKeyForProvider} onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })} className="mt-1.5 bg-card border-border text-xs font-mono" />
+                  </div>
+                )}
+
+                <div>
+                  <Label className="text-xs text-muted-foreground">Model</Label>
+                  {activeProvider === "bedrock" ? (
+                    <Input
+                      value={activeModel}
+                      onChange={(e) => {
+                        setActiveModel(e.target.value);
+                        setProviderConfig(activeProvider, { model: e.target.value });
+                      }}
+                      placeholder="Enter Bedrock model ID"
+                      className="mt-1.5 bg-card border-border text-xs font-mono"
+                    />
+                  ) : (
+                    <Select value={activeModel} onValueChange={setActiveModel}>
+                      <SelectTrigger className="mt-1.5 bg-card border-border min-w-0 [&>span]:truncate">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
+                        {PROVIDER_MODELS[activeProvider]?.map((m) => (
+                          <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
+                            <span className="min-w-0 whitespace-normal break-words leading-snug">
+                              {getModelDisplayName(m)}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex justify-between">
+                    <Label className="text-xs text-muted-foreground">Temperature</Label>
+                    <span className="text-xs font-mono text-muted-foreground">{temperature.toFixed(1)}</span>
+                  </div>
+                  <Slider value={[temperature]} onValueChange={([v]) => setTemperature(v)} min={0} max={1} step={0.1} className="mt-2" />
+                </div>
+
+                <div>
+                  <Label className="text-xs text-muted-foreground">Max Tokens</Label>
+                  <Select value={String(maxTokens)} onValueChange={(v) => setMaxTokens(Number(v))}>
+                    <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-popover border-border">
+                      {[256, 512, 1024, 2048, 4096].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+                  <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                    <Settings2 size={12} /> Advanced {showAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-2">
+                    <Textarea placeholder={`Override the ${defaultPromptLabel} prompt...`} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Default mode: {defaultPromptLabel}</p>
+                  </CollapsibleContent>
+                </Collapsible>
+
+                {/* Quick tools */}
+                <div className="flex gap-1.5">
+                  <button onClick={() => setShowTemplates(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+                    <LayoutTemplate size={11} /> Templates
+                  </button>
+                  <button onClick={() => setShowShortcuts(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+                    <Keyboard size={11} /> Shortcuts
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Center: Chat */}
+            <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
+              <div className="shrink-0 space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
+                    <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Data source" /></SelectTrigger>
+                    <SelectContent className="bg-popover border-border max-h-72">
+                      {datasets.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Files</div>}
+                      {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
+                      {connectedDbs.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Databases</div>}
+                      {connectedDbs.map((c) => (
+                        <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
+                          <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
+                    <SelectTrigger className="bg-card border-border text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-popover border-border">
+                      {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+                        <SelectItem key={p} value={p}>
+                          <span className="flex items-center gap-2"><ProviderLogo provider={p} size="sm" />{PROVIDER_LABELS[p]}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedDataset && selectedDataset.sheetNames.length > 1 && (
+                  <div className="flex gap-1 overflow-x-auto">
+                    {selectedDataset.sheetNames.map((s) => (
+                      <button key={s} onClick={() => setSelectedSheet(s)} className={`shrink-0 rounded px-2 py-1 text-xs ${s === selectedSheet ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"}`}>{s}</button>
+                    ))}
+                  </div>
+                )}
+                {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
+                  <div className="w-full">
+                    <DatabaseTablePicker
+                      tables={dbSchema.tables}
+                      value={selectedDbTableData?.name || selectedTable}
+                      onChange={setSelectedTable}
+                      placeholder="Choose a table"
+                      triggerClassName="py-1.5"
+                    />
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {(selectedDataset || selectedConnection) && (
+                    <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowPreview(true)}>
+                      <Eye size={12} className="mr-1" /> Preview
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowMobileSettings(true)}>
+                    <Settings2 size={12} className="mr-1" /> Provider
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowTemplates(true)}>
+                    <LayoutTemplate size={12} className="mr-1" /> Templates
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowShortcuts(true)}>
+                    <Keyboard size={12} className="mr-1" /> Shortcuts
+                  </Button>
+                </div>
+              </div>
+              <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-4 scrollbar-thin sm:p-4">
+                {messages.length === 0 && !isRunning && (
+                  <div className="flex h-full flex-col items-center justify-center gap-4 rounded-[28px] border border-dashed border-border/70 bg-card/45 px-6 py-10 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
+                      <Sparkles size={24} className="text-primary" />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">Ask anything about your data</p>
+                    <p className="max-w-xl text-sm text-muted-foreground">
+                      Use smart suggestions, prompt templates, or your own question. The workspace stays optimized for both
+                      handheld and desktop query sessions.
+                    </p>
+                    <div className="flex max-w-lg flex-wrap justify-center gap-2">
+                      {smartSuggestions.map((p) => (
+                        <button key={p} onClick={() => { setInput(p); textareaRef.current?.focus(); }}
+                          className="rounded-full border border-border/70 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground">
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1.5 text-xs text-primary hover:underline mt-1">
+                      <LayoutTemplate size={12} /> Browse template library
+                    </button>
+                  </div>
+                )}
+
+                {messages.map((msg, i) => {
+                  const finalStep = getFinalStep(msg.steps);
+                  return (
+                    <div key={i}>
+                      {msg.role === "user" ? (
+                        <div className="flex justify-end">
+                          <div className="max-w-[85%] min-w-0 rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
+                            <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                              {msg.content}
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          {msg.steps && msg.steps.length > 0 ? (
+                            <StepsTimeline steps={msg.steps} />
+                          ) : (
+                            <div className="max-w-full min-w-0 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2.5 sm:max-w-[85%]">
+                              <p className="text-sm text-destructive whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                                {msg.content}
+                              </p>
+                            </div>
+                          )}
+                          {msg.steps && msg.steps.length > 0 && (
+                            <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground sm:pl-10">
+                              <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
+                              <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
+                              {finalStep && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setFinalResult(finalStep.result);
+                                      setLastQuery(msg.query || "");
+                                      setShowSaveInsight(true);
+                                    }}
+                                    className="flex items-center gap-1 text-primary hover:underline"
+                                  >
+                                    <BookmarkPlus size={10} /> Save insight
+                                  </button>
+                                  <button
+                                    onClick={() => handlePdfReport(msg.query || "", finalStep.result)}
+                                    className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
+                                  >
+                                    <FileDown size={10} /> PDF report
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                          {finalStep && (
+                            <InlineFinalResult 
+                              result={finalStep.result} 
+                              onSubmitQuickReply={(text) => {
+                                handleSend(text);
                               }}
-                              className="flex items-center gap-1 text-primary hover:underline"
-                            >
-                              <BookmarkPlus size={10} /> Save insight
-                            </button>
-                            <button
-                              onClick={() => handlePdfReport(msg.query || "", finalStep.result)}
-                              className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
-                            >
-                              <FileDown size={10} /> PDF report
-                            </button>
-                          </>
-                        )}
-                      </div>
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {isRunning && (
+                  <div className="space-y-3 min-w-0 w-full">
+                    {currentSteps.length > 0 && !hitlState && (
+                      <StepsTimeline steps={currentSteps} live />
                     )}
-                    {finalStep && (
+                    {currentFinalStep && !hitlState && (
                       <InlineFinalResult 
-                        result={finalStep.result} 
+                        result={currentFinalStep.result} 
                         onSubmitQuickReply={(text) => {
                           handleSend(text);
                         }}
                       />
                     )}
+
+                    <AnimatePresence mode="wait">
+                      {hitlState ? (
+                        <HitlPanel
+                          key="hitl-active"
+                          state={hitlState}
+                          onSubmit={(val) => {
+                            if (hitlResolverRef.current) {
+                              hitlResolverRef.current(val);
+                              hitlResolverRef.current = null;
+                              setHitlState(null);
+                            }
+                          }}
+                          onStop={handleStopQuery}
+                        />
+                      ) : null}
+                    </AnimatePresence>
+                    {!hitlState && (
+                      <div className="flex flex-wrap items-center gap-2 sm:pl-10">
+                        {/* Premium 3-dot thinking indicator */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="thinking-dot" />
+                          <span className="thinking-dot" />
+                          <span className="thinking-dot" />
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          Agent is thinking... {Math.floor(elapsedMs / 1000)}s
+                          {elapsedMs > 30000 ? " — taking longer than usual" : ""}
+                        </span>
+                        <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
+                          <X size={12} className="mr-1" /> Stop
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
+                <div ref={chatEndRef} />
               </div>
-            );
-          })}
 
-          {isRunning && (
-            <div className="space-y-3 min-w-0 w-full">
-              {currentSteps.length > 0 && !hitlState && (
-                <StepsTimeline steps={currentSteps} live />
-              )}
-              {currentFinalStep && !hitlState && (
-                <InlineFinalResult 
-                  result={currentFinalStep.result} 
-                  onSubmitQuickReply={(text) => {
-                    handleSend(text);
-                  }}
+              <div className="shrink-0 border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
+                {apiWarning && (
+                  <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:flex-row sm:items-center sm:justify-between">
+                    <span>{apiWarning}</span>
+                    <Button variant="outline" size="sm" className="h-7 border-warning/30 text-xs" onClick={() => navigate("/app/settings")}>Settings</Button>
+                  </div>
+                )}
+                {lastFailedQuery && !isRunning && (
+                  <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                    <span>Last query failed.</span>
+                    <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={() => handleSend(lastFailedQuery)}>
+                      <RefreshCw size={12} className="mr-1" /> Retry
+                    </Button>
+                  </div>
+                )}
+                <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
+                  <div className="relative min-w-0 flex-1">
+                    {/* Ghost text backdrop overlay */}
+                    {activeSuggestion && !isRunning && !isListening && (
+                      <div 
+                        className="absolute inset-0 bg-transparent text-transparent pointer-events-none whitespace-pre-wrap break-all select-none px-3 py-2 text-sm leading-normal border border-transparent font-normal font-sans"
+                        style={{
+                          fontFamily: "inherit",
+                          fontSize: "0.875rem",
+                          lineHeight: "1.25rem",
+                          padding: "0.5rem 0.75rem",
+                          pointerEvents: "none",
+                        }}
+                      >
+                        <span>{input}</span>
+                        <span className="text-muted-foreground/30 dark:text-muted-foreground/35">{activeSuggestion}</span>
+                      </div>
+                    )}
+
+                    {/* Listening waveforms overlay */}
+                    {isListening && (
+                      <div className="absolute inset-0 flex items-center justify-between bg-background-secondary/95 backdrop-blur-sm rounded-[24px] px-4 py-2 border border-primary/20 z-20">
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
+                            <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
+                            <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
+                            <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
+                            <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
+                            <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
+                          </div>
+                          <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSpeech}
+                          className="h-7 px-3 text-xs border-border bg-card hover:bg-background"
+                        >
+                          Done
+                        </Button>
+                      </div>
+                    )}
+
+                    <Textarea
+                      ref={textareaRef}
+                      value={input}
+                      onChange={(e) => {
+                        setInput(e.target.value);
+                        // Auto-grow
+                        const el = e.target;
+                        el.style.height = "auto";
+                        el.style.height = `${Math.min(el.scrollHeight, queryExpanded ? 260 : 120)}px`;
+                      }}
+                      onKeyDown={handleKeyDown}
+                      placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
+                      disabled={isRunning}
+                      className={`bg-background-secondary border-border resize-none min-h-[44px] disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
+                      rows={queryExpanded ? 5 : 1}
+                    />
+                    {input && !isListening && (
+                      <button
+                        type="button"
+                        aria-label="Clear query"
+                        title="Clear query"
+                        onClick={() => { setInput(""); textareaRef.current?.focus(); }}
+                        className="absolute right-2 top-2 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleSpeech}
+                      size="icon"
+                      title={isListening ? "Stop listening" : "Voice search"}
+                      className={`h-[44px] w-[44px] shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
+                    >
+                      <Mic size={16} className={isListening ? "animate-pulse" : ""} />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setQueryExpanded((prev) => !prev)}
+                      size="icon"
+                      title={queryExpanded ? "Collapse query box" : "Expand query box"}
+                      className="h-[44px] w-[44px] shrink-0 border-border"
+                    >
+                      {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                    </Button>
+                    <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
+                      {isRunning ? <X size={16} /> : <Send size={16} />}
+                    </Button>
+                  </div>
+                </div>
+                {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
+                {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-0.5">{input.length.toLocaleString()} characters</p>}
+              </div>
+            </div>
+
+            {/* Right: Result Panel */}
+            {finalResult !== null && showResult && (
+              <div className="hidden w-[clamp(20rem,28vw,26rem)] shrink-0 border-l border-border/70 bg-background-secondary/90 backdrop-blur-sm xl:block">
+                <ResultPanel
+                  result={finalResult}
+                  query={lastQuery}
+                  onClose={() => setShowResult(false)}
+                  onBookmark={() => setShowSaveInsight(true)}
+                  datasetName={sourceName}
+                  onShare={() => setShowShareCard(true)}
                 />
-              )}
+              </div>
+            )}
 
-              <AnimatePresence mode="wait">
-                {hitlState ? (
-                  <HitlPanel
-                    key="hitl-active"
-                    state={hitlState}
-                    onSubmit={(val) => {
-                      if (hitlResolverRef.current) {
-                        hitlResolverRef.current(val);
-                        hitlResolverRef.current = null;
-                        setHitlState(null);
-                      }
-                    }}
-                    onStop={handleStopQuery}
-                  />
-                ) : null}
-              </AnimatePresence>
-              {!hitlState && (
-                <div className="flex flex-wrap items-center gap-2 sm:pl-10">
-                  {/* Premium 3-dot thinking indicator */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="thinking-dot" />
-                    <span className="thinking-dot" />
-                    <span className="thinking-dot" />
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    Agent is thinking... {Math.floor(elapsedMs / 1000)}s
-                    {elapsedMs > 30000 ? " — taking longer than usual" : ""}
-                  </span>
-                  <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
-                    <X size={12} className="mr-1" /> Stop
-                  </Button>
+            {finalResult !== null && !showResult && (
+              <button onClick={() => setShowResult(true)} className="fixed right-4 bottom-20 bg-primary text-primary-foreground p-2 rounded-full shadow-lg hover:bg-primary/90 hidden xl:block">
+                <PanelRightOpen size={16} />
+              </button>
+            )}
+          </>
+        ) : (
+          /* Deployed Chatbots Dashboard */
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 max-w-6xl w-full mx-auto relative z-10 scrollbar-thin">
+            <div className="flex flex-col gap-2">
+              <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                <Globe size={18} className="text-primary animate-pulse" /> Deployed Chatbots
+              </h2>
+              <p className="text-xs text-muted-foreground max-w-xl">
+                These chatbots are deployed securely on public sandboxed proxies. Your connected database credentials and provider keys remain protected on the backend.
+              </p>
+            </div>
+
+            {loadingDeployments ? (
+              <div className="flex min-h-[30vh] items-center justify-center">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 size={24} className="animate-spin text-primary" />
+                  <p className="text-xs text-muted-foreground">Loading deployments...</p>
                 </div>
-              )}
-            </div>
-          )}
-          <div ref={chatEndRef} />
-        </div>
-
-        <div className="shrink-0 border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
-          {apiWarning && (
-            <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:flex-row sm:items-center sm:justify-between">
-              <span>{apiWarning}</span>
-              <Button variant="outline" size="sm" className="h-7 border-warning/30 text-xs" onClick={() => navigate("/app/settings")}>Settings</Button>
-            </div>
-          )}
-          {lastFailedQuery && !isRunning && (
-            <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-              <span>Last query failed.</span>
-              <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={() => handleSend(lastFailedQuery)}>
-                <RefreshCw size={12} className="mr-1" /> Retry
-              </Button>
-            </div>
-          )}
-          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
-            <div className="relative min-w-0 flex-1">
-              {/* Ghost text backdrop overlay */}
-              {activeSuggestion && !isRunning && !isListening && (
-                <div 
-                  className="absolute inset-0 bg-transparent text-transparent pointer-events-none whitespace-pre-wrap break-all select-none px-3 py-2 text-sm leading-normal border border-transparent font-normal font-sans"
-                  style={{
-                    fontFamily: "inherit",
-                    fontSize: "0.875rem",
-                    lineHeight: "1.25rem",
-                    padding: "0.5rem 0.75rem",
-                    pointerEvents: "none",
-                  }}
-                >
-                  <span>{input}</span>
-                  <span className="text-muted-foreground/30 dark:text-muted-foreground/35">{activeSuggestion}</span>
+              </div>
+            ) : deployments.length === 0 ? (
+              <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border/60 bg-card/45 px-6 py-12 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
+                  <Globe size={24} className="text-primary" />
                 </div>
-              )}
+                <p className="text-sm font-medium text-foreground">No chatbots deployed yet</p>
+                <p className="max-w-md text-xs text-muted-foreground leading-normal">
+                  Configure your database connections or file uploads in the workspace, verify settings, and click "Deploy Chatbot" to share an isolated bot.
+                </p>
+                <Button size="sm" onClick={() => setActiveTab("workspace")} className="mt-2 text-xs">
+                  Go to Workspace
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {deployments.map((dep) => {
+                  const snapshot = dep.snapshot || {};
+                  const isDb = snapshot.sourceType === "connection";
+                  const depSourceName = snapshot.datasetSnapshot?.fileName || snapshot.connectionSnapshot?.name || "Connected data source";
+                  const shareUrl = `${window.location.origin}/deploy/${dep._id}`;
+                  const isBroken = dep.status === "broken" || dep.status === "deleted";
 
-              {/* Listening waveforms overlay */}
-              {isListening && (
-                <div className="absolute inset-0 flex items-center justify-between bg-background-secondary/95 backdrop-blur-sm rounded-[24px] px-4 py-2 border border-primary/20 z-20">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
-                      <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
-                      <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
-                      <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
-                      <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
-                      <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
-                    </div>
-                    <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSpeech}
-                    className="h-7 px-3 text-xs border-border bg-card hover:bg-background"
-                  >
-                    Done
-                  </Button>
-                </div>
-              )}
+                  return (
+                    <Card key={dep._id} className="p-4 bg-background-secondary border-border hover:border-primary/25 transition-all duration-200 group flex flex-col justify-between min-h-[220px]">
+                      <div className="space-y-3 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-semibold text-foreground truncate">{dep.name}</h3>
+                            {dep.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{dep.description}</p>}
+                          </div>
+                          {isBroken ? (
+                            <Badge variant="destructive" className="text-[9px] gap-0.5 shrink-0 py-0.5 px-1.5"><AlertTriangle size={8} /> Broken</Badge>
+                          ) : (
+                            <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/10 text-emerald-400 text-[9px] gap-0.5 shrink-0 py-0.5 px-1.5">Active</Badge>
+                          )}
+                        </div>
 
-              <Textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  // Auto-grow
-                  const el = e.target;
-                  el.style.height = "auto";
-                  el.style.height = `${Math.min(el.scrollHeight, queryExpanded ? 260 : 120)}px`;
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
-                disabled={isRunning}
-                className={`bg-background-secondary border-border resize-none min-h-[44px] disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
-                rows={queryExpanded ? 5 : 1}
-              />
-              {input && !isListening && (
-                <button
-                  type="button"
-                  aria-label="Clear query"
-                  title="Clear query"
-                  onClick={() => { setInput(""); textareaRef.current?.focus(); }}
-                  className="absolute right-2 top-2 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <Button
-                variant="outline"
-                onClick={handleSpeech}
-                size="icon"
-                title={isListening ? "Stop listening" : "Voice search"}
-                className={`h-[44px] w-[44px] shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
-              >
-                <Mic size={16} className={isListening ? "animate-pulse" : ""} />
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setQueryExpanded((prev) => !prev)}
-                size="icon"
-                title={queryExpanded ? "Collapse query box" : "Expand query box"}
-                className="h-[44px] w-[44px] shrink-0 border-border"
-              >
-                {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </Button>
-              <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
-                {isRunning ? <X size={16} /> : <Send size={16} />}
-              </Button>
-            </div>
+                        <div className="space-y-1.5 text-xs text-muted-foreground">
+                          <p className="truncate">Resource: <span className="text-foreground font-medium">{depSourceName}</span></p>
+                          <p className="truncate">Model: <span className="text-foreground font-mono">{snapshot.activeModel || "Default"}</span></p>
+                          {dep.chatsCount !== undefined && <p>Conversations: <span className="text-foreground font-medium">{dep.chatsCount}</span></p>}
+                          {isBroken && dep.statusReason && (
+                            <p className="text-[10px] text-destructive leading-normal mt-1 border-t border-destructive/10 pt-1.5">
+                              Reason: {dep.statusReason}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-4 border-t border-border/50 mt-4 flex items-center justify-between gap-2 shrink-0">
+                        <span className="text-[10px] text-muted-foreground font-mono">{new Date(dep.createdAt).toLocaleDateString()}</span>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            title="Copy share link"
+                            onClick={() => {
+                              navigator.clipboard.writeText(shareUrl);
+                              toast.success("Share link copied to clipboard!");
+                            }}
+                            className="h-8 w-8 border-border text-muted-foreground hover:text-foreground"
+                          >
+                            <Copy size={13} />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            title="Redeploy with current workspace settings"
+                            onClick={() => setDeploymentToRedeploy(dep)}
+                            className="h-8 w-8 border-border text-muted-foreground hover:text-foreground"
+                          >
+                            <RefreshCw size={13} />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            title="Open shared chatbot link"
+                            onClick={() => window.open(shareUrl, "_blank")}
+                            className="h-8 w-8 border-border text-muted-foreground hover:text-foreground"
+                          >
+                            <ChevronRight size={14} />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            title="Delete chatbot deployment"
+                            onClick={() => handleDeleteDeployment(dep._id)}
+                            className="h-8 w-8 border-border text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <Trash2 size={13} />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
           </div>
-          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
-          {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-0.5">{input.length.toLocaleString()} characters</p>}
-        </div>
+        )}
       </div>
-
-      {/* Right: Result Panel */}
-      {finalResult !== null && showResult && (
-        <div className="hidden w-[clamp(20rem,28vw,26rem)] shrink-0 border-l border-border/70 bg-background-secondary/90 backdrop-blur-sm xl:block">
-          <ResultPanel
-            result={finalResult}
-            query={lastQuery}
-            onClose={() => setShowResult(false)}
-            onBookmark={() => setShowSaveInsight(true)}
-            datasetName={sourceName}
-            onShare={() => setShowShareCard(true)}
-          />
-        </div>
-      )}
-
-      {finalResult !== null && !showResult && (
-        <button onClick={() => setShowResult(true)} className="fixed right-4 bottom-20 bg-primary text-primary-foreground p-2 rounded-full shadow-lg hover:bg-primary/90 hidden xl:block">
-          <PanelRightOpen size={16} />
-        </button>
-      )}
 
       <Sheet open={showMobileSettings} onOpenChange={setShowMobileSettings}>
         <SheetContent side="bottom" className="h-[88dvh] overflow-y-auto border-t border-border bg-background-secondary px-4 pb-6 pt-10 lg:hidden">
@@ -4005,6 +4329,107 @@ export default function QueryPage() {
         result={finalResult}
         datasetName={selectedConnection?.name || selectedDataset?.fileName || ""}
       />
+
+      {/* Deploy Dialog */}
+      <Dialog open={showDeployDialog} onOpenChange={setShowDeployDialog}>
+        <DialogContent className="bg-background-secondary border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Globe size={16} className="text-primary" /> Deploy Chatbot (Beta)</DialogTitle>
+            <DialogDescription>
+              Create a secure, sandboxed public chatbot based on your current configurations.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!deployedInfo ? (
+            <div className="space-y-4 py-2">
+              <div>
+                <Label className="text-xs text-muted-foreground font-medium">Chatbot Name *</Label>
+                <Input
+                  value={deployName}
+                  onChange={(e) => setDeployName(e.target.value)}
+                  placeholder="e.g. Sales Analysis Agent"
+                  className="mt-1 bg-card border-border text-xs"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground font-medium">Description</Label>
+                <Textarea
+                  value={deployDescription}
+                  onChange={(e) => setDeployDescription(e.target.value)}
+                  placeholder="Tell users what questions this chatbot is configured to answer..."
+                  className="mt-1 bg-card border-border min-h-[60px] text-xs"
+                />
+              </div>
+
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-1.5 text-xs text-muted-foreground">
+                <p className="font-semibold text-foreground">Snapshotted Configurations:</p>
+                <p>Data Source: <span className="text-foreground">{sourceName}</span></p>
+                <p>Model Configs: <span className="text-foreground font-mono">{activeProvider}/{activeModel}</span></p>
+                <p>Security Level: <span className="text-emerald-400 font-medium">✅ Fully Encrypted Proxy</span></p>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <Button variant="outline" onClick={() => setShowDeployDialog(false)} className="border-border text-xs h-9">Cancel</Button>
+                <Button onClick={handleCreateDeployment} disabled={isDeploying} className="text-xs h-9">
+                  {isDeploying ? "Deploying..." : "Create Deployment"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2 text-center">
+              <div className="h-10 w-10 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto mb-2 animate-bounce">
+                <Check size={20} />
+              </div>
+              <h3 className="text-sm font-semibold text-foreground">Chatbot Deployed!</h3>
+              <p className="text-xs text-muted-foreground leading-normal max-w-sm mx-auto">
+                Your secure public chatbot is active. Share the unique link below with external clients or test it directly.
+              </p>
+
+              <div className="relative mt-3 flex items-center gap-2 rounded-lg border border-border bg-card p-2 text-xs font-mono text-foreground">
+                <span className="truncate flex-1 pr-6 text-left">{`${window.location.origin}/deploy/${deployedInfo.deployId}`}</span>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/deploy/${deployedInfo.deployId}`);
+                    toast.success("Share link copied!");
+                  }}
+                  className="absolute right-2 text-muted-foreground hover:text-foreground animate-pulse"
+                  title="Copy link"
+                >
+                  <Copy size={13} />
+                </button>
+              </div>
+
+              <div className="flex gap-2 justify-center pt-2">
+                <Button variant="outline" onClick={() => setShowDeployDialog(false)} className="border-border text-xs h-9">Done</Button>
+                <Button onClick={() => window.open(`${window.location.origin}/deploy/${deployedInfo.deployId}`, "_blank")} className="text-xs h-9">
+                  Open Chatbot
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Redeploy confirmation Dialog */}
+      <Dialog open={!!deploymentToRedeploy} onOpenChange={(open) => { if (!open) setDeploymentToRedeploy(null); }}>
+        <DialogContent className="bg-background-secondary border-border max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Redeploy chatbot</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to overwrite the snapshot of "{deploymentToRedeploy?.name}" with your current workspace configuration?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning leading-normal">
+            ⚡ This updates the deployed chatbot instantly without changing its unique URL. Any active database table definitions or prompt parameters are updated in the snapshot.
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0 mt-2">
+            <Button variant="outline" onClick={() => setDeploymentToRedeploy(null)} className="border-border text-xs h-9">Cancel</Button>
+            <Button onClick={() => handleRedeployDeployment(deploymentToRedeploy)} disabled={redeploying} className="text-xs h-9">
+              {redeploying ? "Updating..." : "Redeploy Now"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

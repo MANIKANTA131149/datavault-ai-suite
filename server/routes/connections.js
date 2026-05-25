@@ -313,6 +313,22 @@ router.post("/:id/test", authMiddleware, async (req, res) => {
 router.delete("/:id", authMiddleware, async (req, res) => {
   try {
     const db = await getDb();
+    const conn = await db
+      .collection("connections")
+      .findOne({ _id: new ObjectId(req.params.id), userId: req.userId });
+    if (conn) {
+      await db.collection("deployments").updateMany(
+        { userId: req.userId, "snapshot.selectedDatasetId": `conn:${req.params.id}` },
+        {
+          $set: {
+            status: "broken",
+            statusReason: `Database connection "${conn.name}" was deleted`,
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      );
+    }
+
     const result = await db.collection("connections").updateOne(
       { _id: new ObjectId(req.params.id), userId: req.userId },
       { $set: { deleted: true, updatedAt: new Date().toISOString() } }

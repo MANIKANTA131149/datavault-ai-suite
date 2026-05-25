@@ -19,6 +19,7 @@ const InsightsPage = lazy(() => import("@/pages/InsightsPage"));
 const AdminPage = lazy(() => import("@/pages/AdminPage"));
 const ConnectionsPage = lazy(() => import("@/pages/ConnectionsPage"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const DeployedChatPage = lazy(() => import("@/pages/DeployedChatPage"));
 
 function PageLoader() {
   return (
@@ -54,6 +55,7 @@ const App = () => (
               <Route path="settings" element={<SettingsPage />} />
               <Route path="pricing" element={<PricingPage />} />
             </Route>
+            <Route path="/deploy/:deployId" element={<DeployedChatPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
