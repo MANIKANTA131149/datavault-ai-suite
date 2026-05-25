@@ -338,65 +338,65 @@
 .orb-2 { animation: orb-drift-2 12s ease-in-out infinite; }
 .orb-3 { animation: orb-drift-3 7s ease-in-out infinite; }
 
-/* ── KPI card colored glows on hover ────────────────────────────────────── */
+/* ── KPI card colored glows (always at full maximum brightness) ────────── */
 .card-glow-blue {
-  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-color: hsl(217 91% 60% / 0.55) !important;
+  box-shadow:
+    0 0 0 1px hsl(217 91% 60% / 0.28),
+    0 12px 32px -6px hsl(217 91% 60% / 0.35),
+    0 3px 10px -2px hsl(217 91% 60% / 0.18);
 }
 .card-glow-blue:hover {
-  border-color: hsl(217 91% 60% / 0.45) !important;
-  box-shadow:
-    0 0 0 1px hsl(217 91% 60% / 0.22),
-    0 8px 32px -6px hsl(217 91% 60% / 0.3),
-    0 2px 8px -2px hsl(217 91% 60% / 0.15);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
 }
 
 .card-glow-purple {
-  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-color: hsl(263 70% 58% / 0.55) !important;
+  box-shadow:
+    0 0 0 1px hsl(263 70% 58% / 0.28),
+    0 12px 32px -6px hsl(263 70% 58% / 0.35),
+    0 3px 10px -2px hsl(263 70% 58% / 0.18);
 }
 .card-glow-purple:hover {
-  border-color: hsl(263 70% 58% / 0.45) !important;
-  box-shadow:
-    0 0 0 1px hsl(263 70% 58% / 0.22),
-    0 8px 32px -6px hsl(263 70% 58% / 0.3),
-    0 2px 8px -2px hsl(263 70% 58% / 0.15);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
 }
 
 .card-glow-green {
-  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-color: hsl(160 84% 39% / 0.55) !important;
+  box-shadow:
+    0 0 0 1px hsl(160 84% 39% / 0.28),
+    0 12px 32px -6px hsl(160 84% 39% / 0.35),
+    0 3px 10px -2px hsl(160 84% 39% / 0.18);
 }
 .card-glow-green:hover {
-  border-color: hsl(160 84% 39% / 0.45) !important;
-  box-shadow:
-    0 0 0 1px hsl(160 84% 39% / 0.22),
-    0 8px 32px -6px hsl(160 84% 39% / 0.3),
-    0 2px 8px -2px hsl(160 84% 39% / 0.15);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
 }
 
 .card-glow-amber {
-  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-color: hsl(38 92% 50% / 0.55) !important;
+  box-shadow:
+    0 0 0 1px hsl(38 92% 50% / 0.28),
+    0 12px 32px -6px hsl(38 92% 50% / 0.35),
+    0 3px 10px -2px hsl(38 92% 50% / 0.18);
 }
 .card-glow-amber:hover {
-  border-color: hsl(38 92% 50% / 0.45) !important;
-  box-shadow:
-    0 0 0 1px hsl(38 92% 50% / 0.22),
-    0 8px 32px -6px hsl(38 92% 50% / 0.3),
-    0 2px 8px -2px hsl(38 92% 50% / 0.15);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
 }
 
 .card-glow-pink {
-  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-color: hsl(330 85% 55% / 0.55) !important;
+  box-shadow:
+    0 0 0 1px hsl(330 85% 55% / 0.28),
+    0 12px 32px -6px hsl(330 85% 55% / 0.35),
+    0 3px 10px -2px hsl(330 85% 55% / 0.18);
 }
 .card-glow-pink:hover {
-  border-color: hsl(330 85% 55% / 0.45) !important;
-  box-shadow:
-    0 0 0 1px hsl(330 85% 55% / 0.22),
-    0 8px 32px -6px hsl(330 85% 55% / 0.3),
-    0 2px 8px -2px hsl(330 85% 55% / 0.15);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
 }
 
 /* ── 3-dot thinking / loading indicator ─────────────────────────────────── */
