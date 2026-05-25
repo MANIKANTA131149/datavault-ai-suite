@@ -16,7 +16,6 @@ const connectionsRoutes = require("./routes/connections");
 const dbQueryRoutes = require("./routes/db-query");
 const chatMemoryRoutes = require("./routes/chat-memory");
 
-
 const app = express();
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -38,10 +37,14 @@ app.use(
       }
     },
     credentials: true,
+    exposedHeaders: ["x-encrypted-response"],
   })
 );
 
 app.use(express.json({ limit: "50mb" }));
+
+const encryptionMiddleware = require("./middleware/encryption");
+app.use(encryptionMiddleware);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 function mountApiRoutes(basePath) {
@@ -65,7 +68,6 @@ mountApiRoutes("/api");
 // Some API Gateway / reverse-proxy setups strip the `/api` base path before forwarding to the app.
 // Mounting at root keeps the same handlers reachable as `/<route>` (e.g. `/llm/alibaba/chat`).
 mountApiRoutes("");
-
 
 app.get(["/api/health", "/health"], (_req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
 

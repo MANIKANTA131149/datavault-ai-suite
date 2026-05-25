@@ -149,7 +149,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
               {isActive && (
                 <motion.div
                   layoutId="sidebar-active-indicator"
-                  className="absolute left-1 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-primary/90"
+                  className="absolute left-1 top-2 bottom-2 w-1 rounded-full bg-primary/90"
                   transition={{ type: "spring", stiffness: 500, damping: 40 }}
                 />
               )}
