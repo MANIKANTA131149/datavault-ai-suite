@@ -117,9 +117,10 @@ interface HitlPanelProps {
   state: HitlPanelState;
   onSubmit: (value: string) => void;
   onStop: () => void;
+  compact?: boolean;
 }
 
-export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
+export function HitlPanel({ state, onSubmit, onStop, compact = true }: HitlPanelProps) {
   const [reply, setReply] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [pendingChoice, setPendingChoice] = useState<string | null>(null);
@@ -172,65 +173,74 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 8 }}
-      transition={{ type: "spring", stiffness: 380, damping: 32 }}
-      className="hitl-panel-root w-full min-w-0 px-0 sm:px-2"
+      exit={{ opacity: 0, y: 6 }}
+      transition={{ type: "spring", stiffness: 380, damping: 30 }}
+      className="hitl-panel-root w-full min-w-0 px-0 sm:px-1"
     >
       <div
         className={cn(
-          "relative w-full min-w-0 overflow-hidden rounded-2xl border shadow-xl backdrop-blur-xl",
+          "relative w-full min-w-0 overflow-hidden rounded-xl border shadow-lg backdrop-blur-md transition-all duration-200",
           isClarification
-            ? "border-primary/20 bg-gradient-to-b from-card via-card to-primary/[0.04] shadow-primary/10"
-            : "border-amber-500/25 bg-gradient-to-b from-card via-card to-amber-500/[0.06] shadow-amber-500/10"
+            ? "border-primary/20 bg-card/95 shadow-primary/5 dark:shadow-none"
+            : "border-amber-500/25 bg-card/95 shadow-amber-500/5 dark:shadow-none"
         )}
       >
         {/* Accent bar */}
         <div
           className={cn(
-            "h-1 w-full",
+            "h-[3px] w-full",
             isClarification
-              ? "bg-gradient-to-r from-primary/60 via-primary to-primary/60"
-              : "bg-gradient-to-r from-amber-500/60 via-amber-500 to-amber-500/60"
+              ? "bg-primary"
+              : "bg-amber-500"
           )}
         />
 
-        <div className="p-4 sm:p-5 md:p-6 space-y-5 min-w-0">
-          {/* Header — stacks on narrow screens */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-4 min-w-0">
-            <div
-              className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ring-1",
-                isClarification
-                  ? "bg-primary/12 text-primary ring-primary/20"
-                  : "bg-amber-500/12 text-amber-600 dark:text-amber-400 ring-amber-500/25"
-              )}
-            >
-              {isClarification ? <MessageSquare className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
-            </div>
-
-            <div className="flex-1 min-w-0 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base sm:text-lg font-semibold text-foreground tracking-tight">
-                  {isClarification ? "Help us narrow this down" : "Confirm large query"}
-                </h3>
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                    isClarification
-                      ? "bg-primary/10 text-primary border border-primary/20"
-                      : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/25"
-                  )}
-                >
-                  Your input needed
-                </span>
+        <div className={cn("min-w-0 w-full", compact ? "p-3.5 space-y-3.5" : "p-5 sm:p-6 space-y-5")}>
+          {/* Header */}
+          <div className="flex items-center justify-between gap-3 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={cn(
+                  "flex shrink-0 items-center justify-center rounded-lg ring-1",
+                  compact ? "h-8 w-8" : "h-10 w-10",
+                  isClarification
+                    ? "bg-primary/10 text-primary ring-primary/15"
+                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400 ring-amber-500/20"
+                )}
+              >
+                {isClarification ? (
+                  <MessageSquare className={cn("shrink-0", compact ? "h-4 w-4" : "h-5 w-5")} />
+                ) : (
+                  <AlertTriangle className={cn("shrink-0", compact ? "h-4 w-4" : "h-5 w-5")} />
+                )}
               </div>
-              <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                {isClarification
-                  ? "Pick the closest match below — we’ll continue your query right away."
-                  : "This operation touches a large dataset. Approve only if you’re ready to run it."}
-              </p>
+
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className={cn("font-bold text-foreground tracking-tight", compact ? "text-xs sm:text-sm" : "text-base")}>
+                    {isClarification ? "Help us clarify" : "Large query approval"}
+                  </h3>
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                      isClarification
+                        ? "bg-primary/10 text-primary border border-primary/20"
+                        : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20"
+                    )}
+                  >
+                    Action Needed
+                  </span>
+                </div>
+                {!compact && (
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {isClarification
+                      ? "Select one of the choices or type a custom reply."
+                      : "Confirm whether you wish to execute this large-scale query."}
+                  </p>
+                )}
+              </div>
             </div>
 
             <Button
@@ -238,39 +248,48 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
               variant="ghost"
               size="icon"
               onClick={onStop}
-              className="shrink-0 self-end sm:self-start h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
+              className={cn("shrink-0 rounded-full text-muted-foreground hover:text-foreground", compact ? "h-7 w-7" : "h-9 w-9")}
               aria-label="Stop query"
             >
-              <X className="h-4 w-4" />
+              <X className={cn(compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
             </Button>
           </div>
 
-          {/* Question */}
-          <div className="rounded-xl border border-border/50 bg-muted/20 px-4 py-3.5 sm:px-5 sm:py-4 min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-2 flex items-center gap-1.5">
-              <HelpCircle className="h-3 w-3" />
-              {isClarification ? "Question" : "Summary"}
+          {/* Question / Prompt Box */}
+          <div
+            className={cn(
+              "rounded-lg border min-w-0",
+              compact
+                ? "border-border/40 bg-muted/10 px-3 py-2.5"
+                : "border-border/60 bg-muted/20 px-4 py-3.5"
+            )}
+          >
+            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+              <HelpCircle className="h-3 w-3 shrink-0" />
+              {isClarification ? "Agent Clarification Question" : "Database Gate Prompt"}
             </p>
-            {renderPlainPrompt(promptText || state.prompt)}
+            <div className={cn("leading-relaxed text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]", compact ? "text-xs font-medium" : "text-sm")}>
+              {promptText || state.prompt}
+            </div>
           </div>
 
           {/* Approval details */}
           {!isClarification && state.details && (
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4 space-y-3 text-sm min-w-0">
-              <div className="flex flex-wrap justify-between gap-2 border-b border-border/40 pb-2">
-                <span className="text-muted-foreground">Operation</span>
+            <div className="rounded-lg border border-amber-500/15 bg-amber-500/[0.03] p-3 space-y-2 text-xs min-w-0">
+              <div className="flex justify-between gap-2 border-b border-border/40 pb-1.5">
+                <span className="text-muted-foreground">Operation type</span>
                 <span className="font-medium text-foreground">{state.details.operation || "query"}</span>
               </div>
-              <div className="flex flex-wrap justify-between gap-2 border-b border-border/40 pb-2">
-                <span className="text-muted-foreground">Estimated rows</span>
+              <div className="flex justify-between gap-2 border-b border-border/40 pb-1.5">
+                <span className="text-muted-foreground">Approx. row count</span>
                 <span className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
                   {state.details.rowCount?.toLocaleString() ?? "—"}
                 </span>
               </div>
               {state.details.sql && (
-                <div className="space-y-2 min-w-0">
-                  <span className="text-xs text-muted-foreground">SQL preview</span>
-                  <pre className="max-h-40 overflow-auto rounded-lg border border-border/60 bg-background/80 p-3 text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-all scrollbar-thin">
+                <div className="space-y-1.5 min-w-0">
+                  <span className="text-[10px] font-semibold text-muted-foreground">SQL Query Preview</span>
+                  <pre className="max-h-28 overflow-auto rounded-md border border-border/40 bg-background/90 p-2 text-[10px] font-mono leading-relaxed text-muted-foreground whitespace-pre-wrap break-all scrollbar-thin">
                     {state.details.sql}
                   </pre>
                 </div>
@@ -280,42 +299,43 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
 
           {/* Choices */}
           {isClarification && choiceOptions.length > 0 && (
-            <div className="space-y-3 min-w-0">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  Suggested answers
+            <div className="space-y-2 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <p className={cn("font-bold text-foreground flex items-center gap-1", compact ? "text-[11px]" : "text-xs")}>
+                  <Sparkles className="h-3 w-3 text-primary shrink-0" />
+                  Suggested Options
                 </p>
-                <span className="text-[10px] text-muted-foreground">
-                  Tap a card or press <kbd className="hitl-kbd">1</kbd>–<kbd className="hitl-kbd">{Math.min(choiceOptions.length, 9)}</kbd>
+                <span className="text-[9px] text-muted-foreground font-medium">
+                  Press keys <kbd className="hitl-kbd">1</kbd>–<kbd className="hitl-kbd">{Math.min(choiceOptions.length, 9)}</kbd>
                 </span>
               </div>
-              <div className="max-h-[min(22rem,50vh)] overflow-y-auto overflow-x-hidden pr-0.5 scrollbar-thin -mr-0.5">
+              <div className={cn("overflow-y-auto overflow-x-hidden pr-0.5 scrollbar-thin", compact ? "max-h-48" : "max-h-64")}>
                 <HitlChoicePicker
                   options={choiceOptions}
                   onSelect={handleChoice}
                   pendingValue={pendingChoice}
+                  compact={compact}
                 />
               </div>
             </div>
           )}
 
-          {/* Clarification: custom answer */}
+          {/* Custom user answer inputs */}
           {isClarification && (
-            <div className="space-y-3 min-w-0 border-t border-border/40 pt-4">
+            <div className={cn("space-y-2 min-w-0 border-t border-border/40", compact ? "pt-2.5" : "pt-4")}>
               {choiceOptions.length > 0 ? (
                 <button
                   type="button"
                   onClick={() => setShowCustom((v) => !v)}
-                  className="flex w-full items-center justify-between gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
+                  className="flex w-full items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors py-1 focus:outline-none"
                 >
-                  <span>Something else?</span>
+                  <span>Or enter custom reply</span>
                   <ChevronRight
-                    className={cn("h-4 w-4 transition-transform", showCustom && "rotate-90")}
+                    className={cn("h-3 w-3 transition-transform duration-200", showCustom && "rotate-90")}
                   />
                 </button>
               ) : (
-                <Label className="text-xs text-muted-foreground">Your answer</Label>
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Your custom reply</Label>
               )}
 
               <AnimatePresence initial={false}>
@@ -324,7 +344,7 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
+                    transition={{ duration: 0.15 }}
                     onSubmit={handleCustomSubmit}
                     className="overflow-hidden space-y-2"
                   >
@@ -332,9 +352,12 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
                       <Input
                         value={reply}
                         onChange={(e) => setReply(e.target.value)}
-                        placeholder="Type your own answer…"
+                        placeholder="Type standard or custom answer here..."
                         disabled={!!pendingChoice}
-                        className="flex-1 min-w-0 h-11 rounded-xl border-border/80 bg-background/80 text-sm"
+                        className={cn(
+                          "flex-1 min-w-0 border-border bg-background focus-visible:ring-1 focus-visible:ring-primary",
+                          compact ? "h-9 text-xs rounded-lg" : "h-11 text-sm rounded-xl"
+                        )}
                         autoFocus={choiceOptions.length === 0}
                         onKeyDown={(e) => {
                           const num = parseInt(e.key, 10);
@@ -348,13 +371,13 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
                         <Button
                           type="submit"
                           disabled={isSubmitDisabled}
-                          className="h-11 flex-1 sm:flex-none rounded-xl gap-1.5 px-5"
+                          className={cn("font-bold", compact ? "h-9 text-xs rounded-lg px-3.5" : "h-11 text-sm rounded-xl px-5")}
                         >
                           {pendingChoice ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <Loader2 className="h-3 w-3 animate-spin" />
                           ) : (
                             <>
-                              Continue <ArrowRight className="h-4 w-4" />
+                              Submit <ArrowRight className="h-3 w-3 ml-1 shrink-0" />
                             </>
                           )}
                         </Button>
@@ -362,7 +385,7 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
                           type="button"
                           variant="outline"
                           onClick={onStop}
-                          className="h-11 rounded-xl px-4"
+                          className={cn("font-semibold border-border", compact ? "h-9 text-xs rounded-lg px-3" : "h-11 text-sm rounded-xl px-4")}
                         >
                           Stop
                         </Button>
@@ -373,31 +396,34 @@ export function HitlPanel({ state, onSubmit, onStop }: HitlPanelProps) {
               </AnimatePresence>
 
               {choiceOptions.length > 0 && !showCustom && (
-                <p className="text-[10px] text-center text-muted-foreground">
-                  Or expand “Something else?” to type a custom reply
+                <p className="text-[9px] text-center text-muted-foreground">
+                  Press keys 1–{Math.min(choiceOptions.length, 9)} to instantly select an option, or expand above to enter custom text
                 </p>
               )}
             </div>
           )}
 
-          {/* Approval actions */}
+          {/* Large Query Approval Actions */}
           {!isClarification && (
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap pt-1">
+            <div className={cn("flex flex-col gap-2 sm:flex-row pt-1", compact ? "" : "sm:flex-wrap")}>
               <Button
                 type="button"
                 onClick={() => onSubmit("approve")}
-                className="h-12 flex-1 rounded-xl gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20 text-sm font-semibold"
+                className={cn(
+                  "flex-1 font-bold text-white shadow-md bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/10",
+                  compact ? "h-9.5 text-xs rounded-lg gap-1.5" : "h-12 text-sm rounded-xl gap-2 shadow-lg shadow-emerald-600/20"
+                )}
               >
-                <ShieldCheck className="h-5 w-5" />
-                Run query
+                <ShieldCheck className={cn("shrink-0", compact ? "h-4 w-4" : "h-5 w-5")} />
+                Approve & Execute
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => onSubmit("reject")}
-                className="h-12 flex-1 rounded-xl border-border text-sm font-medium"
+                className={cn("flex-1 font-semibold border-border", compact ? "h-9.5 text-xs rounded-lg" : "h-12 text-sm rounded-xl")}
               >
-                Cancel
+                Cancel Query
               </Button>
             </div>
           )}

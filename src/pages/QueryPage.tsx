@@ -815,7 +815,11 @@ function NarrativeResult({
   result: { narrative: string; highlights?: { label: string; value: string }[] }; 
   onSubmitQuickReply?: (text: string) => void;
 }) {
-  const options = useMemo(() => parseOptionsFromText(result.narrative), [result.narrative]);
+  const options = useMemo(() => {
+    const lower = (result.narrative || "").toLowerCase();
+    if (!lower.includes("suggested") && !lower.includes("follow-up") && !lower.includes("try asking")) return [];
+    return parseOptionsFromText(result.narrative);
+  }, [result.narrative]);
   const cleanBody = useMemo(() => cleanPromptText(result.narrative, options), [result.narrative, options]);
 
   return (
@@ -1033,7 +1037,7 @@ const ResultPanel = memo(function ResultPanel({
     if (!fullscreen || typeof document === "undefined") return;
 
     const originalOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") setFullscreen(false);
     };
 
@@ -1644,6 +1648,8 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
 
   const options = useMemo(() => {
     if (typeof result !== "string") return [];
+    const lower = (result || "").toLowerCase();
+    if (!lower.includes("suggested") && !lower.includes("follow-up") && !lower.includes("try asking")) return [];
     return parseOptionsFromText(result);
   }, [result]);
 
@@ -2792,7 +2798,7 @@ export default function QueryPage() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handler = (e: globalThis.KeyboardEvent) => {
       if (e.key === "?") { setShowShortcuts(true); }
       if (e.ctrlKey && e.shiftKey && e.key === "C") { e.preventDefault(); handleClearContext(); }
       if (e.ctrlKey && e.shiftKey && e.key === "B") { e.preventDefault(); if (finalResult !== null) setShowSaveInsight(true); }

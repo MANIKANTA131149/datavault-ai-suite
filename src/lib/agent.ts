@@ -1,6 +1,6 @@
 import { callLLM, type Provider, type LLMProviderOptions, type LLMResponse } from "./llm-client";
 import type { SheetData } from "./file-parser";
-import { isClarificationAnswer, mergeClarificationOptions } from "./clarification-options";
+import { isClarificationAnswer, mergeClarificationOptions, isGreetingQuery } from "./clarification-options";
 
 export interface AgentStep {
   turn: number;
@@ -309,6 +309,8 @@ A: {"command":"Answer","args":{"value":"Do you want total sales, sales by a cate
 STRICT RULES — NEVER VIOLATE
 ═══════════════════════════════════════════════════════
 
+✅ You have FULL READ-ACCESS to all tables/sheets in the workbook/database. You can perform ANY supported operation, filtering, sorting, pipeline, or search to retrieve the results. Never state that you cannot access the data or refuse a query.
+✅ Be completely dynamic: combine filters, groupbys, and transformations freely to answer the user's natural language question accurately based on the data.
 ✅ Output ONLY valid JSON — no prose, no markdown, no explanation
 ✅ Use EXACT column names from the schema
 ✅ Call GetColumns before QuerySheet or ExecuteFinalQuery if the current turn has not already shown the schema
@@ -1775,6 +1777,8 @@ Supported operations:
 - pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
 
 Rules:
+- You have FULL read-only access to all workbook sheets and data. Perform any sequence of operations, transformations, or pipelines required to answer the user's question.
+- Do not make assumptions or refuse requests: if a query requires filtering, cleaning, truncating, or outlier removal, do so dynamically using the pipeline or individual operations.
 - If you are unsure which sheet to use, call GetSheetDescription first.
 - Call GetColumns before writing a query on a sheet you have not inspected yet.
 - Use exact column names from the returned schema.
@@ -1870,6 +1874,8 @@ FILTER FORMAT NOTES (select operation):
 - Both formats are supported and equivalent for equality checks
 
 Rules:
+- You have FULL read-only access to the entire database. You can perform ANY search, write CTEs, joins, aggregates, subqueries, or filter on text/identifiers to answer the user's question perfectly.
+- Never claim you don't have access to table rows or data. If you need to search for a value or string, dynamically run a QuerySQL query searching for it.
 - If you are unsure which table to use, call GetSchema first.
 - Call GetColumns before writing a query on a table you have not inspected yet.
 - Use exact table and column names from the returned schema.
@@ -3160,7 +3166,7 @@ export async function* runDatabaseAgent(
       ? (rawArgs.text || rawArgs.narrative || defaultRawResult)
       : (typeof result === "string" ? result : JSON.stringify(result));
     const clarificationOptions = mergeClarificationOptions(answerText, rawArgs);
-    const isClarification = isClarificationAnswer(command, answerText, rawArgs);
+    const isClarification = !isGreetingQuery(question) && isClarificationAnswer(command, answerText, rawArgs);
 
     if (isClarification && hitlController) {
       yield {
@@ -3454,7 +3460,7 @@ export async function* runLegacyAgent(
       ? (rawArgs.text || rawArgs.narrative || defaultRawResult)
       : (typeof result === "string" ? result : JSON.stringify(result));
     const clarificationOptions = mergeClarificationOptions(answerText, rawArgs);
-    const isClarification = isClarificationAnswer(command, answerText, rawArgs);
+    const isClarification = !isGreetingQuery(question) && isClarificationAnswer(command, answerText, rawArgs);
 
     if (isClarification && hitlController) {
       yield {

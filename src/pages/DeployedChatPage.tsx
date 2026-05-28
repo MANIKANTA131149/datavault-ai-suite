@@ -11,17 +11,20 @@ import React, {
 } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { List, type RowComponentProps } from "react-window";
 import {
   Send, ChevronDown, ChevronRight, Zap, Clock, BookmarkPlus, Bookmark, Sparkles,
   Search, Eye, X, Database, Table2, LayoutTemplate, Keyboard, RefreshCw, FileJson,
   FileText, Code2, TrendingUp, Trash2, BarChart3, FileDown, Layout, Maximize2,
   Minimize2, Star, Rows3, Palette, Share2, Mic, CheckCircle2, AlertTriangle, HelpCircle,
+  Sun, Moon, PanelLeftClose, PanelLeftOpen, Info, Activity, Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -39,27 +42,28 @@ import {
 
 // ─── Constants & Styling ──────────────────────────────────────────────────────
 const COMMAND_COLORS: Record<string, string> = {
-  GetSchema: "bg-primary/10 text-primary",
-  GetSheetDescription: "bg-primary/10 text-primary",
-  GetColumns: "bg-accent/10 text-accent",
-  QuerySQL: "bg-warning/10 text-warning",
-  QueryTable: "bg-warning/10 text-warning",
-  QuerySheet: "bg-warning/10 text-warning",
-  ExecuteSQL: "bg-success/10 text-success",
-  ExecuteFinalQuery: "bg-success/10 text-success",
-  FinalAnswer: "bg-success/10 text-success",
-  NarrativeAnswer: "bg-purple-500/10 text-purple-400",
-  Answer: "bg-success/10 text-success",
-  HumanClarification: "bg-primary/10 text-primary",
-  HumanApproval: "bg-warning/10 text-warning",
-  MaxTurnsReached: "bg-destructive/10 text-destructive",
-  Error: "bg-destructive/10 text-destructive",
+  GetSchema: "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+  GetSheetDescription: "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+  GetColumns: "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+  QuerySQL: "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+  QueryTable: "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+  QuerySheet: "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+  ExecuteSQL: "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900",
+  ExecuteFinalQuery: "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900",
+  FinalAnswer: "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900",
+  NarrativeAnswer: "bg-purple-100 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-900",
+  Answer: "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900",
+  HumanClarification: "bg-sky-100 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-900",
+  HumanApproval: "bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-900",
+  MaxTurnsReached: "bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-900",
+  Error: "bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-900",
 };
 
 const CHART_COLORS = [
-  "hsl(217, 91%, 60%)", "hsl(263, 70%, 58%)", "hsl(160, 84%, 39%)",
-  "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)",
+  "hsl(240, 5.9%, 10%)", "hsl(240, 5.9%, 30%)", "hsl(240, 5.9%, 50%)",
+  "hsl(240, 5.9%, 70%)", "hsl(240, 5.9%, 90%)",
 ];
+
 const DEFAULT_CHART_ROWS = 50;
 const CHART_RENDER_LIMIT = 1000;
 const CHART_META_SAMPLE_LIMIT = 2000;
@@ -71,6 +75,38 @@ const STEP_RESULT_PREVIEW_LIMIT = 1200;
 
 type ResultDensity = "comfortable" | "compact";
 type ChartType = "bar" | "pie" | "line" | "area";
+
+// ─── Query Templates ──────────────────────────────────────────────────────────
+const QUERY_TEMPLATES = [
+  {
+    category: "📊 Sales & Metrics",
+    templates: [
+      "What is the total revenue?",
+      "Show top 10 products by sales",
+      "What is the revenue breakdown by category?",
+      "Show overall performance trend over time",
+      "Which category has the highest sales value?",
+    ],
+  },
+  {
+    category: "👥 Groupings & Summaries",
+    templates: [
+      "How many items are there by status?",
+      "Show category distribution",
+      "Calculate average rating by group",
+      "What are the distinct types available?",
+    ],
+  },
+  {
+    category: "🔍 Data Exploration",
+    templates: [
+      "What is this dataset about?",
+      "Show me a preview of the columns",
+      "Find any outliers in the numeric values",
+      "Which fields contain missing or empty data?",
+    ],
+  },
+];
 
 const CHART_VALUE_KEY_PATTERN = /(count|total|sum|amount|revenue|sales|price|cost|qty|quantity|volume|score|rate|ratio|percent|percentage|avg|average|mean|median|min|max|value|profit|loss|margin|duration|age|size|weight|distance|time|hours?|minutes?|seconds?|power|horsepower|hp|torque|displacement|cc)/i;
 const CHART_LABEL_KEY_PATTERN = /(name|title|label|category|type|group|bucket|segment|brand|manufacturer|company|country|city|state|region|department|team|player|actor|director|genre|cast|date|day|week|month|quarter|year|time|period|hour)/i;
@@ -253,20 +289,20 @@ function describeAgentStep(step: AgentStep) {
   const operation = typeof args.operation === "string" && args.operation.trim() ? args.operation.trim().replace(/_/g, " ") : "";
 
   switch (step.command) {
-    case "GetSchema": return "Checked which tables are available in the database.";
-    case "GetSheetDescription": return "Checked which sheets are available in the workbook.";
-    case "GetColumns": return `Inspected the schema${targetName ? ` for ${targetLabel} "${targetName}"` : ""}.`;
-    case "QuerySQL": return "Ran an intermediate read-only SQL query.";
+    case "GetSchema": return "Checked tables in database catalog.";
+    case "GetSheetDescription": return "Inspected spreadsheet worksheet indices.";
+    case "GetColumns": return `Queried columns layout${targetName ? ` for ${targetLabel} "${targetName}"` : ""}.`;
+    case "QuerySQL": return "Computed an intermediate SQL filter set.";
     case "QueryTable":
-    case "QuerySheet": return `Ran an intermediate ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
-    case "ExecuteSQL": return "Ran the final read-only SQL query.";
-    case "ExecuteFinalQuery": return `Ran the final ${operation || "query"}${targetName ? ` on ${targetLabel} "${targetName}"` : ""}.`;
+    case "QuerySheet": return `Processed analytical ${operation || "step"}${targetName ? ` on "${targetName}"` : ""}.`;
+    case "ExecuteSQL": return "Parsed final analytical SQL query.";
+    case "ExecuteFinalQuery": return `Evaluated final dataset ${operation || "operation"}${targetName ? ` on "${targetName}"` : ""}.`;
     case "Answer":
-    case "FinalAnswer": return "Returned a direct answer.";
-    case "NarrativeAnswer": return "Returned a written explanation.";
-    case "PARSE_ERROR": return "Retried because the model response was not valid JSON.";
-    case "MaxTurnsReached": return "Stopped because the agent hit its step limit.";
-    case "Error": return "Stopped because the query hit an error.";
+    case "FinalAnswer": return "Formulated direct reply.";
+    case "NarrativeAnswer": return "Compiled structural text insight.";
+    case "PARSE_ERROR": return "Recovered JSON payload anomalies.";
+    case "MaxTurnsReached": return "Reached limit budget steps.";
+    case "Error": return "Terminated due to internal step error.";
     default: return "";
   }
 }
@@ -320,11 +356,11 @@ function renderMarkdown(text: string) {
       }
 
       if (firstMatch.type === "bold") {
-        tokens.push(<strong key={keyIndex++} className="font-bold text-foreground">{firstMatch.content}</strong>);
+        tokens.push(<strong key={keyIndex++} className="font-semibold text-foreground dark:text-zinc-50">{firstMatch.content}</strong>);
       } else if (firstMatch.type === "italic") {
         tokens.push(<em key={keyIndex++} className="italic text-muted-foreground">{firstMatch.content}</em>);
       } else if (firstMatch.type === "code") {
-        tokens.push(<code key={keyIndex++} className="bg-foreground/5 text-foreground px-1.5 py-0.5 rounded font-mono text-xs border border-border/30">{firstMatch.content}</code>);
+        tokens.push(<code key={keyIndex++} className="bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 px-1.5 py-0.5 rounded font-mono text-xs border border-zinc-200/50 dark:border-zinc-700/50">{firstMatch.content}</code>);
       }
 
       currentText = currentText.slice(firstMatch.index! + firstMatch.text!.length);
@@ -337,7 +373,7 @@ function renderMarkdown(text: string) {
       elements.push(
         <ul key={`ul-${key}`} className="list-disc pl-5 my-2 space-y-1">
           {listItems.map((item, idx) => (
-            <li key={idx} className="text-sm text-foreground leading-relaxed">
+            <li key={idx} className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">
               {parseInline(item)}
             </li>
           ))}
@@ -359,13 +395,13 @@ function renderMarkdown(text: string) {
     }
 
     if (line.startsWith("### ")) {
-      elements.push(<h4 key={i} className="text-sm font-semibold text-foreground mt-4 mb-2">{parseInline(line.slice(4))}</h4>);
+      elements.push(<h4 key={i} className="text-sm font-semibold text-foreground dark:text-zinc-100 mt-4 mb-2">{parseInline(line.slice(4))}</h4>);
     } else if (line.startsWith("## ")) {
-      elements.push(<h3 key={i} className="text-base font-semibold text-foreground mt-4 mb-2">{parseInline(line.slice(3))}</h3>);
+      elements.push(<h3 key={i} className="text-base font-semibold text-foreground dark:text-zinc-100 mt-4 mb-2">{parseInline(line.slice(3))}</h3>);
     } else if (line.startsWith("# ")) {
-      elements.push(<h2 key={i} className="text-lg font-bold text-foreground mt-4 mb-2">{parseInline(line.slice(2))}</h2>);
+      elements.push(<h2 key={i} className="text-lg font-bold text-foreground dark:text-zinc-50 mt-4 mb-2">{parseInline(line.slice(2))}</h2>);
     } else if (line.trim()) {
-      elements.push(<p key={i} className="text-sm text-foreground leading-relaxed mb-2">{parseInline(line)}</p>);
+      elements.push(<p key={i} className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed mb-2">{parseInline(line)}</p>);
     } else {
       elements.push(<div key={i} className="h-2" />);
     }
@@ -374,10 +410,103 @@ function renderMarkdown(text: string) {
   return <div className="space-y-1">{elements}</div>;
 }
 
-// ─── Sub-Components Replicated from QueryPage ──────────────────────────────────
-const StepCard = memo(function StepCard({ step, defaultExpanded = true, showConnector = true }: any) {
+// ─── Virtualized Data Grid Component ───────────────────────────────────────────
+interface VirtualizedResultTableProps {
+  rows: Record<string, any>[];
+  headers: string[];
+  density: ResultDensity;
+  maxHeight?: number;
+}
+
+interface ResultRowProps {
+  rows: Record<string, any>[];
+  headers: string[];
+  gridTemplateColumns: string;
+  density: ResultDensity;
+}
+
+function ResultTableRow({
+  index,
+  style,
+  ariaAttributes,
+  rows,
+  headers,
+  gridTemplateColumns,
+  density,
+}: RowComponentProps<ResultRowProps>) {
+  const row = rows[index];
+  return (
+    <div
+      {...ariaAttributes}
+      style={{ ...style, display: "grid", gridTemplateColumns }}
+      className={`border-t border-zinc-200/50 dark:border-zinc-800/50 ${index % 2 === 0 ? "bg-zinc-50/30 dark:bg-zinc-900/30" : "bg-card"}`}
+    >
+      {headers.map((header) => {
+        const value = String(row?.[header] ?? "");
+        return (
+          <div
+            key={header}
+            title={value}
+            className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} min-w-0 truncate text-xs text-foreground`}
+          >
+            {value}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const VirtualizedResultTable = memo(function VirtualizedResultTable({
+  rows,
+  headers,
+  density,
+  maxHeight = 240,
+}: VirtualizedResultTableProps) {
+  const rowHeight = density === "compact" ? 30 : 38;
+  const minColWidth = 120;
+  const minWidth = Math.max(380, headers.length * minColWidth);
+  const gridTemplateColumns = `repeat(${headers.length}, minmax(${minColWidth}px, 1fr))`;
+  const listHeight = Math.min(maxHeight, Math.max(rowHeight, rows.length * rowHeight));
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-card shadow-sm">
+      <div style={{ minWidth }}>
+        <div
+          className="grid border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-xs font-semibold text-zinc-500 dark:text-zinc-400"
+          style={{ gridTemplateColumns }}
+        >
+          {headers.map((header) => (
+            <div
+              key={header}
+              className={`${density === "compact" ? "px-2 py-2" : "px-3 py-2.5"} min-w-0 truncate text-left`}
+              title={header}
+            >
+              {header}
+            </div>
+          ))}
+        </div>
+        <List<ResultRowProps>
+          className="scrollbar-thin"
+          defaultHeight={listHeight}
+          overscanCount={6}
+          rowComponent={ResultTableRow}
+          rowCount={rows.length}
+          rowHeight={rowHeight}
+          rowProps={{ rows, headers, gridTemplateColumns, density }}
+          style={{ height: listHeight, width: "100%" }}
+        />
+      </div>
+    </div>
+  );
+});
+
+// ─── StepsTimeline ───────────────────────────────────────────────────────────
+const StepCard = memo(function StepCard({ step, defaultExpanded = false, showConnector = true }: any) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const colorClass = COMMAND_COLORS[step.command] || "bg-muted text-muted-foreground";
+  const colorClass = COMMAND_COLORS[step.command] || "bg-zinc-100 dark:bg-zinc-800 text-zinc-500";
   const [showFull, setShowFull] = useState(false);
   const argsStr = useMemo(() => JSON.stringify(step.args, null, 2), [step.args]);
   const resultPreview = useMemo(() => buildStepResultPreview(step.result), [step.result]);
@@ -388,42 +517,42 @@ const StepCard = memo(function StepCard({ step, defaultExpanded = true, showConn
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
-        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 ${colorClass}`}>
+        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${colorClass}`}>
           {step.turn}
         </div>
-        {showConnector && <div className="w-px flex-1 bg-border mt-1" />}
+        {showConnector && <div className="w-px flex-1 bg-zinc-200 dark:bg-zinc-800 mt-1" />}
       </div>
-      <div className="flex-1 pb-4 min-w-0">
-        <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 w-full text-left">
-          <Badge className={`${colorClass} border-0 font-mono text-xs`}>{step.command}</Badge>
-          <span className="text-xs text-muted-foreground">{step.durationMs}ms</span>
-          {expanded ? <ChevronDown size={14} className="text-muted-foreground ml-auto" /> : <ChevronRight size={14} className="text-muted-foreground ml-auto" />}
+      <div className="flex-1 pb-3 min-w-0">
+        <button type="button" onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 w-full text-left font-mono">
+          <Badge className={`${colorClass} rounded px-1.5 py-0.5 border-0 text-[10px] font-medium uppercase tracking-wider`}>{step.command}</Badge>
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-sans">{step.durationMs}ms</span>
+          {expanded ? <ChevronDown size={12} className="text-zinc-400 dark:text-zinc-500 ml-auto" /> : <ChevronRight size={12} className="text-zinc-400 dark:text-zinc-500 ml-auto" />}
         </button>
-        {summary && <p className="mt-1 text-xs text-muted-foreground">{summary}</p>}
+        {summary && <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400 font-sans leading-relaxed">{summary}</p>}
         {expanded && (
-          <div className="mt-2 space-y-2 overflow-hidden">
+          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="mt-2 space-y-2 overflow-hidden font-sans">
             {Object.keys(step.args).length > 0 && (
-              <div className="bg-card rounded-md p-3 border border-border">
-                <p className="text-xs text-muted-foreground font-medium mb-1">Arguments</p>
-                <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground [overflow-wrap:anywhere]">{argsStr}</pre>
+              <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-2.5 border border-zinc-200/50 dark:border-zinc-800/50">
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium mb-1 uppercase tracking-wider">Arguments</p>
+                <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-[11px] font-mono text-foreground [overflow-wrap:anywhere]">{argsStr}</pre>
               </div>
             )}
             {step.sql && (
-              <div className="bg-card rounded-md p-3 border border-border">
-                <p className="text-xs text-muted-foreground font-medium mb-1">Executed SQL</p>
-                <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground [overflow-wrap:anywhere]">{step.sql}</pre>
+              <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-2.5 border border-zinc-200/50 dark:border-zinc-800/50">
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium mb-1 uppercase tracking-wider">Dialect SQL</p>
+                <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words text-[11px] font-mono text-zinc-900 dark:text-zinc-100 [overflow-wrap:anywhere]">{step.sql}</pre>
               </div>
             )}
-            <div className="bg-card rounded-md p-3 border border-border">
-              <p className="text-xs text-muted-foreground mb-1 font-medium">Result</p>
-              <pre className="max-h-40 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">{showFull ? fullResultStr : resultPreview}</pre>
+            <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-2.5 border border-zinc-200/50 dark:border-zinc-800/50">
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mb-1 font-medium uppercase tracking-wider">Terminal Output</p>
+              <pre className="max-h-36 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words text-[11px] font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">{showFull ? fullResultStr : resultPreview}</pre>
               {canShowFull && (
-                <button onClick={() => setShowFull(!showFull)} className="text-xs text-primary mt-1 hover:underline">
-                  {showFull ? "Show summary" : "Show raw JSON"}
+                <button type="button" onClick={() => setShowFull(!showFull)} className="text-[10px] text-zinc-900 dark:text-zinc-50 font-semibold mt-1.5 hover:underline">
+                  {showFull ? "Show Compact" : "View Raw JSON Payload"}
                 </button>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
       </div>
     </div>
@@ -435,21 +564,24 @@ const StepsTimeline = memo(function StepsTimeline({ steps, live = false }: any) 
   const [open, setOpen] = useState(live);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="ml-10 rounded-md border border-border bg-background-secondary/45">
+    <Collapsible open={open} onOpenChange={setOpen} className="ml-0 sm:ml-10 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30 backdrop-blur-sm shadow-sm overflow-hidden">
       <CollapsibleTrigger asChild>
-        <button type="button" className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-3 text-left transition-colors hover:bg-card/40">
+        <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-100/30 dark:hover:bg-zinc-800/20">
           <div>
-            <p className="text-xs font-medium text-foreground">{live ? "Live agent steps" : "Agent steps"}</p>
-            <p className="text-xs text-muted-foreground">{open ? "Showing the full step-by-step flow used to answer this query." : "Click to show the step-by-step flow used to answer this query."}</p>
+            <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+              <Activity size={12} className={live ? "animate-pulse text-zinc-900 dark:text-zinc-50" : "text-zinc-400"} />
+              {live ? "AI Agent Reasoning Flow (Active)" : "AI Agent Reasoning Timeline"}
+            </p>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">{open ? "Showing granular internal operations scan steps." : "Click to review detailed step trace paths."}</p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="border-border bg-card text-xs text-foreground">{steps.length} step{steps.length === 1 ? "" : "s"}</Badge>
-            {open ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+            <Badge variant="outline" className="border-zinc-200 dark:border-zinc-700 bg-card text-[10px] text-foreground font-mono">{steps.length} loop{steps.length === 1 ? "" : "s"}</Badge>
+            {open ? <ChevronDown size={14} className="text-zinc-400" /> : <ChevronRight size={14} className="text-zinc-400" />}
           </div>
         </button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="px-3 pb-3">
-        <div className="mt-2">
+      <CollapsibleContent className="px-4 pb-3 border-t border-zinc-200/50 dark:border-zinc-800/50">
+        <div className="mt-3">
           {steps.map((step: any, index: number) => (
             <StepCard key={index} step={step} defaultExpanded={false} showConnector={index < steps.length - 1} />
           ))}
@@ -459,7 +591,8 @@ const StepsTimeline = memo(function StepsTimeline({ steps, live = false }: any) 
   );
 });
 
-const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuickReply }: any) {
+// ─── InlineFinalResult ────────────────────────────────────────────────────────
+const InlineFinalResult = memo(function InlineFinalResult({ result }: any) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
@@ -472,12 +605,12 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
   const inlineChartLimited = chartRows.length > inlineChartRows.length;
 
   const isBlankString = typeof result === "string" && !result.trim();
-
   const options = useMemo(() => {
     if (typeof result !== "string") return [];
+    const lower = (result || "").toLowerCase();
+    if (!lower.includes("suggested") && !lower.includes("follow-up") && !lower.includes("try asking")) return [];
     return parseOptionsFromText(result);
   }, [result]);
-
   const cleanBody = useMemo(() => {
     if (typeof result !== "string") return "";
     const cleaned = cleanPromptText(result, options);
@@ -488,75 +621,84 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
 
   if (isNarrative) {
     return (
-      <div className="ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
-        <div className="flex items-center gap-2 mb-1">
-          <Sparkles size={13} className="text-purple-400" />
-          <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
+      <div className="ml-0 sm:ml-10 mt-1 mb-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-5 space-y-4 shadow-sm">
+        <div className="flex items-center gap-2 mb-1 border-b border-zinc-100 dark:border-zinc-800 pb-2">
+          <Sparkles size={14} className="text-zinc-900 dark:text-zinc-100" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">Executive Insight Summary</span>
         </div>
         {result.highlights && result.highlights.length > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
             {result.highlights.map((h: any, i: number) => (
-              <div key={i} className="bg-card rounded-md p-2.5 border border-border">
-                <p className="text-xs text-muted-foreground">{h.label}</p>
-                <p className="text-sm font-semibold text-foreground font-mono">{h.value}</p>
+              <div key={i} className="bg-zinc-50 dark:bg-zinc-900 rounded-xl p-3 border border-zinc-200/50 dark:border-zinc-800/50">
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium uppercase tracking-wider">{h.label}</p>
+                <p className="text-sm font-bold text-foreground font-mono mt-0.5">{h.value}</p>
               </div>
             ))}
           </div>
         )}
-        <div className="text-sm text-foreground leading-relaxed">{renderMarkdown(options.length > 0 ? cleanBody : result.narrative)}</div>
+        <div className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed font-sans">{renderMarkdown(options.length > 0 ? cleanBody : result.narrative)}</div>
       </div>
     );
   }
 
   return (
-    <div className="ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-3 space-y-3">
-      <p className="text-xs text-muted-foreground font-medium">Result</p>
+    <div className="ml-0 sm:ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-4 space-y-4 shadow-sm">
+      <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2">
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 font-semibold uppercase tracking-wider">Query Output</p>
+      </div>
 
-      {isSingleValue && <p className="text-2xl font-semibold text-foreground font-mono">{typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}</p>}
-      {isPrimitiveValue && <p className="text-2xl font-semibold text-foreground font-mono">{String(result)}</p>}
+      {isSingleValue && <p className="text-3xl font-extrabold text-foreground font-mono">{typeof result.result === "number" ? result.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(result.result)}</p>}
+      {isPrimitiveValue && <p className="text-3xl font-extrabold text-foreground font-mono">{String(result)}</p>}
 
       {isChartable && (
-        <div>
-          <div className="flex gap-1 mb-2">
+        <div className="space-y-3 bg-zinc-50/50 dark:bg-zinc-900/20 rounded-xl p-3 border border-zinc-200/50 dark:border-zinc-800/50">
+          <div className="flex gap-1.5 items-center">
+            <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider mr-2">Visualizer:</span>
             {(["bar", "line", "area", "pie"] as const).map((t) => (
-              <button key={t} onClick={() => setChartType(t)} className={`text-xs px-2 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}>{t}</button>
+              <button
+                key={t}
+                onClick={() => setChartType(t)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border tracking-wider transition-all ${chartType === t ? "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100" : "bg-card border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400"}`}
+              >
+                {t}
+              </button>
             ))}
           </div>
-          <div className="h-44">
+          <div className="h-48 pt-2">
             <ResponsiveContainer width="100%" height="100%">
               {chartType === "pie" ? (
                 <PieChart>
-                  <Pie data={inlinePieChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={68}>
+                  <Pie data={inlinePieChartRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={70}>
                     {inlinePieChartRows.map((_: any, i: number) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                   </Pie>
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
                 </PieChart>
               ) : chartType === "line" ? (
                 <LineChart data={inlineChartRows}>
-                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                  <XAxis dataKey={labelKey} tick={{ fill: "currentColor", fontSize: 9 }} stroke="currentColor" className="text-zinc-400" />
+                  <YAxis tick={{ fill: "currentColor", fontSize: 9 }} stroke="currentColor" className="text-zinc-400" />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
+                  <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--foreground))" strokeWidth={2.2} dot={false} />
                 </LineChart>
               ) : chartType === "area" ? (
                 <AreaChart data={inlineChartRows}>
                   <defs>
                     <linearGradient id={areaGradientId} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                      <stop offset="5%" stopColor="currentColor" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="currentColor" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
+                  <XAxis dataKey={labelKey} tick={{ fill: "currentColor", fontSize: 9 }} stroke="currentColor" className="text-zinc-400" />
+                  <YAxis tick={{ fill: "currentColor", fontSize: 9 }} stroke="currentColor" className="text-zinc-400" />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
+                  <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--foreground))" fill={`url(#${areaGradientId})`} strokeWidth={2.2} dot={false} className="text-zinc-400 dark:text-zinc-500" />
                 </AreaChart>
               ) : (
                 <BarChart data={inlineChartRows}>
-                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Bar dataKey={valueKey} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  <XAxis dataKey={labelKey} tick={{ fill: "currentColor", fontSize: 9 }} stroke="currentColor" className="text-zinc-400" />
+                  <YAxis tick={{ fill: "currentColor", fontSize: 9 }} stroke="currentColor" className="text-zinc-400" />
+                  <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} />
+                  <Bar dataKey={valueKey} fill="currentColor" radius={[3, 3, 0, 0]} className="text-zinc-900 dark:text-zinc-100" />
                 </BarChart>
               )}
             </ResponsiveContainer>
@@ -565,32 +707,22 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
       )}
 
       {isArray && rows.length > 0 && (
-        <div className="max-h-80 overflow-auto rounded-md border border-border">
-          <table className="w-full text-xs">
-            <thead className="bg-background-secondary">
-              <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
-            </thead>
-            <tbody>
-              {rows.slice(0, 100).map((row: any, i: number) => (
-                <tr key={i} className="border-t border-border/50">
-                  {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-1.5">
+          <VirtualizedResultTable rows={rows} headers={Object.keys(rows[0] || {})} density="comfortable" />
+          {rows.length > 100 && (
+            <p className="text-[10px] text-zinc-400 text-right italic">Showing first 100 rows virtualized framework preview</p>
+          )}
         </div>
       )}
 
       {!isBlankString && typeof result === "string" && (
-        <div className="space-y-3">
-          <div className="text-sm leading-relaxed">{renderMarkdown(options.length > 0 ? cleanBody : result)}</div>
-        </div>
+        <div className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed font-sans mt-2">{renderMarkdown(options.length > 0 ? cleanBody : result)}</div>
       )}
     </div>
   );
 });
 
-// ─── Main Standalone DeployedChatPage ───────────────────────────────────────────
+// ─── Main DeployedChatPage Component ──────────────────────────────────────────
 export default function DeployedChatPage() {
   const { deployId } = useParams<{ deployId: string }>();
   const [deployment, setDeployment] = useState<any>(null);
@@ -608,11 +740,56 @@ export default function DeployedChatPage() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const cancelRequestedRef = useRef(false);
 
+  // Layout parameters
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [selectedSchemaTable, setSelectedSchemaTable] = useState<string>("");
+  const [tableSearchQuery, setTableSearchQuery] = useState("");
+
+  // Human-in-the-loop state references
+  const [hitlState, setHitlState] = useState<any>(null);
+  const hitlResolverRef = useRef<((value: string) => void) | null>(null);
+
+  const handleStopQuery = () => {
+    cancelRequestedRef.current = true;
+    if (hitlResolverRef.current) {
+      hitlResolverRef.current("cancel");
+      hitlResolverRef.current = null;
+    }
+    setHitlState(null);
+    setIsRunning(false);
+  };
+
+  const handleHitlSubmit = (val: string) => {
+    if (hitlResolverRef.current) {
+      hitlResolverRef.current(val);
+      hitlResolverRef.current = null;
+      setHitlState(null);
+    }
+  };
+
   // Multi-turn conversation memory
   const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
   const [workbookSheets, setWorkbookSheets] = useState<any>(null);
 
   const BASE_URL = getApiBaseUrl();
+
+  // Load and apply theme from localStorage
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("querify-deployed-theme") as "light" | "dark";
+    const initialTheme = savedTheme || "light";
+    setTheme(initialTheme);
+    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.classList.add(initialTheme);
+  }, []);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    localStorage.setItem("querify-deployed-theme", nextTheme);
+    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.classList.add(nextTheme);
+  };
 
   // Load public details of the deployed chatbot
   useEffect(() => {
@@ -625,11 +802,23 @@ export default function DeployedChatPage() {
       .then((data) => {
         setDeployment(data);
         setError("");
+        
+        // Auto-select first schema table if database
+        if (data.snapshot?.sourceType === "connection" && data.snapshot?.databaseTables?.length) {
+          setSelectedSchemaTable(data.snapshot.databaseTables[0].name);
+        }
+
         // Hydrate dataset sheet data asynchronously if it's a dataset
         if (data.snapshot?.sourceType === "dataset" && data.snapshot?.selectedDatasetId) {
           fetch(`${BASE_URL}/deployments/public/${deployId}/dataset-data/${data.snapshot.selectedDatasetId}`)
             .then((r) => r.json())
-            .then((sheets) => setWorkbookSheets(sheets?.sheets || null))
+            .then((sheets) => {
+              setWorkbookSheets(sheets?.sheets || null);
+              if (sheets?.sheets) {
+                const sheetNames = Object.keys(sheets.sheets);
+                if (sheetNames.length > 0) setSelectedSchemaTable(sheetNames[0]);
+              }
+            })
             .catch((e) => console.error("Lazy dataset fetch error:", e));
         }
       })
@@ -723,8 +912,18 @@ export default function DeployedChatPage() {
     }
   };
 
-  const handleSend = async () => {
-    const question = input.trim();
+  const executeDirectTemplate = (prompt: string) => {
+    if (isRunning) return;
+    setInput(prompt);
+    setTimeout(() => {
+      // Trigger execution directly
+      setInput("");
+      handleSend(prompt);
+    }, 100);
+  };
+
+  const handleSend = async (forcedInput?: string) => {
+    const question = (forcedInput || input).trim();
     if (!question || isRunning) return;
 
     setIsRunning(true);
@@ -739,7 +938,16 @@ export default function DeployedChatPage() {
     const snapshot = deployment.snapshot;
 
     const hitlController = {
-      waitForHuman: () => Promise.resolve("approve"),
+      waitForHuman: (
+        prompt: string,
+        kind: "clarification" | "approval",
+        details?: { rowCount?: number; operation?: string; sql?: string; options?: string[] }
+      ) => {
+        return new Promise<string>((resolve) => {
+          setHitlState({ kind, prompt, options: details?.options, details });
+          hitlResolverRef.current = resolve;
+        });
+      },
     };
 
     let runner;
@@ -756,7 +964,7 @@ export default function DeployedChatPage() {
         dbType,
         snapshot.activeProvider,
         snapshot.activeModel,
-        "snapshotted-proxy-keys", // proxy handles authenticating with actual key on backend
+        "snapshotted-proxy-keys",
         snapshot.temperature,
         snapshot.maxTokens,
         snapshot.systemPrompt || undefined,
@@ -853,10 +1061,10 @@ export default function DeployedChatPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-svh items-center justify-center bg-[#07090e] text-muted-foreground">
+      <div className="flex min-h-svh items-center justify-center bg-zinc-50 dark:bg-zinc-950 text-zinc-500">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-sm">Loading chatbot experience…</p>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-900 dark:border-zinc-100 border-t-transparent" />
+          <p className="text-xs font-semibold uppercase tracking-wider">Securing Connection...</p>
         </div>
       </div>
     );
@@ -864,189 +1072,394 @@ export default function DeployedChatPage() {
 
   if (error || !deployment) {
     return (
-      <div className="flex min-h-svh flex-col items-center justify-center bg-[#07090e] p-6 text-center text-muted-foreground">
-        <AlertTriangle size={48} className="text-destructive mb-3" />
-        <h2 className="text-lg font-bold text-foreground">Chatbot Unavailable</h2>
-        <p className="max-w-md text-sm mt-1">{error || "This chatbot link is broken or has been deleted by the owner."}</p>
+      <div className="flex min-h-svh flex-col items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-6 text-center text-zinc-500">
+        <AlertTriangle size={40} className="text-zinc-900 dark:text-zinc-50 mb-3" />
+        <h2 className="text-md font-bold text-foreground">Deployment Terminated</h2>
+        <p className="max-w-md text-xs mt-1 leading-normal">{error || "This chatbot link is broken, expired, or has been revoked by the workspace administrator."}</p>
       </div>
     );
   }
 
   const isBroken = deployment.status === "broken" || deployment.status === "deleted";
-  const sourceName = deployment.snapshot?.datasetSnapshot?.fileName || deployment.snapshot?.connectionSnapshot?.name || "Connected resource";
+  const sourceName = deployment.snapshot?.datasetSnapshot?.fileName || deployment.snapshot?.connectionSnapshot?.name || "Target Connection";
+  const isDB = deployment.snapshot?.sourceType === "connection";
+
+  // Sidebar dynamic logic
+  const tablesOrSheetsList = isDB 
+    ? (deployment.snapshot?.databaseTables || []) 
+    : (workbookSheets ? Object.keys(workbookSheets).map((k) => ({ name: k })) : []);
+
+  const activeTableSchema = isDB 
+    ? (deployment.snapshot?.databaseTables || []).find((t: any) => t.name === selectedSchemaTable)
+    : (workbookSheets && workbookSheets[selectedSchemaTable] ? {
+        columns: workbookSheets[selectedSchemaTable].columns.map((c: any) => ({ name: c.name, dtype: c.dtype, sampleValues: c.sampleValues || [], uniqueCount: c.uniqueCount || 0 })),
+        rowCount: workbookSheets[selectedSchemaTable].rows?.length || 0
+      } : null);
+
+  const filteredColumns = activeTableSchema?.columns?.filter((col: any) => 
+    col.name.toLowerCase().includes(tableSearchQuery.toLowerCase())
+  ) || [];
 
   return (
-    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[#07090e] text-foreground font-sans">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_38%)] pointer-events-none" />
-
-      {/* Shared Chat Header */}
-      <header className="relative z-10 shrink-0 border-b border-border/70 bg-background-secondary/90 px-4 py-3 backdrop-blur-xl sm:px-6">
-        <div className="mx-auto max-w-4xl flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.16em] text-primary">
-                Querify Shared
+    <div className="relative flex h-screen w-full overflow-hidden bg-background text-foreground font-sans antialiased transition-colors duration-200">
+      
+      {/* Premium Minimalist Left Panel */}
+      <AnimatePresence initial={false}>
+        {sidebarOpen && (
+          <motion.aside
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 310, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            className="relative z-20 flex h-full flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 backdrop-blur-xl shrink-0 overflow-hidden"
+          >
+            {/* Sidebar Branding */}
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 shrink-0 bg-zinc-50 dark:bg-zinc-900">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 font-bold text-xs">
+                D
               </span>
-              <h2 className="truncate text-sm font-semibold text-foreground">{deployment.name}</h2>
-            </div>
-            {deployment.description && <p className="truncate text-xs text-muted-foreground mt-0.5">{deployment.description}</p>}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {isBroken ? (
-              <Badge variant="destructive" className="text-[10px] gap-1"><AlertTriangle size={10} /> Broken</Badge>
-            ) : (
-              <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/10 text-emerald-400 text-[10px] gap-1">
-                <CheckCircle2 size={10} /> Active
-              </Badge>
-            )}
-            <Badge variant="outline" className="border-border text-[10px] text-muted-foreground hidden sm:inline-flex">
-              {sourceName}
-            </Badge>
-          </div>
-        </div>
-      </header>
-
-      {/* Chat messages */}
-      <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-6 scrollbar-thin max-w-4xl w-full mx-auto relative z-10">
-        {isBroken && (
-          <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-center text-sm space-y-2">
-            <AlertTriangle size={24} className="text-destructive mx-auto" />
-            <p className="font-semibold text-foreground">Chatbot configuration is currently offline</p>
-            <p className="text-xs text-muted-foreground leading-normal max-w-md mx-auto">
-              Reason: {deployment.statusReason || "One of the dependencies or database connections is unavailable."}
-            </p>
-          </div>
-        )}
-
-        {messages.length === 0 && !isRunning && !isBroken && (
-          <div className="flex h-[60%] flex-col items-center justify-center gap-4 text-center py-12">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 mb-2">
-              <Sparkles size={24} className="text-primary animate-pulse" />
-            </div>
-            <h3 className="text-md font-bold text-foreground">Ask anything about {sourceName}</h3>
-            <p className="max-w-md text-sm text-muted-foreground leading-relaxed">
-              This chatbot was deployed by its owner to share secure queries and visual insights. Ask a direct question below to begin.
-            </p>
-          </div>
-        )}
-
-        {messages.map((msg, i) => {
-          const finalStep = getFinalStep(msg.steps);
-          return (
-            <div key={i} className="space-y-4">
-              {msg.role === "user" ? (
-                <div className="flex justify-end">
-                  <div className="max-w-[85%] min-w-0 rounded-xl border border-border bg-card px-4 py-3 sm:max-w-md shadow-sm">
-                    <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {msg.steps && msg.steps.length > 0 ? (
-                    <StepsTimeline steps={msg.steps} />
-                  ) : (
-                    <div className="max-w-full min-w-0 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 sm:max-w-[85%]">
-                      <p className="text-sm text-destructive whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
-                    </div>
-                  )}
-                  {msg.steps && msg.steps.length > 0 && (
-                    <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground sm:pl-10">
-                      <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s: number, st: any) => s + st.durationMs, 0).toLocaleString()}ms</span>
-                      <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s: number, st: any) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
-                      {finalStep && (
-                        <button
-                          onClick={() => {
-                            generatePDF({
-                              title: msg.query || "Query Result",
-                              query: msg.query || "",
-                              rows: Array.isArray(finalStep.result) ? finalStep.result : undefined,
-                              narrative: finalStep.result?.narrative || undefined,
-                            });
-                            toast.success("PDF report downloaded");
-                          }}
-                          className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline ml-auto"
-                        >
-                          <FileDown size={10} /> PDF report
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {finalStep && <InlineFinalResult result={finalStep.result} />}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {isRunning && (
-          <div className="space-y-3 min-w-0 w-full">
-            {currentSteps.length > 0 && <StepsTimeline steps={currentSteps} live />}
-            <div className="flex items-center gap-2 sm:pl-10">
-              <div className="flex items-center gap-1.5">
-                <span className="thinking-dot" />
-                <span className="thinking-dot" />
-                <span className="thinking-dot" />
+              <div>
+                <h1 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-55">DataVault AI</h1>
+                <p className="text-[9px] text-zinc-400 dark:text-zinc-500 font-mono tracking-widest leading-none mt-0.5">ENTERPRISE CHATBOT</p>
               </div>
-              <span className="text-xs text-muted-foreground">Thinking... {Math.floor(elapsedMs / 1000)}s</span>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Shared Chat Input bar */}
-      <footer className="relative z-10 shrink-0 border-t border-border/70 bg-[#07090e]/95 p-4 backdrop-blur-md">
-        <div className="mx-auto max-w-4xl">
-          <div className="relative flex items-end gap-2 rounded-[28px] border border-border/70 bg-card/85 p-2 shadow-lg backdrop-blur-sm query-input-glow">
-            <div className="relative min-w-0 flex-1">
-              {isListening && (
-                <div className="absolute inset-0 flex items-center justify-between bg-background-secondary/95 backdrop-blur-sm rounded-[24px] px-4 py-2 border border-primary/20 z-20">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
-                      <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
-                      <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
-                      <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
-                      <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
-                      <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
-                    </div>
-                    <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
+            {/* Sidebar Scroll Container */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 scrollbar-thin">
+              
+              {/* Endpoint Card */}
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-3 shadow-sm space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Database size={12} className="text-zinc-400" />
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Secure Target</span>
+                </div>
+                <div className="truncate text-xs font-bold text-zinc-950 dark:text-zinc-50 flex items-center gap-1.5">
+                  {sourceName}
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-1 text-[10px]">
+                  <Badge variant="outline" className="border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-400 capitalize py-0 px-1 font-mono text-[9px]">
+                    {deployment.snapshot?.sourceType || "database"}
+                  </Badge>
+                  <Badge variant="outline" className="border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-400 py-0 px-1 font-mono text-[9px]">
+                    {deployment.snapshot?.activeModel || "LLM"}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Table / Sheet Inspector Select Dropdown */}
+              {tablesOrSheetsList.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                    <Table2 size={11} /> {isDB ? "Explore Tables" : "Explore Sheets"}
+                  </Label>
+                  <div className="relative">
+                    <select
+                      value={selectedSchemaTable}
+                      onChange={(e) => setSelectedSchemaTable(e.target.value)}
+                      className="w-full bg-card border border-zinc-200 dark:border-zinc-800 text-xs rounded-xl px-3 py-2 font-medium appearance-none outline-none focus:border-zinc-900 dark:focus:border-zinc-100 transition-all cursor-pointer"
+                    >
+                      {tablesOrSheetsList.map((t: any) => (
+                        <option key={t.name} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-2.5 text-zinc-400 pointer-events-none" />
                   </div>
-                  <Button variant="outline" size="sm" onClick={handleSpeech} className="h-7 px-3 text-xs border-border bg-card">Done</Button>
+
+                  {/* Schema fields panel */}
+                  {activeTableSchema && (
+                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-3 space-y-2.5 shadow-sm">
+                      <div className="flex justify-between items-center text-[10px]">
+                        <span className="font-mono text-zinc-400 dark:text-zinc-500">{activeTableSchema.rowCount?.toLocaleString() || "0"} rows</span>
+                        <span className="font-mono text-zinc-400 dark:text-zinc-500">{activeTableSchema.columns?.length || "0"} fields</span>
+                      </div>
+                      
+                      <div className="relative">
+                        <Input
+                          value={tableSearchQuery}
+                          onChange={(e) => setTableSearchQuery(e.target.value)}
+                          placeholder="Filter schema fields..."
+                          className="h-7 text-xs bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 rounded-lg pl-7"
+                        />
+                        <Search size={11} className="absolute left-2.5 top-2.5 text-zinc-400" />
+                      </div>
+
+                      <div className="max-h-[140px] overflow-y-auto scrollbar-thin space-y-1.5 pr-0.5">
+                        {filteredColumns.map((col: any) => (
+                          <div key={col.name} className="flex items-center justify-between text-xs py-0.5 border-b border-zinc-50 dark:border-zinc-900/50">
+                            <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate mr-2" title={col.name}>{col.name}</span>
+                            <Badge variant="outline" className="border-0 bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 text-[8px] font-mono py-0 px-1 rounded-sm shrink-0">
+                              {col.dtype}
+                            </Badge>
+                          </div>
+                        ))}
+                        {filteredColumns.length === 0 && (
+                          <p className="text-[10px] text-zinc-400 italic text-center py-2">No matching columns</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              <Textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={isBroken ? "Chatbot is currently offline." : isRunning ? "Query is running..." : "Ask a question about this data..."}
-                disabled={isRunning || isBroken}
-                className="bg-background-secondary border-border resize-none min-h-[44px] max-h-[120px] pr-10 text-sm leading-normal"
-                rows={1}
-              />
+              {/* AI Prompts Accordion Library */}
+              <div className="space-y-2">
+                <Label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <LayoutTemplate size={11} /> AI Queries Library
+                </Label>
+                <div className="space-y-1.5">
+                  {QUERY_TEMPLATES.map((cat, idx) => (
+                    <Collapsible key={idx} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card overflow-hidden">
+                      <CollapsibleTrigger asChild>
+                        <button type="button" className="flex items-center justify-between w-full px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/10">
+                          <span>{cat.category}</span>
+                          <ChevronRight size={12} className="text-zinc-400 transform transition-transform duration-200 [.open>&]:rotate-90" />
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="px-3 pb-2 pt-1 border-t border-zinc-100 dark:border-zinc-800 space-y-1 bg-zinc-50/20">
+                        {cat.templates.map((tpl, tIdx) => (
+                          <button
+                            key={tIdx}
+                            onClick={() => executeDirectTemplate(tpl)}
+                            type="button"
+                            className="w-full text-left text-[11px] py-1 text-zinc-500 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-zinc-50 hover:underline truncate"
+                            title={tpl}
+                          >
+                            • {tpl}
+                          </button>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="flex shrink-0 gap-1.5">
-              <Button
-                variant="outline"
-                onClick={handleSpeech}
-                disabled={isBroken}
-                size="icon"
-                title="Voice search"
-                className={cn("h-[44px] w-[44px] shrink-0 border-border transition-all duration-300", isListening && "bg-red-500/10 text-red-500 border-red-500/30")}
+
+            {/* Sidebar Security Footer */}
+            <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 shrink-0 bg-zinc-50 dark:bg-zinc-900 text-center">
+              <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500 flex items-center justify-center gap-1">
+                <Globe size={9} /> Sandbox Secure Mode
+              </span>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {/* Main Conversation & Dashboard Panel */}
+      <main className="relative flex-1 flex flex-col h-full overflow-hidden bg-background">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--foreground)/0.035),_transparent_38%)] pointer-events-none" />
+
+        {/* Global Minimalist Chat Header */}
+        <header className="relative z-10 shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-background/80 px-4 py-3 backdrop-blur-md sm:px-6">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                type="button"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800 shrink-0 border border-zinc-200 dark:border-zinc-800 bg-card transition-all"
+                title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
               >
-                <Mic size={16} />
-              </Button>
-              <Button onClick={() => handleSend()} disabled={isRunning || isBroken || !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
-                <Send size={16} />
-              </Button>
+                {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+              </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 rounded bg-zinc-900 dark:bg-zinc-100 px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-widest text-zinc-50 dark:text-zinc-900 leading-none">
+                    Shared
+                  </span>
+                  <h2 className="truncate text-xs sm:text-sm font-bold text-foreground">{deployment.name}</h2>
+                </div>
+                {deployment.description && <p className="truncate text-[10px] text-zinc-400 mt-0.5 hidden sm:block">{deployment.description}</p>}
+              </div>
+            </div>
+
+            {/* Quick Actions & Themes */}
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={toggleTheme}
+                type="button"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800 shrink-0 border border-zinc-200 dark:border-zinc-800 bg-card transition-all"
+                title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              >
+                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+              </button>
+
+              {isBroken ? (
+                <Badge variant="outline" className="border-red-500/20 bg-red-500/5 text-red-500 dark:text-red-400 text-[10px] py-0 px-2 h-7 font-semibold gap-1 shrink-0"><AlertTriangle size={10} /> Disconnected</Badge>
+              ) : (
+                <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 text-[10px] py-0 px-2 h-7 font-semibold gap-1 shrink-0">
+                  <CheckCircle2 size={10} /> Operational
+                </Badge>
+              )}
             </div>
           </div>
-          <p className="text-[10px] text-muted-foreground text-center mt-2">
-            Securely powered by <span className="font-semibold text-foreground">Querify.in</span> · Stored connection snapshots are fully encrypted and sandboxed.
-          </p>
+        </header>
+
+        {/* Chat Feed */}
+        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-6 space-y-6 scrollbar-thin max-w-4xl w-full mx-auto relative z-10">
+          {isBroken && (
+            <div className="rounded-xl border border-red-200/50 dark:border-red-950/50 bg-red-500/5 p-4 text-center text-xs space-y-2 max-w-md mx-auto">
+              <AlertTriangle size={20} className="text-red-500 mx-auto" />
+              <p className="font-bold text-foreground">Chatbot experience is offline</p>
+              <p className="text-zinc-400 leading-relaxed">
+                Reason: {deployment.statusReason || "One of the mapped data dependencies or server pings is offline."}
+              </p>
+            </div>
+          )}
+
+          {messages.length === 0 && !isRunning && !isBroken && (
+            <div className="flex h-[75%] flex-col items-center justify-center gap-4 text-center py-12 max-w-md mx-auto">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700/60 mb-1">
+                <Sparkles size={18} className="text-foreground animate-pulse" />
+              </div>
+              <h3 className="text-sm font-bold text-foreground leading-none">Query anything in {sourceName}</h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                This public chatbot uses an advanced enterprise AI reasoning loop. Ask questions in plain English or select prompt cards from the sidebar library to fetch live data outputs, pivots, and Recharts visualization plots securely.
+              </p>
+            </div>
+          )}
+
+          {messages.map((msg, i) => {
+            const finalStep = getFinalStep(msg.steps);
+            return (
+              <div key={i} className="space-y-4">
+                {msg.role === "user" ? (
+                  <div className="flex justify-end">
+                    <div className="max-w-[85%] min-w-0 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-card px-4 py-3 sm:max-w-md shadow-sm">
+                      <p className="text-xs sm:text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {msg.steps && msg.steps.length > 0 ? (
+                      <StepsTimeline steps={msg.steps} />
+                    ) : (
+                      <div className="max-w-full min-w-0 rounded-xl border border-red-200/50 dark:border-red-950/50 bg-red-500/5 px-4 py-3 sm:max-w-[85%]">
+                        <p className="text-xs text-red-500 dark:text-red-400 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
+                      </div>
+                    )}
+                    {msg.steps && msg.steps.length > 0 && (
+                      <div className="flex flex-wrap gap-3 pt-1 text-[10px] text-zinc-400 dark:text-zinc-500 sm:pl-10 items-center font-mono">
+                        <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s: number, st: any) => s + st.durationMs, 0).toLocaleString()}ms</span>
+                        <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s: number, st: any) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
+                        {finalStep && (
+                          <button
+                            onClick={() => {
+                              generatePDF({
+                                title: msg.query || "Query Result",
+                                query: msg.query || "",
+                                rows: Array.isArray(finalStep.result) ? finalStep.result : undefined,
+                                narrative: finalStep.result?.narrative || undefined,
+                              });
+                              toast.success("PDF report downloaded");
+                            }}
+                            className="flex items-center gap-1 font-sans text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 hover:text-foreground hover:underline ml-auto"
+                          >
+                            <FileDown size={11} /> PDF report
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {finalStep && <InlineFinalResult result={finalStep.result} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {isRunning && (
+            <div className="space-y-3 min-w-0 w-full">
+              {currentSteps.length > 0 && !hitlState && (
+                <StepsTimeline steps={currentSteps} live />
+              )}
+
+              <AnimatePresence mode="wait">
+                {hitlState ? (
+                  <div className="ml-0 sm:ml-10">
+                    <HitlPanel
+                      key="hitl-active"
+                      state={hitlState}
+                      onSubmit={handleHitlSubmit}
+                      onStop={handleStopQuery}
+                    />
+                  </div>
+                ) : null}
+              </AnimatePresence>
+
+              {!hitlState && (
+                <div className="flex items-center gap-2.5 sm:pl-10">
+                  <div className="flex items-center gap-1 h-3 shrink-0">
+                    <span className="thinking-dot" />
+                    <span className="thinking-dot" />
+                    <span className="thinking-dot" />
+                  </div>
+                  <span className="text-xs text-zinc-400 dark:text-zinc-500 font-medium mr-2">Scanning workbook tables... {Math.floor(elapsedMs / 1000)}s</span>
+                  <Button variant="outline" size="sm" className="h-6 border-zinc-200 dark:border-zinc-800 text-[10px] rounded-lg font-bold" onClick={handleStopQuery}>
+                    <X size={10} className="mr-1" /> Stop
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      </footer>
+
+        {/* Global Input Bar */}
+        <footer className="relative z-10 shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-background/95 p-4 backdrop-blur-md">
+          <div className="mx-auto max-w-4xl">
+            <div className="relative flex items-end gap-2 rounded-[24px] border border-zinc-200 dark:border-zinc-800 bg-card p-2 shadow-sm focus-within:border-zinc-900 dark:focus-within:border-zinc-100 focus-within:ring-1 focus-within:ring-zinc-900 dark:focus-within:ring-zinc-100 transition-all">
+              <div className="relative min-w-0 flex-1">
+                {isListening && (
+                  <div className="absolute inset-0 flex items-center justify-between bg-zinc-50/95 dark:bg-zinc-950/95 backdrop-blur-sm rounded-[20px] px-4 py-2 border border-zinc-200 dark:border-zinc-800 z-20">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
+                        <div className="voice-bar voice-bounce-1 bg-foreground w-1 h-3 rounded-full animate-[voice-bounce_1.2s_infinite]" />
+                        <div className="voice-bar voice-bounce-2 bg-foreground w-1 h-5 rounded-full animate-[voice-bounce_1.2s_0.2s_infinite]" />
+                        <div className="voice-bar voice-bounce-3 bg-foreground w-1 h-2 rounded-full animate-[voice-bounce_1.2s_0.4s_infinite]" />
+                        <div className="voice-bar voice-bounce-4 bg-foreground w-1 h-6 rounded-full animate-[voice-bounce_1.2s_0.1s_infinite]" />
+                        <div className="voice-bar voice-bounce-5 bg-foreground w-1 h-4 rounded-full animate-[voice-bounce_1.2s_0.3s_infinite]" />
+                      </div>
+                      <span className="text-xs text-foreground font-semibold animate-pulse">Capturing audio...</span>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleSpeech} className="h-7 px-3 text-xs border-zinc-200 dark:border-zinc-800 bg-card rounded-lg font-bold">Done</Button>
+                  </div>
+                )}
+
+                <Textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isBroken ? "Chatbot is currently offline." : isRunning ? "Analysing database..." : `Ask anything about columns...`}
+                  disabled={isRunning || isBroken}
+                  className="bg-transparent border-0 resize-none min-h-[40px] max-h-[120px] pr-10 text-xs sm:text-sm leading-normal focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-2"
+                  rows={1}
+                />
+              </div>
+              <div className="flex shrink-0 gap-1.5">
+                <Button
+                  variant="outline"
+                  onClick={handleSpeech}
+                  disabled={isBroken}
+                  size="icon"
+                  title="Voice search"
+                  className={cn("h-[40px] w-[40px] rounded-[18px] shrink-0 border-zinc-200 dark:border-zinc-800 transition-all duration-300", isListening && "bg-red-500/10 text-red-500 border-red-500/30")}
+                >
+                  <Mic size={15} />
+                </Button>
+                <Button
+                  onClick={() => handleSend()}
+                  disabled={isRunning || isBroken || !input.trim()}
+                  size="icon"
+                  className="h-[40px] w-[40px] rounded-[18px] shrink-0 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-zinc-50 dark:text-zinc-900 transition-all"
+                >
+                  <Send size={15} />
+                </Button>
+              </div>
+            </div>
+            <p className="text-[10px] text-zinc-400 text-center mt-2 font-mono">
+              Securely powered by <span className="font-bold text-foreground">Querify.in</span> · Snapshotted credentials are fully encrypted in memory.
+            </p>
+          </div>
+        </footer>
+      </main>
     </div>
   );
 }
