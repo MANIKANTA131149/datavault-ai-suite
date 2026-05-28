@@ -119,22 +119,46 @@ export function isClarificationAnswer(
 ): boolean {
   if (!["Answer", "FinalAnswer", "NarrativeAnswer"].includes(command)) return false;
 
+  // 1. Explicitly structured options in arguments is the absolute best signal.
   const structuredOptions = extractOptionsFromArgs(args);
   if (structuredOptions.length > 0) return true;
 
-  if (typeof answerText !== "string") return false;
+  if (typeof answerText !== "string" || !answerText.trim()) return false;
 
+  // 2. Strict exclusions: If it is a Markdown table, database query result, or JSON/CSV block, it is NEVER a clarification.
+  if (answerText.includes("|") && /\|\s*-+\s*\|/.test(answerText)) return false;
+  if (answerText.includes("[{") && answerText.includes("}]")) return false;
+  if (answerText.includes("```json") || answerText.includes("```csv")) return false;
+
+  // 3. Parse options from text and ensure we have a reasonable amount (2 to 10 choices)
   const parsedOptions = parseOptionsFromText(answerText);
-  const hasClarificationCue =
-    answerText.includes("?") ||
-    /\b(?:clarify|which|do you mean|please (?:choose|select|pick)|would you like|help me narrow)\b/i.test(
-      answerText
-    ) ||
+  if (parsedOptions.length < 2 || parsedOptions.length > 10) return false;
+
+  // 4. Strict clarification cue: it MUST contain a question mark OR use a strong clarification keyword.
+  const hasQuestionMark = answerText.includes("?");
+  const hasStrongCue = /\b(?:please clarify|help me narrow|do you mean|choose between|clarify which)\b/i.test(answerText);
+  const hasClarificationKeyword =
+    /\b(?:clarify|which|please choose|please select|please pick|would you like|which one|either)\b/i.test(answerText) ||
     /\b(?:option|choice)s?\s*(?:include|are|:)/i.test(answerText);
 
-  if (command === "NarrativeAnswer") {
-    return hasClarificationCue && parsedOptions.length > 0;
-  }
+  return (hasQuestionMark && hasClarificationKeyword) || hasStrongCue;
+}
 
-  return hasClarificationCue || parsedOptions.length > 0;
+export function isGreetingQuery(text: string): boolean {
+  if (typeof text !== "string") return false;
+  const clean = text.trim().toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g,"").trim();
+  if (!clean) return false;
+  
+  const greetings = [
+    "hi", "hello", "hey", "hola", "greetings", "good morning", "good afternoon", "good evening",
+    "howdy", "whats up", "sup", "how are you", "yo", "thanks", "thank you", "greet"
+  ];
+  
+  if (greetings.some(g => clean === g || clean.startsWith(g + " ") || clean.endsWith(" " + g))) {
+    const hasDataKeywords = /\b(?:show|query|select|average|mean|sum|max|min|count|find|chart|table|filter|sort|groupby|data|rows)\b/i.test(clean);
+    if (!hasDataKeywords) {
+      return true;
+    }
+  }
+  return false;
 }
