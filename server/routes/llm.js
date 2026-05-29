@@ -1,5 +1,14 @@
 const express = require("express");
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
+const { getDb } = require("../db");
+const { authMiddleware, JWT_SECRET } = require("../middleware/auth");
+const {
+  getCurrentDailyUsage,
+  incrementDailyUsage,
+  checkDailyLimit,
+} = require("../lib/daily-token-tracker");
+const { getPlanContext } = require("../lib/plans");
 
 const router = express.Router();
 
@@ -216,7 +225,12 @@ function getCanonicalPath(pathname) {
     .join("/");
 }
 
-async function signedBedrockInvoke({ accessKeyId, secretAccessKey, region, model, body, operation = "invoke" }) {
+async function signedBedrockInvoke({ accessKeyId, secretAccessKey, sessionToken, region, model, body, operation = "invoke" }) {
+  // Permanent IAM credentials (starting with AKIA) must never include a session token.
+  // Including an invalid/expired or empty session token with permanent keys causes AWS to return a 403.
+  const isPermanentCred = accessKeyId && accessKeyId.startsWith("AKIA");
+  const activeSessionToken = isPermanentCred ? undefined : sessionToken;
+
   const endpoint = new URL(`https://bedrock-runtime.${region}.amazonaws.com${getBedrockRuntimePath(model, operation)}`);
   const payload = JSON.stringify(body);
   const payloadHash = sha256Hex(payload);
@@ -227,7 +241,10 @@ async function signedBedrockInvoke({ accessKeyId, secretAccessKey, region, model
     ["host", endpoint.host],
     ["x-amz-content-sha256", payloadHash],
     ["x-amz-date", amzDate],
+    ...(activeSessionToken ? [["x-amz-security-token", activeSessionToken]] : []),
   ];
+  canonicalHeaders.sort((a, b) => a[0].localeCompare(b[0]));
+
   const signedHeaders = canonicalHeaders.map(([key]) => key).join(";");
   const canonicalRequest = [
     "POST",
@@ -248,14 +265,19 @@ async function signedBedrockInvoke({ accessKeyId, secretAccessKey, region, model
   const signingKey = getSignatureKey(secretAccessKey, dateStamp, region, BEDROCK_SERVICE);
   const signature = hmac(signingKey, stringToSign, "hex");
 
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Amz-Content-Sha256": payloadHash,
+    "X-Amz-Date": amzDate,
+    Authorization: `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+  if (activeSessionToken) {
+    headers["X-Amz-Security-Token"] = activeSessionToken;
+  }
+
   return fetch(endpoint.href, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Amz-Content-Sha256": payloadHash,
-      "X-Amz-Date": amzDate,
-      Authorization: `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
-    },
+    headers,
     body: payload,
   });
 }
@@ -298,21 +320,95 @@ router.post("/huggingface/chat", async (req, res) => {
   }
 });
 
+function getOptionalUserId(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    try {
+      const payload = jwt.verify(token, JWT_SECRET);
+      return payload.userId;
+    } catch (e) {
+      // Ignore token decode errors
+    }
+  }
+  return null;
+}
+
+router.get("/token-usage", authMiddleware, async (req, res) => {
+  try {
+    const db = await getDb();
+    const usage = await getCurrentDailyUsage(db, req.userId);
+    res.json(usage);
+  } catch (err) {
+    console.error("Failed to fetch token usage:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 router.post("/bedrock/chat", async (req, res) => {
-  const accessKeyId = req.header("x-aws-access-key-id");
-  const secretAccessKey = req.header("x-aws-secret-access-key");
-  const region = req.header("x-aws-region") || BEDROCK_DEFAULT_REGION;
-
-  if (!accessKeyId) {
-    return res.status(400).json({ error: "AWS access key ID is missing" });
-  }
-  if (!secretAccessKey) {
-    return res.status(400).json({ error: "AWS secret access key is missing" });
-  }
-
   const { model, messages, temperature, max_tokens } = req.body || {};
   if (!model || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Model and messages are required" });
+  }
+
+  const isFreeBedrockModel = ["amazon.nova-pro-v1:0"].includes(model);
+  let isFreeUser = true;
+  let userId = null;
+
+  try {
+    const db = await getDb();
+    userId = getOptionalUserId(req);
+    if (userId) {
+      const planContext = await getPlanContext(db, userId);
+      if (planContext && planContext.plan.tier !== "free") {
+        isFreeUser = false;
+      }
+    }
+  } catch (dbErr) {
+    console.error("Failed to load user plan context for limit check:", dbErr);
+  }
+
+  // If this is a free user executing a default free Bedrock model, enforce daily limit checks
+  if (isFreeBedrockModel && isFreeUser) {
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized — missing token required for daily limit tracking" });
+    }
+    try {
+      const db = await getDb();
+      const limitCheck = await checkDailyLimit(db, userId);
+      if (!limitCheck.allowed) {
+        const errorMsg = limitCheck.reason === "queries"
+          ? "Daily free query limit of 25 queries has been exhausted. Please upgrade your plan for higher limits."
+          : "Daily free token limit of 200k tokens has been exhausted. Please upgrade your plan for higher limits.";
+        return res.status(403).json({
+          error: errorMsg,
+          code: "DAILY_TOKEN_LIMIT_EXHAUSTED",
+        });
+      }
+    } catch (limitErr) {
+      console.error("Limit checking failed:", limitErr);
+    }
+  }
+
+  // Load access key details
+  let accessKeyId = req.header("x-aws-access-key-id");
+  let secretAccessKey = req.header("x-aws-secret-access-key");
+  let region = req.header("x-aws-region") || BEDROCK_DEFAULT_REGION;
+  let sessionToken = req.header("x-aws-session-token");
+
+  // For free default Bedrock models, use system configured admin credentials if user settings are placeholders/missing
+  if (isFreeBedrockModel && (!accessKeyId || accessKeyId === "free-bedrock-token")) {
+    accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    region = process.env.AWS_REGION || BEDROCK_DEFAULT_REGION;
+    sessionToken = process.env.AWS_SESSION_TOKEN;
+  }
+
+  if (!accessKeyId || accessKeyId === "free-bedrock-token") {
+    return res.status(400).json({ error: "AWS access key ID is missing" });
+  }
+  if (!secretAccessKey || secretAccessKey === "free-bedrock-secret") {
+    return res.status(400).json({ error: "AWS secret access key is missing" });
   }
 
   try {
@@ -320,6 +416,7 @@ router.post("/bedrock/chat", async (req, res) => {
     const upstream = await signedBedrockInvoke({
       accessKeyId,
       secretAccessKey,
+      sessionToken,
       region,
       model,
       body,
@@ -335,12 +432,32 @@ router.post("/bedrock/chat", async (req, res) => {
 
     const data = JSON.parse(text || "{}");
     const parsed = parser(data);
+
+    // Track usage if it's a free user utilizing Nova models
+    let dailyUsage = null;
+    if (isFreeBedrockModel && isFreeUser && userId) {
+      try {
+        const db = await getDb();
+        await incrementDailyUsage(db, userId, model, parsed.inputTokens, parsed.outputTokens);
+        const usage = await getCurrentDailyUsage(db, userId);
+        dailyUsage = {
+          used: usage.tokensUsed,
+          limit: usage.limit,
+          percentage: usage.percentage,
+          warning: usage.tokensUsed >= 150000 || usage.queriesUsed >= 18,
+        };
+      } catch (usageLogErr) {
+        console.error("Failed to log daily token usage:", usageLogErr);
+      }
+    }
+
     return res.json({
       choices: [{ message: { role: "assistant", content: parsed.content } }],
       usage: {
         prompt_tokens: parsed.inputTokens,
         completion_tokens: parsed.outputTokens,
       },
+      ...(dailyUsage ? { dailyUsage } : {}),
     });
   } catch (error) {
     return res.status(502).json({

@@ -1,14 +1,21 @@
 import { getApiBaseUrl } from "@/lib/api-base";
+import { useAuthStore } from "@/stores/auth-store";
 
 export interface LLMResponse {
   content: string;
   inputTokens: number;
   outputTokens: number;
+  dailyUsage?: {
+    used: number;
+    limit: number;
+    percentage: number;
+    warning: boolean;
+  };
 }
 
 export type Provider =
   | "groq" | "openai" | "gemini" | "anthropic" | "bedrock"
-  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface" | "alibaba";
+  | "azure" | "cohere" | "mistral" | "together" | "ollama" | "huggingface" | "alibaba" | "querify";
 
 export interface LLMProviderOptions {
   secretAccessKey?: string;
@@ -34,14 +41,20 @@ async function callBedrock(
   temperature: number,
   maxTokens: number
 ): Promise<LLMResponse> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = {
+    "X-AWS-Access-Key-Id": accessKeyId,
+    "X-AWS-Secret-Access-Key": secretAccessKey,
+    "X-AWS-Region": region,
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${getApiBaseUrl()}/llm/bedrock/chat`, {
     method: "POST",
-    headers: {
-      "X-AWS-Access-Key-Id": accessKeyId,
-      "X-AWS-Secret-Access-Key": secretAccessKey,
-      "X-AWS-Region": region,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false }),
   });
 
@@ -55,6 +68,7 @@ async function callBedrock(
     content: data.choices?.[0]?.message?.content || "",
     inputTokens: data.usage?.prompt_tokens || 0,
     outputTokens: data.usage?.completion_tokens || 0,
+    dailyUsage: data.dailyUsage,
   };
 }
 
@@ -216,6 +230,18 @@ export async function callLLM(
   providerOptions: LLMProviderOptions = {}
 ): Promise<LLMResponse> {
   const allMessages = [{ role: "system", content: systemPrompt }, ...messages];
+
+  if (provider === "querify") {
+    return callBedrock(
+      "free-bedrock-token",
+      "free-bedrock-secret",
+      "us-east-1",
+      model,
+      allMessages,
+      temperature,
+      maxTokens
+    );
+  }
 
   if (provider === "bedrock") {
     if (!apiKey) throw new Error("AWS Bedrock access key is missing.");

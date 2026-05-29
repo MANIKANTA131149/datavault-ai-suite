@@ -5,14 +5,14 @@ const PLAN_DEFINITIONS = {
     tier: "free",
     name: "Free",
     monthlyQueries: 25,
-    monthlyTokens: 50000,
+    monthlyTokens: 200000,
     datasets: 2,
     fileSizeLimitBytes: 1 * 1024 * 1024,
     insights: 3,
     members: 0,
     adminPage: false,
     exports: ["csv", "json"],
-    features: ["25 monthly queries", "2 datasets", "1 MB files", "CSV and JSON exports"],
+    features: ["25 daily Bedrock queries", "200k daily Bedrock tokens", "2 datasets", "1 MB files", "CSV/JSON exports"],
   },
   standard: {
     tier: "standard",
@@ -243,7 +243,11 @@ async function getUsage(db, user, planOwner = user) {
   const userIds = await getOrganizationMemberIds(db, user);
   const ownerId = planOwner._id?.toString ? planOwner._id.toString() : String(planOwner._id || user._id);
   const { start, end } = getMonthlyWindow(planOwner);
-  const historyFilter = { userId: { $in: userIds }, date: { $gte: start, $lt: end } };
+  const historyFilter = {
+    userId: { $in: userIds },
+    date: { $gte: start, $lt: end },
+    model: { $nin: ["amazon.nova-pro-v1:0", "amazon.nova-micro-v1:0", "amazon.nova-lite-v1:0"] }
+  };
 
   const [queryCount, tokenAgg, datasetCount, insightCount, memberCount] = await Promise.all([
     db.collection("history").countDocuments(historyFilter),

@@ -13,6 +13,7 @@ const PROVIDER_MARKS: Record<Provider, string> = {
   ollama: "OL",
   huggingface: "HF",
   alibaba: "AL",
+  querify: "Q",
 };
 
 interface ProviderLogoProps {

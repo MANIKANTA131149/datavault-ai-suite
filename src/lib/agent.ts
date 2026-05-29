@@ -94,6 +94,7 @@ filter_outliers {"column":"col","method":"zscore|iqr","threshold":1.5}
 multi_filter  {"filters":[{"column":"col","operator":"==","value":X}],"logic":"AND|OR"}
 pivot         {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
 pipeline      {"operations":[{"operation":"filter","params":{...}},{"operation":"transform_column","params":{...}},...]}
+multi_analysis{"operations":[{"name":"label1","operation":"groupby","params":{...}},{"name":"label2","operation":"aggregate","params":{...}}]} to execute multiple independent parallel operations on the original dataset
 
 ═══════════════════════════════════════════════════════
 INTENT → OPERATION MAPPING (memorize this)
@@ -211,10 +212,14 @@ Step 3: Is the user request ambiguous, underspecified, or missing the target col
 Step 4: Does the question need ONE supported operation to produce the final answer?
   YES → ExecuteFinalQuery with the right operation.
 
-Step 5: Does the question require aggregation first and then interpretation, comparison, ranking, ratio, percentage, change, or explanation?
+Step 5: Does the question ask for MULTIPLE pieces of information, comparisons (e.g. highest AND lowest), full analysis, or multiple metrics?
+  YES → Use the "multi_analysis" operation with ExecuteFinalQuery to run all the sub-queries in parallel in a single turn. You can also use separate QuerySheet operations across multiple turns if they must be evaluated sequentially.
+  Examples of multi-part questions: "highest and lowest salary", "analyze the data", "give me a summary", "compare X and Y", "show high, low, average", "complete analysis", "statistics overview".
+
+Step 6: Does the question require aggregation first and then interpretation, comparison, ranking, ratio, percentage, change, or explanation?
   YES → QuerySheet first. On the next turn, use Answer to interpret the returned result, or ExecuteFinalQuery only if another full-data operation is truly needed.
 
-Step 6: Is sheet info missing entirely?
+Step 7: Is sheet info missing entirely?
   YES → GetColumns, then proceed.
 
 ═══════════════════════════════════════════════════════
@@ -302,6 +307,20 @@ A: {"command":"QuerySheet","args":{"operation":"groupby","params":{"groupColumn"
 Q: "Filter movies, extract duration numbers, remove outliers, then average duration by country"
 A: {"command":"ExecuteFinalQuery","args":{"operation":"pipeline","params":{"operations":[{"operation":"filter","params":{"column":"type","operator":"==","value":"Movie"}},{"operation":"transform_column","params":{"column":"duration","function":"extract_number"}},{"operation":"filter_outliers","params":{"column":"duration","method":"iqr","threshold":1.5}},{"operation":"groupby","params":{"groupColumn":"country","aggColumn":"duration","aggFunction":"mean"}}]}}}
 
+Q: "Give me the average salary, min and max salary, and a department breakdown" (multiple independent questions in a single request -> use multi_analysis to execute in parallel in a single turn)
+A: {"command":"ExecuteFinalQuery","args":{"operation":"multi_analysis","params":{"operations":[{"name":"average_salary","operation":"aggregate","params":{"column":"salary","function":"mean"}},{"name":"min_salary","operation":"aggregate","params":{"column":"salary","function":"min"}},{"name":"max_salary","operation":"aggregate","params":{"column":"salary","function":"max"}},{"name":"department_breakdown","operation":"groupby","params":{"groupColumn":"department","aggColumn":"salary","aggFunction":"mean"}}]}}}
+
+Q: "Which employee has the highest and lowest salary?" (multi-part → use QuerySheet for each part, then Answer)
+Turn 1: {"command":"QuerySheet","args":{"operation":"sort","params":{"column":"salary","order":"desc","limit":1}}}
+Turn 2: {"command":"QuerySheet","args":{"operation":"sort","params":{"column":"salary","order":"asc","limit":1}}}
+Turn 3: {"command":"Answer","args":{"value":"Highest salary: Henry Allen ($95,000). Lowest salary: ..."}} (combines both results)
+
+Q: "Analyze the employee data" or "Give me a complete analysis" (broad analysis → multiple QuerySheet then Answer)
+Turn 1: {"command":"QuerySheet","args":{"operation":"count","params":{}}}
+Turn 2: {"command":"QuerySheet","args":{"operation":"aggregate","params":{"column":"salary","function":"mean"}}}
+Turn 3: {"command":"QuerySheet","args":{"operation":"groupby","params":{"groupColumn":"department","aggColumn":"salary","aggFunction":"mean"}}}
+Turn 4: {"command":"Answer","args":{"value":"Dataset has N records. Average salary is $X. Department breakdown: ..."}} (combines all)
+
 Q: "Show sales"
 A: {"command":"Answer","args":{"value":"Do you want total sales, sales by a category, or sales over time?"}}
 
@@ -316,6 +335,7 @@ STRICT RULES — NEVER VIOLATE
 ✅ Call GetColumns before QuerySheet or ExecuteFinalQuery if the current turn has not already shown the schema
 ✅ Use ExecuteFinalQuery when one supported operation fully answers the question
 ✅ Use QuerySheet when the answer requires interpreting an intermediate result
+✅ When the user asks for MULTIPLE things (e.g. "highest AND lowest", "analyze", "summary", "compare", "statistics"), prefer using the "multi_analysis" operation to execute all parts in a single turn, OR use separate QuerySheet operations for sequential multi-turn evaluation, then combine all results in a final Answer.
 ✅ Use Answer for metadata, clarification questions, and final interpretation after QuerySheet
 ✅ If the user asks "which/what/who <category> has/gives highest/lowest/best/most <metric>", use groupby with limit:1
 ✅ If the user asks for "most diverse", "most unique", or "most distinct" values within a category, use groupby with aggFunction:"count_distinct"
@@ -450,6 +470,7 @@ function classifyIntent(question: string): string {
   const q = question.toLowerCase();
 
   const intents: Array<[RegExp, string]> = [
+    [/\banalyze|analysis|statistics|overview|summary|multiple (metrics|operations|questions|parts)|highest (and|or) lowest|max (and|or) min|high (and|or) low\b/i, "INTENT: comprehensive multi-part analysis → use the 'multi_analysis' operation inside ExecuteFinalQuery to execute multiple independent operations (e.g. groupby, aggregate, percentile, outlier_detect) on the dataset in parallel in a single turn. Structure it as {\"operation\":\"multi_analysis\",\"params\":{\"operations\":[{\"name\":\"label1\",\"operation\":\"groupby\",\"params\":{...}},...]}}"],
     [/\b(which|what|who)\b.+\b(diverse|diversity|variety|distinct|unique)\b/i, "INTENT: grouped diversity ranking → use groupby with aggFunction count_distinct; groupColumn is the entity/category being compared, aggColumn is the thing whose diversity is counted; use limit:1 for most/least"],
     [/\b(which|what|who)\b.+\b(maximum|max|highest|largest|most|top|best|minimum|min|lowest|smallest|least|bottom|worst|common)\b/i, "INTENT: category comparison/ranking → if a category/type/entity is mentioned, use groupby with the category as groupColumn and limit:1; do not use aggregate unless asking for one overall dataset value"],
     [/\boutlier|anomal|unusual|abnormal\b/i, "INTENT: outlier detection → use outlier_detect operation"],
@@ -1365,6 +1386,17 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       return currentData;
     }
 
+    case "multi_analysis": {
+      const { operations = [] } = params;
+      const results: Record<string, any> = {};
+      for (let i = 0; i < operations.length; i++) {
+        const op = operations[i];
+        const key = op.name || op.label || `analysis_${i}_${op.operation}`;
+        results[key] = executeOperation(data, op.operation, op.params || {});
+      }
+      return results;
+    }
+
     default:
       return { error: `Unknown operation: ${operation}` };
   }
@@ -1685,7 +1717,9 @@ export async function* runAgent(
         break;
       case "QuerySheet":
         result = executeOperation(currentData, args.operation, args.params || {});
-        currentData = Array.isArray(result) ? result : [result]; // Update current data for next intermediate step
+        if (args.operation === "filter" || args.operation === "multi_filter" || args.operation === "remove_nulls" || args.operation === "transform_column") {
+          currentData = Array.isArray(result) ? result : [result];
+        }
         break;
       case "ExecuteFinalQuery":
         result = executeOperation(currentData, args.operation, args.params || {});
@@ -1714,8 +1748,9 @@ export async function* runAgent(
       role: "user",
       content: [
         `${command === "GetColumns" ? "Schema returned" : "Result of your query"}: ${JSON.stringify(result).slice(0, 2000)}${JSON.stringify(result).length > 2000 ? "... (truncated)" : ""}`,
-        `\nNow issue ExecuteFinalQuery or Answer to complete answering: "${normalizedQuestion}"`,
-        `\nDo NOT issue more intermediate steps unless strictly necessary.`,
+        `\nContinue answering: "${normalizedQuestion}"`,
+        `\nIf you have gathered ALL the information needed, issue ExecuteFinalQuery (for a data result) or Answer (to present a combined text answer).`,
+        `\nIf the question asks for multiple things (e.g. highest AND lowest, full analysis, multiple metrics) and you still need more data, issue another QuerySheet.`,
         `\nRespond with a single JSON command only.`,
       ].join(""),
     });
@@ -1775,6 +1810,7 @@ Supported operations:
 - outlier_detect {"column":"col","method":"zscore|iqr","threshold":2}
 - pivot {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
 - pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
+- multi_analysis {"operations":[{"name":"op1","operation":"groupby","params":{...}}, {"name":"op2","operation":"percentile","params":{...}}]} to execute multiple independent operations in parallel on the dataset
 
 Rules:
 - You have FULL read-only access to all workbook sheets and data. Perform any sequence of operations, transformations, or pipelines required to answer the user's question.
@@ -1784,9 +1820,10 @@ Rules:
 - Use exact column names from the returned schema.
 - If GetColumns says a column contains delimited lists/tags/names inside one cell, use split_frequency to count the individual items.
 - Do not group by or aggregate the whole cell when the question is about items inside a multi-value text column.
-- For "which row has the max/min/highest/lowest value" questions, prefer a single sort+select pipeline, or include the same filter in ExecuteFinalQuery after QuerySheet finds the matching row.
+- For "which row has the max/min/highest/lowest value" questions, prefer a single sort+select pipeline, or include the same filter in ExecuteFinalQuery after QuerySheet finds the matching row. If the question asks for BOTH the highest and lowest, or max and min values/rows, use separate QuerySheet calls (one for max, one for min) and then combine both results in a final Answer.
+- If the question asks for MULTIPLE pieces of information (e.g. "highest and lowest", "analyze", "summary", "compare X and Y", "statistics"), use QuerySheet for EACH part (one operation per call), then combine all partial results into a comprehensive Answer. Do NOT try to answer multi-part questions with a single operation.
 - If QuerySheet returns the exact row(s), either Answer from that result or preserve that subset/filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
-- Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer.
+- Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer when ONE operation suffices.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
@@ -1860,6 +1897,7 @@ Supported operations:
 - outlier_detect {"column":"col","method":"zscore|iqr","threshold":2}
 - pivot {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
 - pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
+- multi_analysis {"operations":[{"name":"op1","operation":"groupby","params":{...}}, {"name":"op2","operation":"percentile","params":{...}}]} to execute multiple independent operations in parallel on the table
 
 CRITICAL RULES FOR MULTI-TABLE QUERIES:
 - When the user provides an identifier (ID, code, name) without specifying a table, ALWAYS call GetSchema first.
@@ -1884,8 +1922,9 @@ Rules:
 - Example: a request like "details of upi URS..." must filter column "upi" on a table containing "upi"; do not filter "urs" unless no "upi" column exists.
 - For identifier/detail lookups, prefer ExecuteSQL with an exact WHERE filter on the identifier column.
 - If QueryTable finds rows with a filter, either answer from that result or include the same filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
+- If the question asks for MULTIPLE pieces of information (e.g. "highest and lowest", "analyze", "summary", "compare X and Y", "statistics", "full analysis"), use QuerySQL/QueryTable for EACH part (one query per call), gathering all the partial results across multiple turns. Then combine all results into a comprehensive Answer. Do NOT try to answer multi-part questions with a single query when the question clearly asks for several different metrics or comparisons.
 - If the request needs a join across multiple tables and the target table is unclear, ask one concise clarification question.
-- Use QuerySQL for intermediate SQL checks and ExecuteSQL for the final database answer.
+- Use QuerySQL for intermediate SQL checks and ExecuteSQL for the final database answer when ONE query suffices.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   CreditCard,
   Check,
@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePlanStore } from "@/stores/plan-store";
+import { api } from "@/lib/api-client";
 import {
   PLAN_DEFINITIONS,
   PLAN_TIERS,
@@ -202,13 +203,12 @@ function UsageBar({ label, used, limit, icon: Icon }: { label: string; used: num
       </div>
       <div className="h-2 rounded-full bg-background-secondary border border-border/60 overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all duration-500 ${
-            isExhausted
+          className={`h-full rounded-full transition-all duration-500 ${isExhausted
               ? "bg-rose-500"
               : isNearLimit
                 ? "bg-amber-500"
                 : "bg-primary"
-          }`}
+            }`}
           style={{ width: unlimited ? "2%" : `${Math.max(2, pct)}%` }}
         />
       </div>
@@ -232,22 +232,21 @@ function PlanCard({ plan, currentTier }: { plan: PlanDefinition; currentTier: Pl
   const handleUpgrade = () => {
     if (plan.tier === "enterprise") {
       toast.info("Enterprise inquiries", {
-        description: "Contact sales@querify.ai for a custom enterprise plan tailored to your organization.",
+        description: "Contact gantamanikanta678@gmail.com for a custom enterprise plan tailored to your organization.",
       });
     } else {
       toast.info("Upgrade request received", {
-        description: `Your request to upgrade to the ${plan.name} plan has been noted. The billing integration will be available soon.`,
+        description: `Your request to upgrade to the ${plan.name} plan has been noted. The billing integration will be available soon. Please send your request to gantamanikanta678@gmail.com`,
       });
     }
   };
 
   return (
     <Card
-      className={`relative p-6 flex flex-col justify-between h-full transition-all duration-200 hover:-translate-y-0.5 ${
-        isCurrent
+      className={`relative p-6 flex flex-col justify-between h-full transition-all duration-200 hover:-translate-y-0.5 ${isCurrent
           ? "border-primary/50 shadow-[0_20px_50px_-28px_hsl(var(--primary)/0.9)]"
           : "hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]"
-      }`}
+        }`}
     >
       <div className="space-y-5 flex-1 flex flex-col">
         {/* Top Row: Icon & Badge inline to avoid absolute overlaps */}
@@ -334,10 +333,26 @@ function PlanCard({ plan, currentTier }: { plan: PlanDefinition; currentTier: Pl
 export default function PricingPage() {
   const { user } = useAuthStore();
   const { context, loading, fetchPlan } = usePlanStore();
+  const [dailyTokens, setDailyTokens] = useState<{
+    tokensUsed: number;
+    limit: number;
+    queriesUsed: number;
+    queryLimit: number;
+    percentage: number;
+  } | null>(null);
 
   useEffect(() => {
     fetchPlan();
   }, [fetchPlan]);
+
+  useEffect(() => {
+    if (user?.planTier !== "free") return;
+    api.get("/llm/token-usage")
+      .then((data) => {
+        if (data) setDailyTokens(data as any);
+      })
+      .catch((e) => console.error("Failed to fetch daily tokens on pricing page:", e));
+  }, [user?.planTier]);
 
   const currentTier: PlanTier = (user?.planTier as PlanTier) || "free";
   const currentPlan = PLAN_DEFINITIONS[currentTier];
@@ -382,9 +397,9 @@ export default function PricingPage() {
           ) : context ? (
             <div className="grid gap-6 md:grid-cols-2">
               <UsageBar
-                label="Monthly Queries"
-                used={context.usage.monthlyQueries}
-                limit={currentPlan.monthlyQueries}
+                label={currentTier === "free" ? "Daily Bedrock Queries" : "Monthly Queries"}
+                used={currentTier === "free" && dailyTokens ? dailyTokens.queriesUsed : context.usage.monthlyQueries}
+                limit={currentTier === "free" && dailyTokens ? dailyTokens.queryLimit : currentPlan.monthlyQueries}
                 icon={MessageSquare}
               />
               <UsageBar
@@ -394,9 +409,9 @@ export default function PricingPage() {
                 icon={Database}
               />
               <UsageBar
-                label="Monthly Tokens"
-                used={context.usage.monthlyTokens}
-                limit={currentPlan.monthlyTokens}
+                label={currentTier === "free" ? "Daily Bedrock Tokens" : "Monthly Tokens"}
+                used={currentTier === "free" && dailyTokens ? dailyTokens.tokensUsed : context.usage.monthlyTokens}
+                limit={currentTier === "free" && dailyTokens ? dailyTokens.limit : currentPlan.monthlyTokens}
                 icon={Zap}
               />
               <UsageBar
@@ -462,9 +477,8 @@ export default function PricingPage() {
                     return (
                       <th
                         key={tier}
-                        className={`px-5 py-4 text-center text-[12px] font-bold uppercase tracking-wider font-mono ${
-                          tier === currentTier ? "text-primary" : "text-muted-foreground"
-                        }`}
+                        className={`px-5 py-4 text-center text-[12px] font-bold uppercase tracking-wider font-mono ${tier === currentTier ? "text-primary" : "text-muted-foreground"
+                          }`}
                       >
                         <div className="flex flex-col items-center gap-1">
                           <span className={meta.accent}>{PLAN_DEFINITIONS[tier].name}</span>
@@ -485,9 +499,8 @@ export default function PricingPage() {
                   return (
                     <tr
                       key={row.label}
-                      className={`border-b border-border/40 transition-colors hover:bg-background-secondary/30 ${
-                        idx % 2 === 0 ? "" : "bg-background-secondary/20"
-                      }`}
+                      className={`border-b border-border/40 transition-colors hover:bg-background-secondary/30 ${idx % 2 === 0 ? "" : "bg-background-secondary/20"
+                        }`}
                     >
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-2.5">
@@ -520,11 +533,10 @@ export default function PricingPage() {
                                 </div>
                               )
                             ) : (
-                              <span className={`text-[13px] font-mono font-medium ${
-                                val === "Unlimited" || val === "No size limit"
+                              <span className={`text-[13px] font-mono font-medium ${val === "Unlimited" || val === "No size limit"
                                   ? TIER_META[tier].accent
                                   : "text-foreground"
-                              }`}>
+                                }`}>
                                 {val}
                               </span>
                             )}

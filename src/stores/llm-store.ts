@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type { Provider } from "@/lib/llm-client";
 
 export const PROVIDER_MODELS: Record<Provider, string[]> = {
+  querify: ["amazon.nova-pro-v1:0"],
   groq: ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
   gemini: [
@@ -150,6 +151,7 @@ export const PROVIDER_MODELS: Record<Provider, string[]> = {
 };
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
+  querify: "Querify (Default Models)",
   groq: "Groq",
   openai: "OpenAI",
   gemini: "Google Gemini",
