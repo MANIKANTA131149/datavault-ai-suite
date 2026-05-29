@@ -27,6 +27,33 @@ function getSeoMetadata(pathname: string) {
     };
   }
 
+  if (pathname === "/website" || pathname === "/") {
+    return {
+      ...base,
+      title: `${SITE_NAME} | Enterprise AI Data Platform`,
+      description:
+        "Public website for Querify Agent, the enterprise AI data platform for natural-language analytics, governance, and secure deployments.",
+    };
+  }
+
+  if (pathname === "/privacy-policy") {
+    return {
+      ...base,
+      title: `${SITE_NAME} | Privacy Policy`,
+      description:
+        "How Querify Agent collects, uses, stores, and protects information across the public website and workspace.",
+    };
+  }
+
+  if (pathname === "/terms-and-conditions") {
+    return {
+      ...base,
+      title: `${SITE_NAME} | Terms and Conditions`,
+      description:
+        "The terms that govern use of Querify Agent, including account responsibility, AI output review, and acceptable use.",
+    };
+  }
+
   if (pathname.startsWith("/app/query")) {
     return {
       ...base,
