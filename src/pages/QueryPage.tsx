@@ -2307,6 +2307,7 @@ function SaveInsightDialog({
 }: {
   open: boolean; onClose: () => void; query: string; result: any; datasetName: string;
 }) {
+  const navigate = useNavigate();
   const { addInsight } = useInsightsStore();
   const [label, setLabel] = useState(query.slice(0, 60));
   const [notes, setNotes] = useState("");
@@ -2615,10 +2616,11 @@ export default function QueryPage() {
     try {
       const response = await fetchDatabaseSchema(connectionId, undefined, options);
       setDbSchema(response.schema);
-      setSelectedTable((current) => {
-        if (current && response.schema.tables.some((table) => table.name === current)) return current;
-        return response.schema.tables[0]?.name || "";
-      });
+      const currentTable = useSettingsStore.getState().selectedTable;
+      const nextTable = (currentTable && response.schema.tables.some((table) => table.name === currentTable))
+        ? currentTable
+        : (response.schema.tables[0]?.name || "");
+      setSelectedTable(nextTable);
       return response.schema;
     } catch (err: any) {
       setDbSchema(null);
