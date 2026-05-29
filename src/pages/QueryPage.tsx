@@ -808,11 +808,11 @@ function renderMarkdown(text: string) {
 }
 
 // ─── NarrativeResult Component ────────────────────────────────────────────────
-function NarrativeResult({ 
-  result, 
-  onSubmitQuickReply 
-}: { 
-  result: { narrative: string; highlights?: { label: string; value: string }[] }; 
+function NarrativeResult({
+  result,
+  onSubmitQuickReply
+}: {
+  result: { narrative: string; highlights?: { label: string; value: string }[] };
   onSubmitQuickReply?: (text: string) => void;
 }) {
   const options = useMemo(() => {
@@ -1997,17 +1997,17 @@ function DatabaseTablePicker({
   const selectedParts = selectedTable ? getDatabaseTableNameParts(selectedTable.name) : null;
   const pickerSubtitle = selectedTable
     ? [
-        selectedParts?.namespace || "",
-        selectedTable.kind?.toUpperCase() || "",
-        formatDatabaseTableStat(selectedTable),
-      ].filter(Boolean).join(" | ")
+      selectedParts?.namespace || "",
+      selectedTable.kind?.toUpperCase() || "",
+      formatDatabaseTableStat(selectedTable),
+    ].filter(Boolean).join(" | ")
     : `${tables.length.toLocaleString()} tables available`;
   const selectedSubtitle = selectedTable
     ? [
-        selectedParts?.namespace || "",
-        selectedTable.kind?.toUpperCase() || "",
-        formatDatabaseTableStat(selectedTable),
-      ].filter(Boolean).join(" • ")
+      selectedParts?.namespace || "",
+      selectedTable.kind?.toUpperCase() || "",
+      formatDatabaseTableStat(selectedTable),
+    ].filter(Boolean).join(" • ")
     : `${tables.length.toLocaleString()} tables available`;
 
   return (
@@ -2307,7 +2307,6 @@ function SaveInsightDialog({
 }: {
   open: boolean; onClose: () => void; query: string; result: any; datasetName: string;
 }) {
-  const navigate = useNavigate();
   const { addInsight } = useInsightsStore();
   const [label, setLabel] = useState(query.slice(0, 60));
   const [notes, setNotes] = useState("");
@@ -2335,7 +2334,7 @@ function SaveInsightDialog({
       toast.error(err.message || "Insight limit reached for your plan", {
         action: {
           label: "View Plans",
-          onClick: () => navigate("/app/pricing"),
+          onClick: () => navigator("/app/pricing"),
         },
       });
     } finally {
@@ -3256,19 +3255,19 @@ export default function QueryPage() {
   const activeSuggestion = useMemo(() => {
     if (!input.trim()) return "";
     const lowercaseInput = input.toLowerCase();
-    
+
     // Try smart suggestions first
     const match = smartSuggestions.find(s => s.toLowerCase().startsWith(lowercaseInput));
     if (match) {
       return match.slice(input.length);
     }
-    
+
     // Fallback to column names
     const colMatch = activeColumns.find(c => c.toLowerCase().startsWith(lowercaseInput));
     if (colMatch) {
       return colMatch.slice(input.length);
     }
-    
+
     return "";
   }, [input, smartSuggestions, activeColumns]);
 
@@ -3325,28 +3324,26 @@ export default function QueryPage() {
           <Layers className="text-primary h-4 w-4" />
           <span className="font-semibold text-sm text-foreground tracking-tight hidden sm:inline-block">Query Control Room</span>
         </div>
-        
+
         {/* HSL Tabs Switcher */}
         <div className="flex items-center rounded-lg border border-border bg-card p-1">
           <button
             type="button"
             onClick={() => setActiveTab("workspace")}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-              activeTab === "workspace"
-                ? "bg-primary text-primary-foreground shadow"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
+            className={`px-3 py-1 rounded text-xs font-medium transition-all ${activeTab === "workspace"
+              ? "bg-primary text-primary-foreground shadow"
+              : "text-muted-foreground hover:text-foreground"
+              }`}
           >
             Chatbot Workspace
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("deployments")}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all ${
-              activeTab === "deployments"
-                ? "bg-primary text-primary-foreground shadow"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
+            className={`px-3 py-1 rounded text-xs font-medium transition-all ${activeTab === "deployments"
+              ? "bg-primary text-primary-foreground shadow"
+              : "text-muted-foreground hover:text-foreground"
+              }`}
           >
             Deployed Chatbots
           </button>
@@ -3757,8 +3754,8 @@ export default function QueryPage() {
                             </div>
                           )}
                           {finalStep && (
-                            <InlineFinalResult 
-                              result={finalStep.result} 
+                            <InlineFinalResult
+                              result={finalStep.result}
                               onSubmitQuickReply={(text) => {
                                 handleSend(text);
                               }}
@@ -3776,8 +3773,8 @@ export default function QueryPage() {
                       <StepsTimeline steps={currentSteps} live />
                     )}
                     {currentFinalStep && !hitlState && (
-                      <InlineFinalResult 
-                        result={currentFinalStep.result} 
+                      <InlineFinalResult
+                        result={currentFinalStep.result}
                         onSubmitQuickReply={(text) => {
                           handleSend(text);
                         }}
@@ -3841,7 +3838,7 @@ export default function QueryPage() {
                   <div className="relative min-w-0 flex-1">
                     {/* Ghost text backdrop overlay */}
                     {activeSuggestion && !isRunning && !isListening && (
-                      <div 
+                      <div
                         className="absolute inset-0 bg-transparent text-transparent pointer-events-none whitespace-pre-wrap break-all select-none px-3 py-2 text-sm leading-normal border border-transparent font-normal font-sans"
                         style={{
                           fontFamily: "inherit",
