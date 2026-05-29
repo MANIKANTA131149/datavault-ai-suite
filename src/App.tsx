@@ -10,6 +10,9 @@ import AuthPage from "@/pages/AuthPage";
 import { Seo } from "@/components/Seo";
 
 const GetStartedPage = lazy(() => import("@/pages/GetStartedPage"));
+const WebsitePage = lazy(() => import("@/pages/WebsitePage"));
+const PrivacyPolicyPage = lazy(() => import("@/pages/PrivacyPolicyPage"));
+const TermsPage = lazy(() => import("@/pages/TermsPage"));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
 const DatasetsPage = lazy(() => import("@/pages/DatasetsPage"));
 const QueryPage = lazy(() => import("@/pages/QueryPage"));
@@ -42,7 +45,10 @@ const App = () => (
         <OnboardingModal />
         <Suspense fallback={<PageLoader />}>
           <Routes>
-            <Route path="/" element={<Navigate to="/auth" replace />} />
+            <Route path="/" element={<Navigate to="/website" replace />} />
+            <Route path="/website" element={<WebsitePage />} />
+            <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+            <Route path="/terms-and-conditions" element={<TermsPage />} />
             <Route path="/auth" element={<AuthPage />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
