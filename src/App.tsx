@@ -7,6 +7,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
+import { Seo } from "@/components/Seo";
 
 const GetStartedPage = lazy(() => import("@/pages/GetStartedPage"));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
@@ -36,6 +37,7 @@ const App = () => (
     <TooltipProvider>
       <Sonner position="top-right" richColors closeButton />
       <BrowserRouter>
+        <Seo />
         <CommandPalette />
         <OnboardingModal />
         <Suspense fallback={<PageLoader />}>
