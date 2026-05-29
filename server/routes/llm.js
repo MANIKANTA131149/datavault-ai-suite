@@ -398,9 +398,9 @@ router.post("/bedrock/chat", async (req, res) => {
 
   // For free default Bedrock models, use system configured admin credentials if user settings are placeholders/missing
   if (isFreeBedrockModel && (!accessKeyId || accessKeyId === "free-bedrock-token")) {
-    accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-    secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-    region = process.env.AWS_REGION || BEDROCK_DEFAULT_REGION;
+    accessKeyId = process.env.VITE_AWS_ACCESS_KEY_ID;
+    secretAccessKey = process.env.VITE_AWS_SECRET_ACCESS_KEY;
+    region = process.env.VITE_AWS_REGION || BEDROCK_DEFAULT_REGION;
     sessionToken = process.env.AWS_SESSION_TOKEN;
   }
 

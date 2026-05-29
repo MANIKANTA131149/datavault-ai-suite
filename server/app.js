@@ -73,11 +73,35 @@ mountApiRoutes("");
 
 app.get(["/api/health", "/health"], (_req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
 
+app.get("/sitemap.xml", (req, res) => {
+  const origin = `${req.protocol}://${req.get("host")}`;
+  const pages = ["/auth", "/app/get-started", "/pricing", "/deploy"];
+  const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages
+    .map((page) => `  <url>\n    <loc>${origin}${page}</loc>\n    <changefreq>daily</changefreq>\n    <priority>0.8</priority>\n  </url>`)
+    .join("\n")}\n</urlset>`;
+
+  res.type("application/xml");
+  res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  res.send(sitemap);
+});
+
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 const clientDistPath = path.join(__dirname, "..", "dist");
-app.use(express.static(clientDistPath));
+app.use(
+  express.static(clientDistPath, {
+    maxAge: 0,
+    setHeaders(res, pathName) {
+      if (pathName.endsWith(".html")) {
+        res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60, stale-while-revalidate=300");
+      } else if (/.+\.(js|mjs|css|svg|png|jpg|jpeg|webp|gif|ico|woff2?|ttf|eot|json)$/i.test(pathName)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    },
+  })
+);
 
 app.get(/^\/(?!api).*/, (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60, stale-while-revalidate=300");
   res.sendFile(path.join(clientDistPath, "index.html"));
 });
 
