@@ -36,6 +36,23 @@ export default function SettingsPage() {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [settingsSearch, setSettingsSearch] = useState("");
   const [testingProvider, setTestingProvider] = useState<Provider | null>(null);
+  const [dailyTokens, setDailyTokens] = useState<{
+    tokensUsed: number;
+    limit: number;
+    queriesUsed: number;
+    queryLimit: number;
+    percentage: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (user?.planTier !== "free") return;
+    api.get("/llm/token-usage")
+      .then((data) => {
+        if (data) setDailyTokens(data as any);
+      })
+      .catch((e) => console.error("Failed to fetch daily tokens on settings page:", e));
+  }, [user?.planTier]);
+
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>(
     Object.fromEntries(
       (Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""])
@@ -616,8 +633,18 @@ export default function SettingsPage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
               {[
-                { label: "Queries run", value: usage.monthlyQueries, max: currentPlan.monthlyQueries, unit: "" },
-                { label: "Tokens used", value: usage.monthlyTokens, max: currentPlan.monthlyTokens, unit: "" },
+                { 
+                  label: currentPlan.tier === "free" ? "Daily Bedrock Queries" : "Queries run", 
+                  value: currentPlan.tier === "free" && dailyTokens ? dailyTokens.queriesUsed : usage.monthlyQueries, 
+                  max: currentPlan.tier === "free" && dailyTokens ? dailyTokens.queryLimit : currentPlan.monthlyQueries, 
+                  unit: "" 
+                },
+                { 
+                  label: currentPlan.tier === "free" ? "Daily Bedrock Tokens" : "Tokens used", 
+                  value: currentPlan.tier === "free" && dailyTokens ? dailyTokens.tokensUsed : usage.monthlyTokens, 
+                  max: currentPlan.tier === "free" && dailyTokens ? dailyTokens.limit : currentPlan.monthlyTokens, 
+                  unit: "" 
+                },
                 { label: "Datasets", value: usage.datasets, max: currentPlan.datasets, unit: "" },
                 { label: "Saved insights", value: usage.insights, max: currentPlan.insights, unit: "" },
                 { label: "Shared members", value: usage.members, max: currentPlan.members, unit: "" },

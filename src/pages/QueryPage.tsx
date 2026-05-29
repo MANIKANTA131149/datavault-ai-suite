@@ -2307,6 +2307,7 @@ function SaveInsightDialog({
 }: {
   open: boolean; onClose: () => void; query: string; result: any; datasetName: string;
 }) {
+  const navigate = useNavigate();
   const { addInsight } = useInsightsStore();
   const [label, setLabel] = useState(query.slice(0, 60));
   const [notes, setNotes] = useState("");
@@ -2334,7 +2335,7 @@ function SaveInsightDialog({
       toast.error(err.message || "Insight limit reached for your plan", {
         action: {
           label: "View Plans",
-          onClick: () => navigator("/app/pricing"),
+          onClick: () => navigate("/app/pricing"),
         },
       });
     } finally {
@@ -2388,6 +2389,53 @@ export default function QueryPage() {
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
   const { addEntry, entries } = useHistoryStore();
   const { checkMetric, checkExport, fetchPlan } = usePlanStore();
+  const { user } = useAuthStore();
+  const isFreeUser = user?.planTier === "free";
+  const isFreeNovaModel = (activeProvider === "bedrock" || activeProvider === "querify") && ["amazon.nova-pro-v1:0"].includes(activeModel);
+
+  const [dailyTokens, setDailyTokens] = useState<{
+    tokensUsed: number;
+    limit: number;
+    queriesUsed: number;
+    queryLimit: number;
+    percentage: number;
+  } | null>(null);
+
+  const fetchDailyTokens = useCallback(async () => {
+    if (!isFreeUser) return;
+    try {
+      const token = useAuthStore.getState().token;
+      if (!token) return;
+      const res = await fetch(`${getApiBaseUrl()}/llm/token-usage`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDailyTokens(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch daily token usage:", e);
+    }
+  }, [isFreeUser]);
+
+  useEffect(() => {
+    fetchDailyTokens();
+  }, [fetchDailyTokens]);
+
+  // Set default provider for free users if not already configured on mount/auth load
+  useEffect(() => {
+    if (isFreeUser && activeProvider !== "querify") {
+      const hasConfiguredOther = Object.keys(providerConfigs).some(
+        (key) => providerConfigs[key as Provider]?.apiKey
+      );
+      if (!hasConfiguredOther) {
+        setActiveProvider("querify");
+        setActiveModel("amazon.nova-pro-v1:0");
+      }
+    }
+    // Only run this initialization on mount or when plan tier changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFreeUser, setActiveProvider, setActiveModel]);
 
   const {
     selectedDatasetId,
@@ -2818,6 +2866,27 @@ export default function QueryPage() {
     const question = (overrideQuestion ?? input).trim();
     if (!question || isRunning) return;
     if (!selectedDatasetId) { toast.error("Select a data source first"); return; }
+
+    const isFreeNovaModelLocal = isFreeNovaModel && isFreeUser;
+
+    // Check daily limits first
+    if (isFreeNovaModelLocal && dailyTokens) {
+      const tokensExhausted = dailyTokens.tokensUsed >= dailyTokens.limit;
+      const queriesExhausted = dailyTokens.queriesUsed >= dailyTokens.queryLimit;
+      if (tokensExhausted || queriesExhausted) {
+        const limitMsg = tokensExhausted
+          ? "daily free Bedrock token limit (200k tokens)"
+          : "daily free Bedrock query limit (25 queries)";
+        toast.error(`Your ${limitMsg} has been exhausted. Please upgrade your plan for higher limits.`, {
+          action: {
+            label: "View Plans",
+            onClick: () => navigate("/app/pricing"),
+          }
+        });
+        return;
+      }
+    }
+
     const apiKey = getApiKey(activeProvider);
     const activeProviderConfig = providerConfigs[activeProvider] || {};
     const providerOptions = activeProvider === "bedrock"
@@ -2826,7 +2895,8 @@ export default function QueryPage() {
         region: activeProviderConfig.region || "us-east-1",
       }
       : {};
-    if (!apiKey && activeProvider !== "ollama") {
+
+    if (!apiKey && activeProvider !== "ollama" && !isFreeNovaModelLocal) {
       const message = activeProvider === "bedrock"
         ? "AWS Bedrock access key is missing. Add it in Settings or paste it in the left provider fields."
         : `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
@@ -2834,28 +2904,36 @@ export default function QueryPage() {
       toast.error(message);
       return;
     }
-    if (activeProvider === "bedrock" && !activeProviderConfig.secretAccessKey) {
+    if (activeProvider === "bedrock" && !activeProviderConfig.secretAccessKey && !isFreeNovaModelLocal) {
       const message = "AWS Bedrock secret access key is missing. Add it in Settings or paste it in the left provider fields.";
       setApiWarning(message);
       toast.error(message);
       return;
     }
 
+    const actualApiKey = isFreeNovaModelLocal ? (apiKey || "free-bedrock-token") : apiKey;
+    const actualProviderOptions = isFreeNovaModelLocal ? {
+      secretAccessKey: activeProviderConfig.secretAccessKey || "free-bedrock-secret",
+      region: activeProviderConfig.region || "us-east-1",
+    } : providerOptions;
+
     setIsRunning(true);
     cancelRequestedRef.current = false;
 
-    try {
-      await checkMetric("monthlyQueries", 1);
-      await checkMetric("monthlyTokens", maxTokens);
-    } catch (err: any) {
-      toast.error(err.message || "Query limit reached for your plan", {
-        action: {
-          label: "View Plans",
-          onClick: () => navigate("/app/pricing"),
-        },
-      });
-      setIsRunning(false);
-      return;
+    if (!isFreeNovaModelLocal) {
+      try {
+        await checkMetric("monthlyQueries", 1);
+        await checkMetric("monthlyTokens", maxTokens);
+      } catch (err: any) {
+        toast.error(err.message || "Query limit reached for your plan", {
+          action: {
+            label: "View Plans",
+            onClick: () => navigate("/app/pricing"),
+          },
+        });
+        setIsRunning(false);
+        return;
+      }
     }
     if (cancelRequestedRef.current) return;
 
@@ -2926,8 +3004,8 @@ export default function QueryPage() {
 
     try {
       for await (const step of runLegacyAgent(
-        question, workbookSheets, selectedSheet, activeProvider, activeModel, apiKey, temperature, maxTokens,
-        systemPrompt || undefined, conversationContext, providerOptions, hitlController
+        question, workbookSheets, selectedSheet, activeProvider, activeModel, actualApiKey, temperature, maxTokens,
+        systemPrompt || undefined, conversationContext, actualProviderOptions, hitlController
       )) {
         if (cancelRequestedRef.current) {
           steps.push({
@@ -2984,6 +3062,7 @@ export default function QueryPage() {
       setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
     } finally {
       setIsRunning(false);
+      fetchDailyTokens();
     }
   };
 
@@ -2991,6 +3070,26 @@ export default function QueryPage() {
     const question = (overrideQuestion ?? input).trim();
     if (!question || isRunning) return;
     if (!selectedDatasetId) { toast.error("Select a data source first"); return; }
+
+    const isFreeNovaModelLocal = isFreeNovaModel && isFreeUser;
+
+    // Check daily limits first
+    if (isFreeNovaModelLocal && dailyTokens) {
+      const tokensExhausted = dailyTokens.tokensUsed >= dailyTokens.limit;
+      const queriesExhausted = dailyTokens.queriesUsed >= dailyTokens.queryLimit;
+      if (tokensExhausted || queriesExhausted) {
+        const limitMsg = tokensExhausted
+          ? "daily free Bedrock token limit (200k tokens)"
+          : "daily free Bedrock query limit (25 queries)";
+        toast.error(`Your ${limitMsg} has been exhausted. Please upgrade your plan for higher limits.`, {
+          action: {
+            label: "View Plans",
+            onClick: () => navigate("/app/pricing"),
+          }
+        });
+        return;
+      }
+    }
 
     const apiKey = getApiKey(activeProvider);
     const activeProviderConfig = providerConfigs[activeProvider] || {};
@@ -3001,7 +3100,7 @@ export default function QueryPage() {
       }
       : {};
 
-    if (!apiKey && activeProvider !== "ollama") {
+    if (!apiKey && activeProvider !== "ollama" && !isFreeNovaModelLocal) {
       const message = activeProvider === "bedrock"
         ? "AWS Bedrock access key is missing. Add it in Settings or paste it in the left provider fields."
         : `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
@@ -3009,28 +3108,36 @@ export default function QueryPage() {
       toast.error(message);
       return;
     }
-    if (activeProvider === "bedrock" && !activeProviderConfig.secretAccessKey) {
+    if (activeProvider === "bedrock" && !activeProviderConfig.secretAccessKey && !isFreeNovaModelLocal) {
       const message = "AWS Bedrock secret access key is missing. Add it in Settings or paste it in the left provider fields.";
       setApiWarning(message);
       toast.error(message);
       return;
     }
 
+    const actualApiKey = isFreeNovaModelLocal ? (apiKey || "free-bedrock-token") : apiKey;
+    const actualProviderOptions = isFreeNovaModelLocal ? {
+      secretAccessKey: activeProviderConfig.secretAccessKey || "free-bedrock-secret",
+      region: activeProviderConfig.region || "us-east-1",
+    } : providerOptions;
+
     setIsRunning(true);
     cancelRequestedRef.current = false;
 
-    try {
-      await checkMetric("monthlyQueries", 1);
-      await checkMetric("monthlyTokens", maxTokens);
-    } catch (err: any) {
-      toast.error(err.message || "Query limit reached for your plan", {
-        action: {
-          label: "View Plans",
-          onClick: () => navigate("/app/pricing"),
-        },
-      });
-      setIsRunning(false);
-      return;
+    if (!isFreeNovaModelLocal) {
+      try {
+        await checkMetric("monthlyQueries", 1);
+        await checkMetric("monthlyTokens", maxTokens);
+      } catch (err: any) {
+        toast.error(err.message || "Query limit reached for your plan", {
+          action: {
+            label: "View Plans",
+            onClick: () => navigate("/app/pricing"),
+          },
+        });
+        setIsRunning(false);
+        return;
+      }
     }
     if (cancelRequestedRef.current) return;
 
@@ -3100,12 +3207,12 @@ export default function QueryPage() {
         DB_TYPE_LABELS[selectedConnection.dbType],
         activeProvider,
         activeModel,
-        apiKey,
+        actualApiKey,
         temperature,
         maxTokens,
         systemPrompt || undefined,
         conversationContext,
-        providerOptions,
+        actualProviderOptions,
         {
           loadTableSchema: (tableName) => loadDbTableSchema(selectedConnectionId, tableName),
           executeSql: async ({ sql }) => {
@@ -3149,12 +3256,12 @@ export default function QueryPage() {
         selectedSheet,
         activeProvider,
         activeModel,
-        apiKey,
+        actualApiKey,
         temperature,
         maxTokens,
         systemPrompt || undefined,
         conversationContext,
-        providerOptions,
+        actualProviderOptions,
         hitlController
       );
     }
@@ -3222,6 +3329,7 @@ export default function QueryPage() {
     } finally {
       setIsRunning(false);
       setHitlState(null);
+      fetchDailyTokens();
     }
   };
 
@@ -3539,7 +3647,7 @@ export default function QueryPage() {
                       />
                     </div>
                   </>
-                ) : (
+                ) : activeProvider === "ollama" || activeProvider === "querify" ? null : (
                   <div>
                     <Label className="text-xs text-muted-foreground">API Key</Label>
                     <Input type="password" placeholder="Enter API key" value={apiKeyForProvider} onChange={(e) => setProviderConfig(activeProvider, { apiKey: e.target.value })} className="mt-1.5 bg-card border-border text-xs font-mono" />
@@ -3820,6 +3928,32 @@ export default function QueryPage() {
               </div>
 
               <div className="shrink-0 border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
+                {isFreeUser && dailyTokens && (dailyTokens.tokensUsed >= 150000 || dailyTokens.queriesUsed >= 18) && (
+                  <div className={`mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between ${
+                    dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
+                      ? "border-destructive/30 bg-destructive/10 text-destructive"
+                      : "border-warning/30 bg-warning/10 text-warning"
+                  }`}>
+                    <span>
+                      {dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
+                        ? `🚨 Your daily free Bedrock limit (${dailyTokens.tokensUsed >= dailyTokens.limit ? `${dailyTokens.limit.toLocaleString()} tokens` : `${dailyTokens.queryLimit} queries`}) has been exhausted. Please upgrade your plan to continue chatting.`
+                        : `⚠️ Warning: You have consumed ${dailyTokens.tokensUsed.toLocaleString()} / ${dailyTokens.limit.toLocaleString()} tokens & ${dailyTokens.queriesUsed} / ${dailyTokens.queryLimit} queries (${dailyTokens.percentage}%) of your daily free Bedrock allowance.`
+                      }
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`h-7 text-xs ${
+                        dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
+                          ? "border-destructive/30 hover:bg-destructive/10"
+                          : "border-warning/30 hover:bg-warning/10"
+                      }`}
+                      onClick={() => navigate("/app/pricing")}
+                    >
+                      Upgrade Plan
+                    </Button>
+                  </div>
+                )}
                 {apiWarning && (
                   <div className="mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning sm:flex-row sm:items-center sm:justify-between">
                     <span>{apiWarning}</span>
@@ -4189,7 +4323,7 @@ export default function QueryPage() {
                   />
                 </div>
               </>
-            ) : (
+            ) : activeProvider === "ollama" || activeProvider === "querify" ? null : (
               <div>
                 <Label className="text-xs text-muted-foreground">API Key</Label>
                 <Input

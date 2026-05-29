@@ -415,6 +415,35 @@ describe("runLegacyAgent", () => {
     });
     expect(steps[3].result).toEqual([{ Title: "Ford" }]);
   });
+
+  it("supports executing multi_analysis to run multiple operations in a single command", async () => {
+    vi.mocked(callLLM).mockResolvedValueOnce({
+      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"multi_analysis","params":{"operations":[{"name":"total_rev","operation":"aggregate","params":{"column":"revenue","function":"sum"}},{"name":"prod_count","operation":"count","params":{}}]}}}',
+      inputTokens: 12,
+      outputTokens: 6,
+    });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "Give me total sales and number of rows",
+      workbookSheets,
+      "sales",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].result).toEqual({
+      total_rev: { result: 500 },
+      prod_count: { result: 4 },
+    });
+  });
 });
 
 describe("runDatabaseAgent", () => {

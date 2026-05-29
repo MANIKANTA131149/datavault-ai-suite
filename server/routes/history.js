@@ -55,16 +55,21 @@ router.post("/", async (req, res) => {
 
     const db = await getDb();
     const planContext = await getPlanContext(db, req.userId);
-    const queryCheck = canUseMetric(planContext.plan, "monthlyQueries", planContext.usage.monthlyQueries, 1);
-    if (!queryCheck.allowed) return res.status(403).json(queryCheck.details);
 
-    const tokenCheck = canUseMetric(
-      planContext.plan,
-      "monthlyTokens",
-      planContext.usage.monthlyTokens,
-      Number(totalTokens) || 0
-    );
-    if (!tokenCheck.allowed) return res.status(403).json(tokenCheck.details);
+    const isFreeNovaModel = ["amazon.nova-pro-v1:0"].includes(model) && planContext.plan.tier === "free";
+
+    if (!isFreeNovaModel) {
+      const queryCheck = canUseMetric(planContext.plan, "monthlyQueries", planContext.usage.monthlyQueries, 1);
+      if (!queryCheck.allowed) return res.status(403).json(queryCheck.details);
+
+      const tokenCheck = canUseMetric(
+        planContext.plan,
+        "monthlyTokens",
+        planContext.usage.monthlyTokens,
+        Number(totalTokens) || 0
+      );
+      if (!tokenCheck.allowed) return res.status(403).json(tokenCheck.details);
+    }
 
     const storedSteps = Array.isArray(steps)
       ? steps.slice(0, MAX_HISTORY_STEPS).map((step) => ({
