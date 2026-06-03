@@ -18,7 +18,7 @@ import { List, type RowComponentProps } from "react-window";
 import {
   Send, Check, ChevronDown, ChevronRight, ChevronsUpDown, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
-  LayoutTemplate, Keyboard, RefreshCw, FileJson, FileText, Code2, TrendingUp,
+  LayoutTemplate, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
   Share2, Mic, Globe, Loader2, Layers, AlertTriangle,
 } from "lucide-react";
@@ -157,17 +157,7 @@ const QUERY_TEMPLATES = [
   },
 ];
 
-// ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
-const SHORTCUTS = [
-  { keys: ["Ctrl", "Enter"], label: "Run query" },
-  { keys: ["Ctrl", "K"], label: "Command palette" },
-  { keys: ["Ctrl", "Shift", "C"], label: "Clear conversation" },
-  { keys: ["Ctrl", "Shift", "B"], label: "Bookmark result" },
-  { keys: ["Ctrl", "Shift", "E"], label: "Export center" },
-  { keys: ["Ctrl", "Shift", "T"], label: "Templates library" },
-  { keys: ["Escape"], label: "Close panels" },
-  { keys: ["?"], label: "Keyboard shortcuts" },
-];
+
 
 const FAVORITE_PROMPTS_KEY = "datavault-favorite-prompts";
 type ResultDensity = "comfortable" | "compact";
@@ -180,34 +170,7 @@ function readStoredList(key: string): string[] {
   }
 }
 
-// ─── Smart Suggestion Generator ──────────────────────────────────────────────
-function generateSmartSuggestions(columns: ColumnInfo[]): string[] {
-  const suggestions: string[] = [];
-  const numericCols = columns.filter((c) => c.dtype === "number").map((c) => c.name);
-  const stringCols = columns.filter((c) => c.dtype === "string").map((c) => c.name);
-  const dateCols = columns.filter((c) => c.dtype === "date").map((c) => c.name);
-
-  if (numericCols.length > 0) {
-    suggestions.push(`What is the total ${numericCols[0]}?`);
-    suggestions.push(`What is the average ${numericCols[0]}?`);
-    if (numericCols.length > 1) suggestions.push(`Show the correlation between ${numericCols[0]} and ${numericCols[1]}`);
-    suggestions.push(`Find outliers in ${numericCols[0]}`);
-    suggestions.push(`What are the percentiles (p25, p50, p75, p95) of ${numericCols[0]}?`);
-  }
-  if (stringCols.length > 0) {
-    suggestions.push(`What are the unique ${stringCols[0]} values?`);
-    if (numericCols.length > 0) suggestions.push(`What is the total ${numericCols[0]} by ${stringCols[0]}?`);
-    if (numericCols.length > 0) suggestions.push(`Which ${stringCols[0]} has the highest ${numericCols[0]}?`);
-  }
-  if (dateCols.length > 0 && numericCols.length > 0) {
-    suggestions.push(`Show ${numericCols[0]} trend by month`);
-    suggestions.push(`What is the ${numericCols[0]} by quarter?`);
-  }
-  suggestions.push("What is this dataset about?");
-  suggestions.push("Show me a summary of all columns");
-
-  return suggestions.slice(0, 8);
-}
+// Smart suggestion helper removed
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 type ChartType = "bar" | "pie" | "line" | "area";
@@ -823,13 +786,13 @@ function NarrativeResult({
   const cleanBody = useMemo(() => cleanPromptText(result.narrative, options), [result.narrative, options]);
 
   return (
-    <div className="ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
+    <div className="ml-3 sm:ml-10 mt-1 mb-3 rounded-md border border-purple-500/20 bg-purple-500/5 p-4 space-y-3">
       <div className="flex items-center gap-2 mb-1">
         <Sparkles size={13} className="text-purple-400" />
         <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
       </div>
       {result.highlights && result.highlights.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-2 mb-3">
           {result.highlights.map((h, i) => (
             <div key={i} className="bg-card rounded-md p-2.5 border border-border">
               <p className="text-xs text-muted-foreground">{h.label}</p>
@@ -952,7 +915,7 @@ const StepsTimeline = memo(function StepsTimeline({
   const [open, setOpen] = useState(live);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="ml-10 rounded-md border border-border bg-background-secondary/45">
+    <Collapsible open={open} onOpenChange={setOpen} className="ml-3 sm:ml-10 rounded-md border border-border bg-background-secondary/45">
       <CollapsibleTrigger asChild>
         <button
           type="button"
@@ -1626,9 +1589,14 @@ const ResultPanel = memo(function ResultPanel({
 interface InlineFinalResultProps {
   result: any;
   onSubmitQuickReply?: (text: string) => void;
+  onOpenDetails?: () => void;
 }
 
-const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuickReply }: InlineFinalResultProps) {
+const InlineFinalResult = memo(function InlineFinalResult({
+  result,
+  onSubmitQuickReply,
+  onOpenDetails,
+}: InlineFinalResultProps) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
@@ -1645,6 +1613,18 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
     [inlineChartRows, labelKey, valueKey]
   );
   const inlineChartLimited = chartRows.length > inlineChartRows.length;
+
+  const inlineLongestLabel = useMemo(
+    () => inlineChartRows.reduce((max, row) => Math.max(max, String(row?.[labelKey] ?? "").length), 0),
+    [inlineChartRows, labelKey]
+  );
+  const inlineRotateX = inlineChartRows.length > 6 || inlineLongestLabel > 10;
+  const inlineXInterval = useMemo(() => {
+    if (chartType === "pie") return 0;
+    if (inlineChartRows.length > 15) return Math.ceil(inlineChartRows.length / 5) - 1;
+    if (inlineChartRows.length > 8) return 1;
+    return 0;
+  }, [chartType, inlineChartRows.length]);
 
   const options = useMemo(() => {
     if (typeof result !== "string") return [];
@@ -1665,8 +1645,11 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
     return <NarrativeResult result={result} onSubmitQuickReply={onSubmitQuickReply} />;
   }
 
+  const hasDetails = isArray && rows.length > 0;
+  const showDetailsButton = onOpenDetails && (isChartable || hasDetails);
+
   return (
-    <div className="ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-3 space-y-3">
+    <div className="ml-3 sm:ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-3 space-y-3">
       <p className="text-xs text-muted-foreground font-medium">Result</p>
 
       {isSingleValue && (
@@ -1696,8 +1679,24 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
                 </PieChart>
               ) : chartType === "line" ? (
                 <LineChart data={inlineChartRows}>
-                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <XAxis
+                    dataKey={labelKey}
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
+                    tickFormatter={(value) => truncateChartLabel(value, inlineRotateX ? 8 : 12)}
+                    interval={inlineXInterval}
+                    angle={inlineRotateX ? -30 : 0}
+                    textAnchor={inlineRotateX ? "end" : "middle"}
+                    height={inlineRotateX ? 40 : 24}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
+                    tickFormatter={(value) => formatChartValue(value)}
+                    tickLine={false}
+                    axisLine={false}
+                    width={40}
+                  />
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Line type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                 </LineChart>
@@ -1709,15 +1708,47 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
                       <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <XAxis
+                    dataKey={labelKey}
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
+                    tickFormatter={(value) => truncateChartLabel(value, inlineRotateX ? 8 : 12)}
+                    interval={inlineXInterval}
+                    angle={inlineRotateX ? -30 : 0}
+                    textAnchor={inlineRotateX ? "end" : "middle"}
+                    height={inlineRotateX ? 40 : 24}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
+                    tickFormatter={(value) => formatChartValue(value)}
+                    tickLine={false}
+                    axisLine={false}
+                    width={40}
+                  />
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Area type="monotone" dataKey={valueKey} stroke="hsl(var(--primary))" fill={`url(#${areaGradientId})`} strokeWidth={2} dot={false} />
                 </AreaChart>
               ) : (
                 <BarChart data={inlineChartRows}>
-                  <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} />
+                  <XAxis
+                    dataKey={labelKey}
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
+                    tickFormatter={(value) => truncateChartLabel(value, inlineRotateX ? 8 : 12)}
+                    interval={inlineXInterval}
+                    angle={inlineRotateX ? -30 : 0}
+                    textAnchor={inlineRotateX ? "end" : "middle"}
+                    height={inlineRotateX ? 40 : 24}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
+                    tickFormatter={(value) => formatChartValue(value)}
+                    tickLine={false}
+                    axisLine={false}
+                    width={40}
+                  />
                   <RechartsTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                   <Bar dataKey={valueKey} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -1750,7 +1781,7 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
               <tbody>
                 {(rows.length > 200 ? [] : rows).map((row: any, i: number) => (
                   <tr key={i} className="border-t border-border/50">
-                    {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground max-w-[140px] truncate">{String(v ?? "")}</td>)}
+                    {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">{String(v ?? "")}</td>)}
                   </tr>
                 ))}
               </tbody>
@@ -1786,6 +1817,21 @@ const InlineFinalResult = memo(function InlineFinalResult({ result, onSubmitQuic
         <pre className="max-h-52 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-border bg-background-secondary p-2 text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
           {JSON.stringify(result, null, 2)}
         </pre>
+      )}
+
+      {showDetailsButton && (
+        <div className="flex justify-end pt-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onOpenDetails}
+            className="h-7 text-[11px] border-border flex items-center gap-1 hover:text-primary transition-all duration-200"
+          >
+            <PanelRightOpen size={12} />
+            <span>Result details & controls</span>
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -2401,6 +2447,79 @@ export default function QueryPage() {
     percentage: number;
   } | null>(null);
 
+  const dynamicGreeting = useMemo(() => {
+    const name = user?.name ? user.name.split(" ")[0] : "there";
+    const hrs = new Date().getHours();
+    
+    let templates: string[] = [];
+    if (hrs >= 5 && hrs < 12) {
+      templates = [
+        "Hello {name}, Good Morning. What shall we explore today?",
+        "Good morning, {name}. Ready to dive into your database?",
+        "Morning, {name}! Let's uncover some fresh insights today.",
+        "Hello {name}, Good Morning. How can I assist with your workspace data?",
+        "Good morning, {name}. Let's make sense of your spreadsheets.",
+        "Hello {name}! Hope your morning is going great. What are we querying today?",
+        "Good morning, {name}. Ready to build some stunning charts?",
+        "Morning, {name}! Let's turn raw rows into clear decisions.",
+        "Hello {name}, Good Morning. What's on your agenda today?",
+        "Good morning, {name}. Let's run some queries.",
+        "Morning, {name}! Ready to look at your data trends?",
+        "Hello {name}, Good Morning. Let's discover some patterns.",
+        "Good morning, {name}. Let's kickstart your data analysis.",
+        "Hello {name}! Let's make today productive. What data are we inspecting?",
+        "Good morning, {name}. Ready to query your databases?",
+        "Morning, {name}! What insights are we hunting for today?",
+        "Hello {name}, Good Morning. Let's look at your key metrics.",
+        "Good morning, {name}. How can I make your data work for you today?"
+      ];
+    } else if (hrs >= 12 && hrs < 17) {
+      templates = [
+        "Hello {name}, Good Afternoon. What are you working on?",
+        "Good afternoon, {name}. Ready to run some queries?",
+        "Hello {name}, Good Afternoon. Let's dive back into your data.",
+        "Good afternoon, {name}. Need help visualizing some metrics?",
+        "Hello {name}! Hope your day is going well. What shall we query next?",
+        "Good afternoon, {name}. Let's make sense of those tables.",
+        "Afternoon, {name}! Ready for some quick analysis?",
+        "Hello {name}, Good Afternoon. What insights can I pull for you today?",
+        "Good afternoon, {name}. Let's analyze your dataset.",
+        "Hello {name}! Ready to write some SQL or analyze sheets?",
+        "Good afternoon, {name}. Let's uncover some trends together.",
+        "Afternoon, {name}! What data puzzle are we solving next?",
+        "Hello {name}, Good Afternoon. How can I help you in the workspace?",
+        "Good afternoon, {name}. Ready to build a new dashboard view?",
+        "Hello {name}! Let's keep the momentum going. What are we querying?",
+        "Good afternoon, {name}. Ready to check your latest table schemas?"
+      ];
+    } else {
+      templates = [
+        "Hello {name}, Good Evening. What would you like to explore tonight?",
+        "Good evening, {name}. Let's wrap up today's analysis.",
+        "Hello {name}, Good Evening. Ready for some late-day insights?",
+        "Good evening, {name}. How has your data journey been today?",
+        "Hello {name}, Good Evening. What shall we query before we sign off?",
+        "Evening, {name}! Let's find some final trends for the day.",
+        "Hello {name}, Good Evening. Ready to inspect some database rows?",
+        "Good evening, {name}. Let's build a chart to finish the day.",
+        "Hello {name}, Good Evening. What can I help you analyze tonight?",
+        "Good evening, {name}. Ready to query your workbook sheets?",
+        "Hello {name}, Good Evening. Need a quick visualization or report?",
+        "Evening, {name}! What database tables are we looking at tonight?",
+        "Hello {name}, Good Evening. Let's make your evening productive.",
+        "Good evening, {name}. Ready to extract some valuable metrics?",
+        "Hello {name}, Good Evening. How can I assist you with your queries tonight?",
+        "Good evening, {name}. Let's double check those trends.",
+        "Hello {name}, Good Evening. What's the plan for tonight's data session?",
+        "Good evening, {name}. Let's run one last query before the night ends."
+      ];
+    }
+
+    const randomIndex = Math.floor(Math.random() * templates.length);
+    const chosenTemplate = templates[randomIndex] || "Hello {name}, Good Evening";
+    return chosenTemplate.replace(/{name}/g, name);
+  }, [user?.name]);
+
   const fetchDailyTokens = useCallback(async () => {
     if (!isFreeUser) return;
     try {
@@ -2619,7 +2738,6 @@ export default function QueryPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSaveInsight, setShowSaveInsight] = useState(false);
   const [showShareCard, setShowShareCard] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -2820,35 +2938,11 @@ export default function QueryPage() {
     setDbSchema(null);
   };
 
-  // Smart suggestions based on dataset columns
-  const smartSuggestions = useMemo(() => {
-    if (isDbConnection && selectedConnection) {
-      if (selectedDbTableData?.columns.length) {
-        return generateSmartSuggestions(selectedDbTableData.columns).slice(0, 5);
-      }
-      return [
-        "Show all tables in this database",
-        "What is the total row count?",
-        "Describe the schema",
-        "Show the first 10 rows",
-        "What columns are available?",
-      ];
-    }
-    const sheet = selectedDataset?.data?.sheets[selectedSheet];
-    if (sheet) return generateSmartSuggestions(sheet.columns);
-    return [
-      "What is the total revenue?",
-      "Show top 10 by sales",
-      "What are the unique categories?",
-      "Find rows where value > 1000",
-      "What is the average order value?",
-    ];
-  }, [selectedDataset, selectedSheet, isDbConnection, selectedConnection, selectedDbTableData]);
+
 
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "?") { setShowShortcuts(true); }
       if (e.ctrlKey && e.shiftKey && e.key === "C") { e.preventDefault(); handleClearContext(); }
       if (e.ctrlKey && e.shiftKey && e.key === "B") { e.preventDefault(); if (finalResult !== null) setShowSaveInsight(true); }
       if (e.ctrlKey && e.shiftKey && e.key === "T") { e.preventDefault(); setShowTemplates(true); }
@@ -3364,20 +3458,14 @@ export default function QueryPage() {
     if (!input.trim()) return "";
     const lowercaseInput = input.toLowerCase();
 
-    // Try smart suggestions first
-    const match = smartSuggestions.find(s => s.toLowerCase().startsWith(lowercaseInput));
-    if (match) {
-      return match.slice(input.length);
-    }
-
-    // Fallback to column names
-    const colMatch = activeColumns.find(c => c.toLowerCase().startsWith(lowercaseInput));
+    // Suggest matching column names
+    const colMatch = activeColumns.find((c) => c.toLowerCase().startsWith(lowercaseInput));
     if (colMatch) {
       return colMatch.slice(input.length);
     }
 
     return "";
-  }, [input, smartSuggestions, activeColumns]);
+  }, [input, activeColumns]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Tab" && activeSuggestion) {
@@ -3434,26 +3522,40 @@ export default function QueryPage() {
         </div>
 
         {/* HSL Tabs Switcher */}
-        <div className="flex items-center rounded-lg border border-border bg-card p-1">
+        <div className="relative flex items-center rounded-lg border border-border bg-card p-0.5 sm:p-1">
           <button
             type="button"
             onClick={() => setActiveTab("workspace")}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all ${activeTab === "workspace"
-              ? "bg-primary text-primary-foreground shadow"
-              : "text-muted-foreground hover:text-foreground"
-              }`}
+            className={cn(
+              "relative px-2 sm:px-3 py-0.5 sm:py-1 rounded text-[11px] sm:text-xs font-medium transition-colors duration-200 z-10",
+              activeTab === "workspace" ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
           >
-            Chatbot Workspace
+            {activeTab === "workspace" && (
+              <motion.div
+                layoutId="activeTabPill"
+                className="absolute inset-0 bg-primary rounded shadow -z-10"
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              />
+            )}
+            <span className="hidden sm:inline">Chatbot </span>Workspace
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("deployments")}
-            className={`px-3 py-1 rounded text-xs font-medium transition-all ${activeTab === "deployments"
-              ? "bg-primary text-primary-foreground shadow"
-              : "text-muted-foreground hover:text-foreground"
-              }`}
+            className={cn(
+              "relative px-2 sm:px-3 py-0.5 sm:py-1 rounded text-[11px] sm:text-xs font-medium transition-colors duration-200 z-10",
+              activeTab === "deployments" ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
           >
-            Deployed Chatbots
+            {activeTab === "deployments" && (
+              <motion.div
+                layoutId="activeTabPill"
+                className="absolute inset-0 bg-primary rounded shadow -z-10"
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              />
+            )}
+            <span className="hidden sm:inline">Deployed </span>Chatbots
           </button>
         </div>
 
@@ -3469,10 +3571,11 @@ export default function QueryPage() {
                 setShowDeployDialog(true);
               }}
               disabled={!selectedDatasetId}
-              className="bg-primary/90 text-primary-foreground hover:bg-primary font-semibold text-xs h-8 px-3 gap-1.5 shadow-[0_4px_12px_-4px_hsl(var(--primary)/0.5)] border border-primary/20"
+              className="bg-primary/90 text-primary-foreground hover:bg-primary font-semibold text-[11px] sm:text-xs h-8 px-2 sm:px-3 gap-1 sm:gap-1.5 shadow-[0_4px_12px_-4px_hsl(var(--primary)/0.5)] border border-primary/20"
             >
-              <Share2 size={13} />
-              Deploy Chatbot
+              <Share2 size={13} className="shrink-0" />
+              <span className="hidden sm:inline">Deploy Chatbot</span>
+              <span className="sm:hidden">Deploy</span>
             </Button>
           )}
         </div>
@@ -3488,8 +3591,16 @@ export default function QueryPage() {
           )}
         </AnimatePresence>
 
-        {activeTab === "workspace" ? (
-          <>
+        <AnimatePresence mode="wait">
+          {activeTab === "workspace" ? (
+            <motion.div
+              key="workspace"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="flex-1 flex min-h-0 min-w-0 overflow-hidden relative xl:flex-row flex-col w-full h-full"
+            >
             {/* Left: Context Panel */}
             <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-auto border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
               <div className="p-4 space-y-4">
@@ -3713,12 +3824,9 @@ export default function QueryPage() {
                 </Collapsible>
 
                 {/* Quick tools */}
-                <div className="flex gap-1.5">
-                  <button onClick={() => setShowTemplates(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
+                <div>
+                  <button onClick={() => setShowTemplates(true)} className="w-full flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
                     <LayoutTemplate size={11} /> Templates
-                  </button>
-                  <button onClick={() => setShowShortcuts(true)} className="flex-1 flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
-                    <Keyboard size={11} /> Shortcuts
                   </button>
                 </div>
               </div>
@@ -3726,88 +3834,54 @@ export default function QueryPage() {
 
             {/* Center: Chat */}
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
-              <div className="shrink-0 space-y-2 border-b border-border/70 bg-background-secondary/90 p-3 backdrop-blur-sm lg:hidden">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
-                    <SelectTrigger className="bg-card border-border text-xs"><SelectValue placeholder="Data source" /></SelectTrigger>
-                    <SelectContent className="bg-popover border-border max-h-72">
-                      {datasets.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Files</div>}
-                      {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
-                      {connectedDbs.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Databases</div>}
-                      {connectedDbs.map((c) => (
-                        <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
-                          <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
-                    <SelectTrigger className="bg-card border-border text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border-border">
-                      {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-                        <SelectItem key={p} value={p}>
-                          <span className="flex items-center gap-2"><ProviderLogo provider={p} size="sm" />{PROVIDER_LABELS[p]}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {selectedDataset && selectedDataset.sheetNames.length > 1 && (
-                  <div className="flex gap-1 overflow-x-auto">
-                    {selectedDataset.sheetNames.map((s) => (
-                      <button key={s} onClick={() => setSelectedSheet(s)} className={`shrink-0 rounded px-2 py-1 text-xs ${s === selectedSheet ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground"}`}>{s}</button>
-                    ))}
+              <div className="shrink-0 border-b border-border/70 bg-background-secondary/90 p-2.5 backdrop-blur-sm lg:hidden">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-primary/10 text-primary shrink-0">
+                      {isDbConnection ? <Database size={14} /> : <Table2 size={14} />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-foreground truncate">{sourceName}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {PROVIDER_LABELS[activeProvider]} · {getModelDisplayName(activeModel)}
+                      </p>
+                    </div>
                   </div>
-                )}
-                {selectedConnection && dbSchema && dbSchema.tables.length > 0 && (
-                  <div className="w-full">
-                    <DatabaseTablePicker
-                      tables={dbSchema.tables}
-                      value={selectedDbTableData?.name || selectedTable}
-                      onChange={setSelectedTable}
-                      placeholder="Choose a table"
-                      triggerClassName="py-1.5"
-                    />
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  {(selectedDataset || selectedConnection) && (
-                    <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowPreview(true)}>
-                      <Eye size={12} className="mr-1" /> Preview
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {(selectedDataset || selectedConnection) && (
+                      <Button variant="outline" size="sm" className="h-8 w-8 p-0 border-border" onClick={() => setShowPreview(true)} title="Preview Data">
+                        <Eye size={14} />
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" className="h-8 w-8 p-0 border-border" onClick={() => setShowMobileSettings(true)} title="Configure Settings">
+                      <Settings2 size={14} />
                     </Button>
-                  )}
-                  <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowMobileSettings(true)}>
-                    <Settings2 size={12} className="mr-1" /> Provider
-                  </Button>
-                  <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowTemplates(true)}>
-                    <LayoutTemplate size={12} className="mr-1" /> Templates
-                  </Button>
-                  <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowShortcuts(true)}>
-                    <Keyboard size={12} className="mr-1" /> Shortcuts
-                  </Button>
+                    <Button variant="outline" size="sm" className="h-8 w-8 p-0 border-border" onClick={() => setShowTemplates(true)} title="Templates">
+                      <LayoutTemplate size={14} />
+                    </Button>
+                  </div>
                 </div>
               </div>
               <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-4 scrollbar-thin sm:p-4">
                 {messages.length === 0 && !isRunning && (
-                  <div className="flex h-full flex-col items-center justify-center gap-4 rounded-[28px] border border-dashed border-border/70 bg-card/45 px-6 py-10 text-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-                      <Sparkles size={24} className="text-primary" />
+                  <div className="flex h-full flex-col items-center justify-center gap-6 px-6 py-12 text-center max-w-xl mx-auto">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm animate-pulse">
+                      <Sparkles size={28} />
                     </div>
-                    <p className="text-sm font-medium text-foreground">Ask anything about your data</p>
-                    <p className="max-w-xl text-sm text-muted-foreground">
-                      Use smart suggestions, prompt templates, or your own question. The workspace stays optimized for both
-                      handheld and desktop query sessions.
-                    </p>
-                    <div className="flex max-w-lg flex-wrap justify-center gap-2">
-                      {smartSuggestions.map((p) => (
-                        <button key={p} onClick={() => { setInput(p); textareaRef.current?.focus(); }}
-                          className="rounded-full border border-border/70 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground">
-                          {p}
-                        </button>
-                      ))}
+                    <div className="space-y-2">
+                      <h1 className="text-2xl sm:text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-primary/80 bg-clip-text text-transparent">
+                        {dynamicGreeting}
+                      </h1>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        How can I help you analyze, visualize, or query your data today? Feel free to ask any question to get started.
+                      </p>
                     </div>
-                    <button onClick={() => setShowTemplates(true)} className="flex items-center gap-1.5 text-xs text-primary hover:underline mt-1">
-                      <LayoutTemplate size={12} /> Browse template library
+                    <button
+                      onClick={() => setShowTemplates(true)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                    >
+                      <LayoutTemplate size={13} />
+                      <span>Browse template library</span>
                     </button>
                   </div>
                 )}
@@ -3836,7 +3910,7 @@ export default function QueryPage() {
                             </div>
                           )}
                           {msg.steps && msg.steps.length > 0 && (
-                            <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground sm:pl-10">
+                            <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground pl-3 sm:pl-10">
                               <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
                               <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
                               {finalStep && (
@@ -3867,6 +3941,7 @@ export default function QueryPage() {
                               onSubmitQuickReply={(text) => {
                                 handleSend(text);
                               }}
+                              onOpenDetails={() => setShowResult(true)}
                             />
                           )}
                         </div>
@@ -3886,27 +3961,30 @@ export default function QueryPage() {
                         onSubmitQuickReply={(text) => {
                           handleSend(text);
                         }}
+                        onOpenDetails={() => setShowResult(true)}
                       />
                     )}
 
                     <AnimatePresence mode="wait">
                       {hitlState ? (
-                        <HitlPanel
-                          key="hitl-active"
-                          state={hitlState}
-                          onSubmit={(val) => {
-                            if (hitlResolverRef.current) {
-                              hitlResolverRef.current(val);
-                              hitlResolverRef.current = null;
-                              setHitlState(null);
-                            }
-                          }}
-                          onStop={handleStopQuery}
-                        />
+                        <div className="pl-3 sm:pl-10">
+                          <HitlPanel
+                            key="hitl-active"
+                            state={hitlState}
+                            onSubmit={(val) => {
+                              if (hitlResolverRef.current) {
+                                hitlResolverRef.current(val);
+                                hitlResolverRef.current = null;
+                                setHitlState(null);
+                              }
+                            }}
+                            onStop={handleStopQuery}
+                          />
+                        </div>
                       ) : null}
                     </AnimatePresence>
                     {!hitlState && (
-                      <div className="flex flex-wrap items-center gap-2 sm:pl-10">
+                      <div className="flex flex-wrap items-center gap-2 pl-3 sm:pl-10">
                         {/* Premium 3-dot thinking indicator */}
                         <div className="flex items-center gap-1.5">
                           <span className="thinking-dot" />
@@ -3968,7 +4046,7 @@ export default function QueryPage() {
                     </Button>
                   </div>
                 )}
-                <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-[28px] border border-border/70 bg-card/80 p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
+                <div className="mx-auto flex max-w-3xl items-end gap-1.5 sm:gap-2 rounded-[20px] sm:rounded-[28px] border border-border/70 bg-card/80 p-1.5 sm:p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
                   <div className="relative min-w-0 flex-1">
                     {/* Ghost text backdrop overlay */}
                     {activeSuggestion && !isRunning && !isListening && (
@@ -4024,7 +4102,7 @@ export default function QueryPage() {
                       onKeyDown={handleKeyDown}
                       placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
                       disabled={isRunning}
-                      className={`bg-background-secondary border-border resize-none min-h-[44px] disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
+                      className={`bg-background-secondary border-border resize-none min-h-[36px] sm:min-h-[44px] py-2 sm:py-2.5 disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
                       rows={queryExpanded ? 5 : 1}
                     />
                     {input && !isListening && (
@@ -4039,13 +4117,13 @@ export default function QueryPage() {
                       </button>
                     )}
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 gap-1.5 sm:gap-2">
                     <Button
                       variant="outline"
                       onClick={handleSpeech}
                       size="icon"
                       title={isListening ? "Stop listening" : "Voice search"}
-                      className={`h-[44px] w-[44px] shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
+                      className={`h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
                     >
                       <Mic size={16} className={isListening ? "animate-pulse" : ""} />
                     </Button>
@@ -4054,17 +4132,20 @@ export default function QueryPage() {
                       onClick={() => setQueryExpanded((prev) => !prev)}
                       size="icon"
                       title={queryExpanded ? "Collapse query box" : "Expand query box"}
-                      className="h-[44px] w-[44px] shrink-0 border-border"
+                      className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border"
                     >
                       {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </Button>
-                    <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="h-[44px] w-[44px] shrink-0">
+                    <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="h-9 w-9 sm:h-11 sm:w-11 shrink-0">
                       {isRunning ? <X size={16} /> : <Send size={16} />}
                     </Button>
                   </div>
                 </div>
-                {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-1">~{Math.ceil(input.length / 4)} tokens · Ctrl+Enter to send</p>}
-                {input.length > 0 && <p className="text-xs text-muted-foreground text-center mt-0.5">{input.length.toLocaleString()} characters</p>}
+                {input.length > 0 && (
+                  <p className="text-[10px] sm:text-xs text-muted-foreground text-center mt-1">
+                    ~{Math.ceil(input.length / 4)} tokens · {input.length.toLocaleString()} chars · Ctrl+Enter to send
+                  </p>
+                )}
               </div>
             </div>
 
@@ -4082,15 +4163,45 @@ export default function QueryPage() {
               </div>
             )}
 
+            {/* Result Panel Sheet for mobile/tablet screens < xl */}
+            <Sheet open={finalResult !== null && showResult} onOpenChange={setShowResult}>
+              <SheetContent side="right" className="w-[100vw] sm:w-[500px] p-0 border-l border-border bg-background-secondary xl:hidden flex flex-col h-full z-[70]">
+                <SheetHeader className="sr-only">
+                  <SheetTitle>Result Details</SheetTitle>
+                  <SheetDescription>View charts, tables, and export options.</SheetDescription>
+                </SheetHeader>
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <ResultPanel
+                    result={finalResult}
+                    query={lastQuery}
+                    onClose={() => setShowResult(false)}
+                    onBookmark={() => setShowSaveInsight(true)}
+                    datasetName={sourceName}
+                    onShare={() => setShowShareCard(true)}
+                  />
+                </div>
+              </SheetContent>
+            </Sheet>
+
             {finalResult !== null && !showResult && (
-              <button onClick={() => setShowResult(true)} className="fixed right-4 bottom-20 bg-primary text-primary-foreground p-2 rounded-full shadow-lg hover:bg-primary/90 hidden xl:block">
+              <button
+                onClick={() => setShowResult(true)}
+                className="fixed right-4 bottom-24 md:bottom-6 z-50 bg-primary text-primary-foreground p-2.5 rounded-full shadow-lg hover:bg-primary/90 transition-all active:scale-95"
+                title="Show result panel"
+              >
                 <PanelRightOpen size={16} />
               </button>
             )}
-          </>
-        ) : (
-          /* Deployed Chatbots Dashboard */
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 max-w-6xl w-full mx-auto relative z-10 scrollbar-thin">
+            </motion.div>
+          ) : (
+            <motion.div
+              key="deployments"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-6 max-w-6xl w-full mx-auto relative z-10 scrollbar-thin h-full"
+            >
             <div className="flex flex-col gap-2">
               <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
                 <Globe size={18} className="text-primary animate-pulse" /> Deployed Chatbots
@@ -4205,8 +4316,9 @@ export default function QueryPage() {
                 })}
               </div>
             )}
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <Sheet open={showMobileSettings} onOpenChange={setShowMobileSettings}>
@@ -4431,26 +4543,6 @@ export default function QueryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Keyboard Shortcuts Dialog */}
-      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
-        <DialogContent className="bg-background-secondary border-border max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Keyboard size={16} className="text-primary" /> Keyboard Shortcuts</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 mt-2">
-            {SHORTCUTS.map((s) => (
-              <div key={s.label} className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">{s.label}</span>
-                <div className="flex gap-1">
-                  {s.keys.map((k) => (
-                    <kbd key={k} className="text-xs bg-card border border-border rounded px-1.5 py-0.5 text-foreground font-mono">{k}</kbd>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Save Insight Dialog */}
       <SaveInsightDialog

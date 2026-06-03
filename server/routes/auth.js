@@ -79,7 +79,7 @@ router.post("/signin", async (req, res) => {
     const db = await getDb();
     const user = await db.collection("users").findOne({ email });
     if (!user)
-      return res.status(401).json({ error: "Invalid email or password" });
+      return res.status(404).json({ error: "Account does not exist" });
 
     // Check if user is suspended
     if (user.status === "suspended")
@@ -87,7 +87,7 @@ router.post("/signin", async (req, res) => {
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid)
-      return res.status(401).json({ error: "Invalid email or password" });
+      return res.status(401).json({ error: "Invalid credentials" });
 
     const hydratedUser = await ensureUserPlan(db, user._id.toString());
     const planContext = await getPlanContext(db, user._id.toString());

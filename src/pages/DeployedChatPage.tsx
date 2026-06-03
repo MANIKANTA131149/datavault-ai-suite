@@ -13,7 +13,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { List, type RowComponentProps } from "react-window";
 import {
-  Send, ChevronDown, ChevronRight, Zap, Clock, BookmarkPlus, Bookmark, Sparkles,
+  Send, Loader2, ChevronDown, ChevronRight, Zap, Clock, BookmarkPlus, Bookmark, Sparkles,
   Search, Eye, X, Database, Table2, LayoutTemplate, Keyboard, RefreshCw, FileJson,
   FileText, Code2, TrendingUp, Trash2, BarChart3, FileDown, Layout, Maximize2,
   Minimize2, Star, Rows3, Palette, Share2, Mic, CheckCircle2, AlertTriangle, HelpCircle,
@@ -741,10 +741,17 @@ export default function DeployedChatPage() {
   const cancelRequestedRef = useRef(false);
 
   // Layout parameters
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [selectedSchemaTable, setSelectedSchemaTable] = useState<string>("");
   const [tableSearchQuery, setTableSearchQuery] = useState("");
+
+  useEffect(() => {
+    const handleResize = () => setSidebarOpen(window.innerWidth >= 768);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   // Human-in-the-loop state references
   const [hitlState, setHitlState] = useState<any>(null);
@@ -771,6 +778,7 @@ export default function DeployedChatPage() {
   // Multi-turn conversation memory
   const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
   const [workbookSheets, setWorkbookSheets] = useState<any>(null);
+  const [sheetsLoading, setSheetsLoading] = useState(false);
 
   const BASE_URL = getApiBaseUrl();
 
@@ -810,6 +818,7 @@ export default function DeployedChatPage() {
 
         // Hydrate dataset sheet data asynchronously if it's a dataset
         if (data.snapshot?.sourceType === "dataset" && data.snapshot?.selectedDatasetId) {
+          setSheetsLoading(true);
           fetch(`${BASE_URL}/deployments/public/${deployId}/dataset-data/${data.snapshot.selectedDatasetId}`)
             .then((r) => r.json())
             .then((sheets) => {
@@ -819,7 +828,8 @@ export default function DeployedChatPage() {
                 if (sheetNames.length > 0) setSelectedSchemaTable(sheetNames[0]);
               }
             })
-            .catch((e) => console.error("Lazy dataset fetch error:", e));
+            .catch((e) => console.error("Lazy dataset fetch error:", e))
+            .finally(() => setSheetsLoading(false));
         }
       })
       .catch((err) => setError(err.message || "Failed to load deployed chatbot"))
@@ -1101,16 +1111,23 @@ export default function DeployedChatPage() {
   ) || [];
 
   return (
-    <div className="relative flex h-screen w-full overflow-hidden bg-background text-foreground font-sans antialiased transition-colors duration-200">
-      
+    <div className="relative h-screen flex flex-col md:flex-row w-full overflow-hidden overflow-x-hidden bg-background text-foreground font-sans antialiased transition-colors duration-200">
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-10 bg-black/20 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Premium Minimalist Left Panel */}
       <AnimatePresence initial={false}>
         {sidebarOpen && (
           <motion.aside
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 310, opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
-            className="relative z-20 flex h-full flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 backdrop-blur-xl shrink-0 overflow-hidden"
+            initial={{ x: -320, width: 0, opacity: 0 }}
+            animate={{ x: 0, width: 310, opacity: 1 }}
+            exit={{ x: -320, width: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 260, damping: 28 }}
+            className="relative z-20 flex h-full flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/95 backdrop-blur-xl shrink-0 overflow-hidden w-full max-w-sm md:w-[310px] md:max-w-none md:relative md:block fixed inset-y-0 left-0"
           >
             {/* Sidebar Branding */}
             <div className="flex items-center gap-2.5 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 shrink-0 bg-zinc-50 dark:bg-zinc-900">
@@ -1147,7 +1164,20 @@ export default function DeployedChatPage() {
               </div>
 
               {/* Table / Sheet Inspector Select Dropdown */}
-              {tablesOrSheetsList.length > 0 && (
+              {sheetsLoading ? (
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                    <Table2 size={11} /> Loading sheets...
+                  </Label>
+                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-4 shadow-sm flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    <div>
+                      <p className="font-semibold text-[11px] text-foreground">Fetching workbook sheets</p>
+                      <p className="text-[10px] text-zinc-500 dark:text-zinc-400">Please wait while the deployed workbook data is prepared.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : tablesOrSheetsList.length > 0 && (
                 <div className="space-y-2">
                   <Label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center gap-1">
                     <Table2 size={11} /> {isDB ? "Explore Tables" : "Explore Sheets"}
@@ -1201,37 +1231,6 @@ export default function DeployedChatPage() {
                 </div>
               )}
 
-              {/* AI Prompts Accordion Library */}
-              <div className="space-y-2">
-                <Label className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-                  <LayoutTemplate size={11} /> AI Queries Library
-                </Label>
-                <div className="space-y-1.5">
-                  {QUERY_TEMPLATES.map((cat, idx) => (
-                    <Collapsible key={idx} className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card overflow-hidden">
-                      <CollapsibleTrigger asChild>
-                        <button type="button" className="flex items-center justify-between w-full px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/50 dark:hover:bg-zinc-800/10">
-                          <span>{cat.category}</span>
-                          <ChevronRight size={12} className="text-zinc-400 transform transition-transform duration-200 [.open>&]:rotate-90" />
-                        </button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="px-3 pb-2 pt-1 border-t border-zinc-100 dark:border-zinc-800 space-y-1 bg-zinc-50/20">
-                        {cat.templates.map((tpl, tIdx) => (
-                          <button
-                            key={tIdx}
-                            onClick={() => executeDirectTemplate(tpl)}
-                            type="button"
-                            className="w-full text-left text-[11px] py-1 text-zinc-500 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-zinc-50 hover:underline truncate"
-                            title={tpl}
-                          >
-                            • {tpl}
-                          </button>
-                        ))}
-                      </CollapsibleContent>
-                    </Collapsible>
-                  ))}
-                </div>
-              </div>
             </div>
 
             {/* Sidebar Security Footer */}
@@ -1245,7 +1244,7 @@ export default function DeployedChatPage() {
       </AnimatePresence>
 
       {/* Main Conversation & Dashboard Panel */}
-      <main className="relative flex-1 flex flex-col h-full overflow-hidden bg-background">
+      <main className="relative flex-1 flex flex-col h-full overflow-hidden bg-background transition-all duration-300 ease-out">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--foreground)/0.035),_transparent_38%)] pointer-events-none" />
 
         {/* Global Minimalist Chat Header */}
@@ -1253,7 +1252,7 @@ export default function DeployedChatPage() {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
+                onClick={() => setSidebarOpen((prev) => !prev)}
                 type="button"
                 className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800 shrink-0 border border-zinc-200 dark:border-zinc-800 bg-card transition-all"
                 title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
@@ -1294,7 +1293,7 @@ export default function DeployedChatPage() {
         </header>
 
         {/* Chat Feed */}
-        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-6 space-y-6 scrollbar-thin max-w-4xl w-full mx-auto relative z-10">
+        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-5 pb-28 space-y-6 scrollbar-thin w-full max-w-5xl mx-auto relative z-10">
           {isBroken && (
             <div className="rounded-xl border border-red-200/50 dark:border-red-950/50 bg-red-500/5 p-4 text-center text-xs space-y-2 max-w-md mx-auto">
               <AlertTriangle size={20} className="text-red-500 mx-auto" />
@@ -1302,6 +1301,16 @@ export default function DeployedChatPage() {
               <p className="text-zinc-400 leading-relaxed">
                 Reason: {deployment.statusReason || "One of the mapped data dependencies or server pings is offline."}
               </p>
+            </div>
+          )}
+
+          {isRunning && (
+            <div className="mx-auto flex w-full max-w-2xl items-center justify-center gap-2 rounded-2xl border border-zinc-200/80 bg-zinc-50/90 px-4 py-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-300 shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <div>
+                <p className="font-medium">Processing your query</p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">This may take a few seconds while the AI reasons over your data.</p>
+              </div>
             </div>
           )}
 
@@ -1402,9 +1411,9 @@ export default function DeployedChatPage() {
         </div>
 
         {/* Global Input Bar */}
-        <footer className="relative z-10 shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-background/95 p-4 backdrop-blur-md">
-          <div className="mx-auto max-w-4xl">
-            <div className="relative flex items-end gap-2 rounded-[24px] border border-zinc-200 dark:border-zinc-800 bg-card p-2 shadow-sm focus-within:border-zinc-900 dark:focus-within:border-zinc-100 focus-within:ring-1 focus-within:ring-zinc-900 dark:focus-within:ring-zinc-100 transition-all">
+        <footer className="sticky bottom-0 z-20 shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-background/95 px-4 py-3 pb-[env(safe-area-inset-bottom)] backdrop-blur-md sm:px-5">
+          <div className="mx-auto w-full max-w-5xl">
+            <div className="relative flex flex-wrap items-end gap-2 rounded-[24px] border border-zinc-200 dark:border-zinc-800 bg-card p-2 shadow-sm focus-within:border-zinc-900 dark:focus-within:border-zinc-100 focus-within:ring-1 focus-within:ring-zinc-900 dark:focus-within:ring-zinc-100 transition-all">
               <div className="relative min-w-0 flex-1">
                 {isListening && (
                   <div className="absolute inset-0 flex items-center justify-between bg-zinc-50/95 dark:bg-zinc-950/95 backdrop-blur-sm rounded-[20px] px-4 py-2 border border-zinc-200 dark:border-zinc-800 z-20">
@@ -1433,14 +1442,14 @@ export default function DeployedChatPage() {
                   rows={1}
                 />
               </div>
-              <div className="flex shrink-0 gap-1.5">
+              <div className="flex items-center gap-2 shrink-0">
                 <Button
                   variant="outline"
                   onClick={handleSpeech}
                   disabled={isBroken}
                   size="icon"
                   title="Voice search"
-                  className={cn("h-[40px] w-[40px] rounded-[18px] shrink-0 border-zinc-200 dark:border-zinc-800 transition-all duration-300", isListening && "bg-red-500/10 text-red-500 border-red-500/30")}
+                  className={cn("h-[40px] w-[40px] rounded-[18px] border-zinc-200 dark:border-zinc-800 transition-all duration-300", isListening && "bg-red-500/10 text-red-500 border-red-500/30")}
                 >
                   <Mic size={15} />
                 </Button>
@@ -1449,8 +1458,9 @@ export default function DeployedChatPage() {
                   disabled={isRunning || isBroken || !input.trim()}
                   size="icon"
                   className="h-[40px] w-[40px] rounded-[18px] shrink-0 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-zinc-50 dark:text-zinc-900 transition-all"
+                  title={isRunning ? "Query in progress" : "Send query"}
                 >
-                  <Send size={15} />
+                  {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send size={15} />}
                 </Button>
               </div>
             </div>
