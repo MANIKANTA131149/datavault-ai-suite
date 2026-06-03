@@ -94,6 +94,7 @@ export default function AuthPage() {
   const [auth0Syncing, setAuth0Syncing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const auth0SyncedRef = useRef(false);
+  const [activeAuthTab, setActiveAuthTab] = useState<"login" | "signup">("login");
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -178,8 +179,15 @@ export default function AuthPage() {
       await login(loginEmail, loginPassword);
       toast.success("Welcome back!");
       navigate("/app/dashboard");
-    } catch {
-      toast.error("Login failed");
+    } catch (err: any) {
+      const errMsg = err?.message || "Login failed";
+      if (errMsg === "Account does not exist") {
+        toast.error("Account does not exist. We've switched you to Sign Up.");
+        setSignupEmail(loginEmail);
+        setActiveAuthTab("signup");
+      } else {
+        toast.error(errMsg);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -204,8 +212,8 @@ export default function AuthPage() {
       await signup(signupName, signupEmail, signupPassword);
       toast.success("Account created!");
       navigate("/app/dashboard");
-    } catch {
-      toast.error("Signup failed");
+    } catch (err: any) {
+      toast.error(err?.message || "Signup failed");
     } finally {
       setIsLoading(false);
     }
@@ -314,7 +322,7 @@ export default function AuthPage() {
               </p>
             </div>
 
-            <Tabs defaultValue="login" className="w-full">
+            <Tabs value={activeAuthTab} onValueChange={(v) => setActiveAuthTab(v as "login" | "signup")} className="w-full">
               <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-background-secondary p-1">
                 <TabsTrigger value="login" className="min-w-0">
                   Log in
