@@ -1,3 +1,38 @@
+function resolveColumn(row, name) {
+  if (!row || typeof row !== "object" || !name) return name;
+  if (name in row) return name;
+
+  const lowerName = name.toLowerCase();
+  const keys = Object.keys(row);
+
+  // 1. Case-insensitive exact match
+  for (const k of keys) {
+    if (k.toLowerCase() === lowerName) return k;
+  }
+
+  // Normalization helper
+  const normalize = (str) => {
+    return str
+      .toLowerCase()
+      .replace(/\s*\((pk|fk)\)\s*/gi, "")
+      .replace(/[^a-z0-9]/gi, "");
+  };
+
+  const normalizedName = normalize(name);
+
+  // 2. Normalized match
+  for (const k of keys) {
+    if (normalize(k) === normalizedName) return k;
+  }
+
+  // 3. Substring match
+  for (const k of keys) {
+    if (k.toLowerCase().includes(lowerName) || lowerName.includes(k.toLowerCase())) return k;
+  }
+
+  return name;
+}
+
 function compareValues(left, operator, right) {
   switch (operator) {
     case ">": return left > right;
@@ -28,12 +63,14 @@ function percentile(values, p) {
 function executeOperation(data, operation, params = {}) {
   switch (operation) {
     case "filter":
-      return data.filter((row) => compareValues(row[params.column], params.operator, params.value));
+      return data.filter((row) => compareValues(row[resolveColumn(row, params.column)], params.operator, params.value));
     case "sort": {
       const { column, order = "asc", limit } = params;
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
       const sorted = [...data].sort((a, b) => {
-        const av = a[column];
-        const bv = b[column];
+        const av = a[actualCol];
+        const bv = b[actualCol];
         if (av == null) return 1;
         if (bv == null) return -1;
         if (av === bv) return 0;
@@ -53,17 +90,21 @@ function executeOperation(data, operation, params = {}) {
       let rows = data;
       if (filterParam) rows = executeOperation(rows, "filter", filterParam);
 
+      const firstRow = data[0] || {};
+      const actualGroupCol = resolveColumn(firstRow, groupColumn);
+      const actualAggCol = aggColumn ? resolveColumn(firstRow, aggColumn) : undefined;
+
       const groups = new Map();
       for (const row of rows) {
-        const key = String(row[groupColumn] ?? "null");
+        const key = String(row[actualGroupCol] ?? "null");
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(row);
       }
 
       const metricKey = String(aggFunction);
       const result = Array.from(groups.entries()).map(([key, rowsForGroup]) => {
-        const values = aggColumn
-          ? rowsForGroup.map((row) => row[aggColumn]).filter((value) => value != null && value !== "")
+        const values = aggColumn && actualAggCol
+          ? rowsForGroup.map((row) => row[actualAggCol]).filter((value) => value != null && value !== "")
           : [];
         const numbers = values.map((value) => Number(value)).filter((value) => !Number.isNaN(value));
 
@@ -100,8 +141,10 @@ function executeOperation(data, operation, params = {}) {
       return limit ? result.slice(0, Number(limit)) : result;
     }
     case "aggregate": {
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, params.column);
       const values = data
-        .map((row) => row[params.column])
+        .map((row) => row[actualCol])
         .filter((value) => value != null && value !== "");
       if (params.function === "count") return { result: values.length };
       if (params.function === "count_distinct") return { result: new Set(values.map((value) => String(value))).size };
@@ -132,10 +175,8 @@ function executeOperation(data, operation, params = {}) {
       const { columns = [], limit = 50, filter: filterParam } = params;
       let rows = data;
       if (filterParam) {
-        // Normalize filter format: handle both shorthand {"column": value} and full format
         let normalizedFilter = filterParam;
         if (filterParam && typeof filterParam === "object" && !filterParam.column && !filterParam.filters) {
-          // Shorthand format: {"columnName": value} → convert to full format
           const entries = Object.entries(filterParam);
           if (entries.length === 1) {
             const [colName, colValue] = entries[0];
@@ -146,14 +187,19 @@ function executeOperation(data, operation, params = {}) {
       }
       return rows.slice(0, Number(limit)).map((row) => {
         const selected = {};
-        for (const column of columns) selected[column] = row[column];
+        for (const column of columns) {
+          const actualCol = resolveColumn(row, column);
+          selected[column] = row[actualCol];
+        }
         return selected;
       });
     }
     case "head":
       return data.slice(0, Number(params.n || 10));
     case "unique": {
-      const values = [...new Set(data.map((row) => row[params.column]))];
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, params.column);
+      const values = [...new Set(data.map((row) => row[actualCol]))];
       return values.map((value) => ({ [params.column]: value }));
     }
     case "count":
@@ -161,13 +207,18 @@ function executeOperation(data, operation, params = {}) {
     case "multi_filter": {
       const { filters = [], logic = "AND" } = params;
       return data.filter((row) => {
-        const checks = filters.map((filter) => compareValues(row[filter.column], filter.operator, filter.value));
+        const checks = filters.map((filter) => {
+          const actualCol = resolveColumn(row, filter.column);
+          return compareValues(row[actualCol], filter.operator, filter.value);
+        });
         return logic === "OR" ? checks.some(Boolean) : checks.every(Boolean);
       });
     }
     case "percentile": {
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, params.column);
       const values = data
-        .map((row) => Number(row[params.column]))
+        .map((row) => Number(row[actualCol]))
         .filter((value) => !Number.isNaN(value))
         .sort((a, b) => a - b);
       const percentiles = params.percentiles || [25, 50, 75];

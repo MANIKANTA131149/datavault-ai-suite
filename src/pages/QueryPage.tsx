@@ -294,6 +294,22 @@ function getChartMeta(result: any) {
     else if (Array.isArray(rawData.result)) rawData = rawData.result;
   }
 
+  // Wrap a single object (that isn't a wrapper or multi-table or narrative) in an array
+  if (!Array.isArray(rawData) && typeof rawData === "object" && rawData !== null) {
+    const keys = Object.keys(rawData);
+    const isMultiTable = keys.length > 0 && keys.every(k => {
+      const v = rawData[k];
+      return Array.isArray(v) || (v && typeof v === "object");
+    }) && keys.some(k => Array.isArray(rawData[k]));
+
+    const isNarrative = rawData.narrative !== undefined;
+    const isSingleValueWrapper = rawData.result !== undefined;
+
+    if (!isMultiTable && !isNarrative && !isSingleValueWrapper && keys.length > 0) {
+      rawData = [rawData];
+    }
+  }
+
   const rows: Record<string, any>[] = Array.isArray(rawData)
     ? rawData.filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
     : [];
@@ -953,6 +969,122 @@ const StepsTimeline = memo(function StepsTimeline({
   );
 });
 
+const MultiTableResult = memo(function MultiTableResult({ result, density = "compact" }: { result: any, density?: ResultDensity }) {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return null;
+
+  const keys = Object.keys(result);
+
+  return (
+    <div className="space-y-4">
+      {keys.map((key) => {
+        const val = result[key];
+        const formattedKey = key
+          .split(/_|\s+/)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+
+        let content = null;
+
+        if (Array.isArray(val)) {
+          if (val.length === 0) {
+            content = (
+              <div className="rounded-md border border-border bg-card/50 p-2.5 text-center text-xs text-muted-foreground">
+                No records found.
+              </div>
+            );
+          } else {
+            const headers = Object.keys(val[0] || {});
+            content = (
+              <div className="max-h-60 overflow-auto rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-background-secondary">
+                    <tr>
+                      {headers.map((h) => (
+                        <th key={h} className="text-left px-3 py-1.5 text-muted-foreground font-medium whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {val.map((row: any, i: number) => (
+                      <tr key={i} className="border-t border-border/50">
+                        {headers.map((h, j) => (
+                          <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
+                            {String(row[h] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+        } else if (val && typeof val === "object") {
+          if (val.result !== undefined) {
+            content = (
+              <div className="bg-background-secondary/35 rounded-md p-3 border border-border flex items-baseline gap-2">
+                <span className="text-lg font-bold text-foreground font-mono">
+                  {typeof val.result === "number" ? val.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(val.result)}
+                </span>
+              </div>
+            );
+          } else if (val.narrative !== undefined) {
+            content = (
+              <div className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
+                {String(val.narrative)}
+              </div>
+            );
+          } else {
+            const headers = Object.keys(val);
+            content = (
+              <div className="max-h-60 overflow-auto rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-background-secondary">
+                    <tr>
+                      {headers.map((h) => (
+                        <th key={h} className="text-left px-3 py-1.5 text-muted-foreground font-medium whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-border/50">
+                      {headers.map((h, j) => (
+                        <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
+                          {String(val[h] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+        } else {
+          content = (
+            <div className="bg-background-secondary/35 rounded-md p-3 border border-border">
+              <span className="text-xs font-mono text-foreground">{String(val ?? "")}</span>
+            </div>
+          );
+        }
+
+        return (
+          <div key={key} className="space-y-1.5">
+            <h4 className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+              {formattedKey}
+            </h4>
+            {content}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
 // ─── ResultPanel (Right Sidebar) ─────────────────────────────────────────────
 const ResultPanel = memo(function ResultPanel({
   result, query, onClose, onBookmark, datasetName, onShare,
@@ -965,6 +1097,14 @@ const ResultPanel = memo(function ResultPanel({
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
   const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
+  const isMultiTable = useMemo(() => {
+    if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
+    const keys = Object.keys(result);
+    return keys.length > 0 && keys.every(k => {
+      const val = result[k];
+      return Array.isArray(val) || (val && typeof val === "object");
+    }) && keys.some(k => Array.isArray(result[k]));
+  }, [result]);
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(result), [result]);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const [showExport, setShowExport] = useState(false);
@@ -1467,7 +1607,11 @@ const ResultPanel = memo(function ResultPanel({
           </div>
         )}
 
-        {isArray && rows.length > 0 && (
+        {isMultiTable && (
+          <MultiTableResult result={result} density={density} />
+        )}
+
+        {rows.length > 0 && (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
@@ -1503,13 +1647,18 @@ const ResultPanel = memo(function ResultPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => (
-                    <tr key={i} className="border-t border-border/50">
-                      {Object.values(row).map((v: any, j) => (
-                        <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>{String(v ?? "")}</td>
-                      ))}
-                    </tr>
-                  ))}
+                  {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => {
+                    const headers = Object.keys(rows[0] || {});
+                    return (
+                      <tr key={i} className="border-t border-border/50">
+                        {headers.map((h, j) => (
+                          <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>
+                            {String(row[h] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               {displayedRows.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching rows</p>}
@@ -1542,7 +1691,7 @@ const ResultPanel = memo(function ResultPanel({
           <Button variant="ghost" size="sm" className="result-action-button h-8 min-w-0 justify-center gap-1.5 rounded border border-transparent px-1.5 text-xs" onClick={() => { navigator.clipboard.writeText(JSON.stringify(result, null, 2)); toast.success("Copied"); }}>
             <Copy size={12} className="shrink-0" /> <span className="truncate">Copy</span>
           </Button>
-          {isArray && rows.length > 0 && (
+          {rows.length > 0 && (
             <>
               <Button variant="ghost" size="sm" className="result-action-button h-8 min-w-0 justify-center gap-1.5 rounded border border-transparent px-1.5 text-xs" onClick={() => copyRows(displayedRows)}>
                 <Table2 size={12} className="shrink-0" /> <span className="truncate">Copy table</span>
@@ -1601,6 +1750,14 @@ const InlineFinalResult = memo(function InlineFinalResult({
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
   const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
+  const isMultiTable = useMemo(() => {
+    if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
+    const keys = Object.keys(result);
+    return keys.length > 0 && keys.every(k => {
+      const val = result[k];
+      return Array.isArray(val) || (val && typeof val === "object");
+    }) && keys.some(k => Array.isArray(result[k]));
+  }, [result]);
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(result), [result]);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const areaGradientId = useId().replace(/:/g, "");
@@ -1763,7 +1920,11 @@ const InlineFinalResult = memo(function InlineFinalResult({
         </div>
       )}
 
-      {isArray && rows.length > 0 && (
+      {isMultiTable && (
+        <MultiTableResult result={result} density="compact" />
+      )}
+
+      {rows.length > 0 && (
         <>
           {rows.length > 200 && (
             <VirtualizedResultTable
@@ -1779,11 +1940,18 @@ const InlineFinalResult = memo(function InlineFinalResult({
                 <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
               </thead>
               <tbody>
-                {(rows.length > 200 ? [] : rows).map((row: any, i: number) => (
-                  <tr key={i} className="border-t border-border/50">
-                    {Object.values(row).map((v: any, j) => <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">{String(v ?? "")}</td>)}
-                  </tr>
-                ))}
+                {(rows.length > 200 ? [] : rows).map((row: any, i: number) => {
+                  const headers = Object.keys(rows[0] || {});
+                  return (
+                    <tr key={i} className="border-t border-border/50">
+                      {headers.map((h, j) => (
+                        <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
+                          {String(row[h] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1813,7 +1981,7 @@ const InlineFinalResult = memo(function InlineFinalResult({
           )}
         </div>
       )}
-      {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && (
+      {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && !isMultiTable && rows.length === 0 && (
         <pre className="max-h-52 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-border bg-background-secondary p-2 text-xs font-mono text-foreground scrollbar-thin [overflow-wrap:anywhere]">
           {JSON.stringify(result, null, 2)}
         </pre>
@@ -2438,6 +2606,19 @@ export default function QueryPage() {
   const { user } = useAuthStore();
   const isFreeUser = user?.planTier === "free";
   const isFreeNovaModel = (activeProvider === "bedrock" || activeProvider === "querify") && ["amazon.nova-pro-v1:0"].includes(activeModel);
+
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(min-width: 1280px)");
+    const onChange = (e: MediaQueryListEvent) => {
+      setIsLargeScreen(e.matches);
+    };
+    mql.addEventListener("change", onChange);
+    setIsLargeScreen(mql.matches);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
 
   const [dailyTokens, setDailyTokens] = useState<{
     tokensUsed: number;
@@ -4164,7 +4345,7 @@ export default function QueryPage() {
             )}
 
             {/* Result Panel Sheet for mobile/tablet screens < xl */}
-            <Sheet open={finalResult !== null && showResult} onOpenChange={setShowResult}>
+            <Sheet open={!isLargeScreen && finalResult !== null && showResult} onOpenChange={setShowResult}>
               <SheetContent side="right" className="w-[100vw] sm:w-[500px] p-0 border-l border-border bg-background-secondary xl:hidden flex flex-col h-full z-[70]">
                 <SheetHeader className="sr-only">
                   <SheetTitle>Result Details</SheetTitle>

@@ -214,6 +214,22 @@ function getChartMeta(result: any) {
     else if (Array.isArray(rawData.result)) rawData = rawData.result;
   }
 
+  // Wrap a single object (that isn't a wrapper or multi-table or narrative) in an array
+  if (!Array.isArray(rawData) && typeof rawData === "object" && rawData !== null) {
+    const keys = Object.keys(rawData);
+    const isMultiTable = keys.length > 0 && keys.every(k => {
+      const v = rawData[k];
+      return Array.isArray(v) || (v && typeof v === "object");
+    }) && keys.some(k => Array.isArray(rawData[k]));
+
+    const isNarrative = rawData.narrative !== undefined;
+    const isSingleValueWrapper = rawData.result !== undefined;
+
+    if (!isMultiTable && !isNarrative && !isSingleValueWrapper && keys.length > 0) {
+      rawData = [rawData];
+    }
+  }
+
   const rows: Record<string, any>[] = Array.isArray(rawData)
     ? rawData.filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
     : [];
@@ -591,12 +607,136 @@ const StepsTimeline = memo(function StepsTimeline({ steps, live = false }: any) 
   );
 });
 
+const MultiTableResult = memo(function MultiTableResult({ result }: { result: any }) {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return null;
+
+  const keys = Object.keys(result);
+
+  return (
+    <div className="space-y-4 font-sans">
+      {keys.map((key) => {
+        const val = result[key];
+        const formattedKey = key
+          .split(/_|\s+/)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+
+        let content = null;
+
+        if (Array.isArray(val)) {
+          if (val.length === 0) {
+            content = (
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-3 text-center text-xs text-zinc-400 dark:text-zinc-500">
+                No records found.
+              </div>
+            );
+          } else {
+            const headers = Object.keys(val[0] || {});
+            content = (
+              <div className="max-h-60 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card shadow-sm">
+                <table className="w-full text-xs">
+                  <thead className="bg-zinc-50 dark:bg-zinc-900">
+                    <tr>
+                      {headers.map((h) => (
+                        <th key={h} className="text-left px-3 py-2 text-zinc-500 dark:text-zinc-400 font-semibold whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {val.map((row: any, i: number) => (
+                      <tr key={i} className="border-t border-zinc-200/50 dark:border-zinc-800/50">
+                        {headers.map((h, j) => (
+                          <td key={j} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 min-w-[80px] max-w-[140px] truncate">
+                            {String(row[h] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+        } else if (val && typeof val === "object") {
+          if (val.result !== undefined) {
+            content = (
+              <div className="bg-zinc-50/50 dark:bg-zinc-900/30 rounded-xl p-3 border border-zinc-200/50 dark:border-zinc-800/50 flex items-baseline gap-2">
+                <span className="text-lg font-bold text-foreground font-mono">
+                  {typeof val.result === "number" ? val.result.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(val.result)}
+                </span>
+              </div>
+            );
+          } else if (val.narrative !== undefined) {
+            content = (
+              <div className="text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                {String(val.narrative)}
+              </div>
+            );
+          } else {
+            const headers = Object.keys(val);
+            content = (
+              <div className="max-h-60 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card shadow-sm">
+                <table className="w-full text-xs">
+                  <thead className="bg-zinc-50 dark:bg-zinc-900">
+                    <tr>
+                      {headers.map((h) => (
+                        <th key={h} className="text-left px-3 py-2 text-zinc-500 dark:text-zinc-400 font-semibold whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-zinc-200/50 dark:border-zinc-800/50">
+                      {headers.map((h, j) => (
+                        <td key={j} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 min-w-[80px] max-w-[140px] truncate">
+                          {String(val[h] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+        } else {
+          content = (
+            <div className="bg-zinc-50/50 dark:bg-zinc-900/30 rounded-xl p-3 border border-zinc-200/50 dark:border-zinc-800/50">
+              <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300">{String(val ?? "")}</span>
+            </div>
+          );
+        }
+
+        return (
+          <div key={key} className="space-y-1.5">
+            <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-zinc-600 dark:bg-zinc-400" />
+              {formattedKey}
+            </h4>
+            {content}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
 // ─── InlineFinalResult ────────────────────────────────────────────────────────
 const InlineFinalResult = memo(function InlineFinalResult({ result }: any) {
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
   const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
+  const isMultiTable = useMemo(() => {
+    if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
+    const keys = Object.keys(result);
+    return keys.length > 0 && keys.every(k => {
+      const val = result[k];
+      return Array.isArray(val) || (val && typeof val === "object");
+    }) && keys.some(k => Array.isArray(result[k]));
+  }, [result]);
   const { rows, chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(result), [result]);
   const [chartType, setChartType] = useState<ChartType>(defaultChart);
   const areaGradientId = useId().replace(/:/g, "");
@@ -706,13 +846,23 @@ const InlineFinalResult = memo(function InlineFinalResult({ result }: any) {
         </div>
       )}
 
-      {isArray && rows.length > 0 && (
+      {isMultiTable && (
+        <MultiTableResult result={result} />
+      )}
+
+      {rows.length > 0 && (
         <div className="space-y-1.5">
           <VirtualizedResultTable rows={rows} headers={Object.keys(rows[0] || {})} density="comfortable" />
           {rows.length > 100 && (
             <p className="text-[10px] text-zinc-400 text-right italic">Showing first 100 rows virtualized framework preview</p>
           )}
         </div>
+      )}
+
+      {!isArray && !isSingleValue && typeof result === "object" && result !== null && !isNarrative && !isMultiTable && rows.length === 0 && (
+        <pre className="max-h-52 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-3 text-xs font-mono text-zinc-700 dark:text-zinc-300 scrollbar-thin">
+          {JSON.stringify(result, null, 2)}
+        </pre>
       )}
 
       {!isBlankString && typeof result === "string" && (

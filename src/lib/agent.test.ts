@@ -756,3 +756,158 @@ describe("runDatabaseAgent", () => {
     expect(steps[2].args.params.filter).toEqual({ column: "status", operator: "==", value: "paid" });
   });
 });
+
+describe("runLegacyAgent - Cross-Sheet Operations", () => {
+  beforeEach(() => {
+    vi.mocked(callLLM).mockReset();
+  });
+
+  const testSheets: Record<string, SheetData> = {
+    sales: {
+      columns: [
+        { name: "product", dtype: "string" },
+        { name: "revenue", dtype: "number" }
+      ],
+      rows: [
+        { product: "A", revenue: 100 },
+        { product: "B", revenue: 200 }
+      ]
+    },
+    inventory: {
+      columns: [
+        { name: "item", dtype: "string" },
+        { name: "stock", dtype: "number" }
+      ],
+      rows: [
+        { item: "A", stock: 10 },
+        { item: "B", stock: 20 }
+      ]
+    }
+  };
+
+  it("supports join_sheets and subsequent operations on cross_sheet", async () => {
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"QuerySheet","args":{"sheet_name":"cross_sheet","operation":"join_sheets","params":{"sheet1":"sales","sheet2":"inventory","key1":"product","key2":"item","joinType":"inner"}}}',
+        inputTokens: 12,
+        outputTokens: 6,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"groupby","params":{"groupColumn":"product","aggColumn":"revenue","aggFunction":"sum"}}}',
+        inputTokens: 14,
+        outputTokens: 7,
+      });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "Join sales and inventory, then show sum of revenue by product",
+      testSheets,
+      "sales",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps.map((step) => step.command)).toEqual([
+      "QuerySheet",
+      "ExecuteFinalQuery",
+    ]);
+
+    expect(steps[0].result).toHaveLength(2);
+    expect(steps[0].result[0]).toHaveProperty("product", "A");
+    expect(steps[0].result[0]).toHaveProperty("stock", 10);
+
+    expect(steps[1].result).toEqual([
+      { product: "B", sum: 200 },
+      { product: "A", sum: 100 }
+    ]);
+  });
+
+  it("supports compare_sheets for comparing revenue in sales", async () => {
+    vi.mocked(callLLM).mockResolvedValueOnce({
+      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"compare_sheets","params":{"sheet1":"sales","sheet2":"sales","key1":"product","key2":"product","compareColumn1":"revenue","compareColumn2":"revenue"}}}',
+      inputTokens: 12,
+      outputTokens: 6,
+    });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "Compare revenue",
+      testSheets,
+      "sales",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].result[0]).toMatchObject({
+      product: "A",
+      sales_revenue: 100,
+      difference: 0,
+      pct_change: "0.00%",
+    });
+  });
+
+  it("supports union_sheets to merge sheets vertically", async () => {
+    vi.mocked(callLLM).mockResolvedValueOnce({
+      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"union_sheets","params":{"sheets":["sales","sales"]}}}',
+      inputTokens: 12,
+      outputTokens: 6,
+    });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "Union sales",
+      testSheets,
+      "sales",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].result).toHaveLength(4);
+    expect(steps[0].result[0]).toHaveProperty("_source_sheet", "sales");
+  });
+
+  it("supports self-join on sheets and prefixes columns properly without collision", async () => {
+    vi.mocked(callLLM).mockResolvedValueOnce({
+      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"join_sheets","params":{"sheet1":"sales","sheet2":"sales","key1":"product","key2":"product","joinType":"inner"}}}',
+      inputTokens: 15,
+      outputTokens: 8,
+    });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "Join sales with sales",
+      testSheets,
+      "sales",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].result[0]).toHaveProperty("sales_1_revenue");
+    expect(steps[0].result[0]).toHaveProperty("sales_2_revenue");
+    expect(steps[0].result[0]).toHaveProperty("product");
+  });
+});
+

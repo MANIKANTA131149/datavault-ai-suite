@@ -900,8 +900,42 @@ function repairCommandForQuestion(
   const missingColumns =
     !columns.some((column) => column.name === params.groupColumn) ||
     !columns.some((column) => column.name === params.aggColumn);
-
   return groupLooksWrong || missingColumns ? fallback : parsed;
+}
+
+function resolveColumn(row: Record<string, any>, name: string): string {
+  if (!row || typeof row !== "object" || !name) return name;
+  if (name in row) return name;
+
+  const lowerName = name.toLowerCase();
+  const keys = Object.keys(row);
+
+  // 1. Case-insensitive exact match
+  for (const k of keys) {
+    if (k.toLowerCase() === lowerName) return k;
+  }
+
+  // Normalization helper
+  const normalize = (str: string) => {
+    return str
+      .toLowerCase()
+      .replace(/\s*\((pk|fk)\)\s*/gi, "")
+      .replace(/[^a-z0-9]/gi, "");
+  };
+
+  const normalizedName = normalize(name);
+
+  // 2. Normalized match
+  for (const k of keys) {
+    if (normalize(k) === normalizedName) return k;
+  }
+
+  // 3. Substring match
+  for (const k of keys) {
+    if (k.toLowerCase().includes(lowerName) || lowerName.includes(k.toLowerCase())) return k;
+  }
+
+  return name;
 }
 
 function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
@@ -918,7 +952,8 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
       const { column, operator = "==", value } = normalizedParams;
       return data.filter((row) => {
-        const v = row[column];
+        const actualCol = resolveColumn(row, column);
+        const v = row[actualCol];
         switch (operator) {
           case ">": return v > value;
           case "<": return v < value;
@@ -937,8 +972,10 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
     case "sort": {
       const { column, order = "asc", limit } = params;
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
       const sorted = [...data].sort((a, b) => {
-        const av = a[column], bv = b[column];
+        const av = a[actualCol], bv = b[actualCol];
         if (av == null) return 1;
         if (bv == null) return -1;
         return order === "asc" ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -949,17 +986,21 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       const { groupColumn, aggColumn, aggFunction, filter: filterParam, transformColumn, transformFunction, removeOutliers, removeNulls = true, limit, order = "desc" } = params;
       const aggregateKey = String(aggFunction || "count");
       
+      const firstRow = data[0] || {};
+      const actualGroupCol = resolveColumn(firstRow, groupColumn);
+      const actualAggCol = aggColumn ? resolveColumn(firstRow, aggColumn) : undefined;
+
       // Step 1: Remove null values from BOTH groupColumn and aggColumn if requested (enabled by default)
       let filtered = data;
       if (removeNulls) {
         filtered = data.filter((row) => {
           // Remove rows where groupColumn is null/empty
-          const groupVal = row[groupColumn];
+          const groupVal = row[actualGroupCol];
           if (groupVal == null || groupVal === "") return false;
           
           // Remove rows where aggColumn is null/empty/NaN
-          if (aggColumn) {
-            const aggVal = row[aggColumn];
+          if (aggColumn && actualAggCol) {
+            const aggVal = row[actualAggCol];
             if (aggVal == null || aggVal === "") return false;
             if (typeof aggVal === "number" && isNaN(aggVal)) return false;
           }
@@ -980,8 +1021,8 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       
       // Step 4: Remove NaN values created by transformation
       filtered = filtered.filter((row) => {
-        if (!aggColumn) return true;
-        const val = row[aggColumn];
+        if (!aggColumn || !actualAggCol) return true;
+        const val = row[actualAggCol];
         return val != null && val !== "" && (aggregateKey === "count" || !(typeof val === "number" && isNaN(val)));
       });
       
@@ -997,14 +1038,14 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       // Step 6: Group and aggregate
       const groups: Record<string, any[]> = {};
       for (const row of filtered) {
-        const key = String(row[groupColumn] ?? "null");
+        const key = String(row[actualGroupCol] ?? "null");
         if (!groups[key]) groups[key] = [];
         if (aggregateKey === "count") {
           groups[key].push(1);
-        } else if ((aggregateKey === "count_distinct" || aggregateKey === "distinct_count") && aggColumn) {
-          groups[key].push(row[aggColumn]);
-        } else if (aggColumn) {
-          const val = Number(row[aggColumn]);
+        } else if ((aggregateKey === "count_distinct" || aggregateKey === "distinct_count") && aggColumn && actualAggCol) {
+          groups[key].push(row[actualAggCol]);
+        } else if (aggColumn && actualAggCol) {
+          const val = Number(row[actualAggCol]);
           if (!isNaN(val)) groups[key].push(val);
         }
       }
@@ -1038,7 +1079,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
     case "aggregate": {
       const { column, function: fn } = params;
-      const values = data.map((row) => row[column]).filter((value) => value != null && value !== "");
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      const values = data.map((row) => row[actualCol]).filter((value) => value != null && value !== "");
       if (fn === "count") return { result: values.length };
       if (fn === "count_distinct" || fn === "distinct_count") {
         return { result: new Set(values.map((value) => String(value))).size };
@@ -1078,15 +1121,17 @@ function executeOperation(data: Record<string, any>[], operation: string, params
         uniquePerRow = true,
       } = params;
 
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
       const filtered = filterParam ? executeOperation(data, "filter", filterParam) : data;
       const resolvedDelimiter =
         typeof delimiter === "string" && delimiter
           ? delimiter
-          : detectMultiValueTextProfile(getColumnValues(filtered, column), column)?.delimiter || ",";
+          : detectMultiValueTextProfile(getColumnValues(filtered, actualCol), actualCol)?.delimiter || ",";
 
       const counts = new Map<string, { label: string; count: number }>();
       for (const row of filtered) {
-        const parts = splitDelimitedText(row[column], resolvedDelimiter);
+        const parts = splitDelimitedText(row[actualCol], resolvedDelimiter);
         if (parts.length === 0) continue;
 
         const seenInRow = new Set<string>();
@@ -1124,7 +1169,10 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
       return rows.slice(0, limit).map((row) => {
         const obj: Record<string, any> = {};
-        for (const c of columns) obj[c] = row[c];
+        for (const c of columns) {
+          const actualCol = resolveColumn(row, c);
+          obj[c] = row[actualCol];
+        }
         return obj;
       });
     }
@@ -1135,7 +1183,8 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       if (column) {
         // Remove rows where specific column is null/empty/NaN
         return data.filter((row) => {
-          const val = row[column];
+          const actualCol = resolveColumn(row, column);
+          const val = row[actualCol];
           if (val == null || val === "") return false;
           if (typeof val === "number" && isNaN(val)) return false;
           return true;
@@ -1148,9 +1197,11 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
     case "transform_column": {
       const { column, function: func, skipNulls = true } = params;
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
       return data.map((row) => {
         const newRow = { ...row };
-        const val = row[column];
+        const val = row[actualCol];
         
         // Skip null/empty values if requested
         if (skipNulls && (val == null || val === "")) {
@@ -1159,19 +1210,21 @@ function executeOperation(data: Record<string, any>[], operation: string, params
         
         if (func === "extract_number") {
           const match = String(val).match(/(\d+(?:\.\d+)?)/);
-          newRow[column] = match ? Number(match[1]) : NaN;
+          newRow[actualCol] = match ? Number(match[1]) : NaN;
         } else if (func === "to_lower") {
-          newRow[column] = String(val).toLowerCase();
+          newRow[actualCol] = String(val).toLowerCase();
         } else if (func === "to_upper") {
-          newRow[column] = String(val).toUpperCase();
+          newRow[actualCol] = String(val).toUpperCase();
         } else if (func === "trim") {
-          newRow[column] = String(val).trim();
+          newRow[actualCol] = String(val).trim();
         }
         return newRow;
       });
     }
     case "unique": {
-      const vals = [...new Set(data.map((r) => r[params.column]))];
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, params.column);
+      const vals = [...new Set(data.map((r) => r[actualCol]))];
       return vals.map((v) => ({ [params.column]: v }));
     }
     case "count":
@@ -1179,7 +1232,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "percentile": {
       const { column, percentiles = [25, 50, 75] } = params;
-      const nums = data.map((r) => Number(r[column])).filter((n) => !isNaN(n)).sort((a, b) => a - b);
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      const nums = data.map((r) => Number(r[actualCol])).filter((n) => !isNaN(n)).sort((a, b) => a - b);
       if (nums.length === 0) return { error: "No numeric data" };
       const result: Record<string, number> = {};
       for (const p of percentiles) {
@@ -1193,8 +1248,11 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "correlation": {
       const { column1, column2 } = params;
+      const firstRow = data[0] || {};
+      const actualCol1 = resolveColumn(firstRow, column1);
+      const actualCol2 = resolveColumn(firstRow, column2);
       const pairs = data
-        .map((r) => [Number(r[column1]), Number(r[column2])])
+        .map((r) => [Number(r[actualCol1]), Number(r[actualCol2])])
         .filter(([a, b]) => !isNaN(a) && !isNaN(b));
       if (pairs.length < 2) return { correlation: 0, n: pairs.length };
       const n = pairs.length;
@@ -1212,16 +1270,19 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "topN_groupby": {
       const { groupColumn, rankColumn, n = 3, order = "desc" } = params;
+      const firstRow = data[0] || {};
+      const actualGroupCol = resolveColumn(firstRow, groupColumn);
+      const actualRankCol = resolveColumn(firstRow, rankColumn);
       const groups: Record<string, Record<string, any>[]> = {};
       for (const row of data) {
-        const key = String(row[groupColumn] ?? "null");
+        const key = String(row[actualGroupCol] ?? "null");
         if (!groups[key]) groups[key] = [];
         groups[key].push(row);
       }
       const result: Record<string, any>[] = [];
       for (const [group, rows] of Object.entries(groups)) {
         const sorted = rows.sort((a, b) =>
-          order === "desc" ? (b[rankColumn] ?? 0) - (a[rankColumn] ?? 0) : (a[rankColumn] ?? 0) - (b[rankColumn] ?? 0)
+          order === "desc" ? (b[actualRankCol] ?? 0) - (a[actualRankCol] ?? 0) : (a[actualRankCol] ?? 0) - (b[actualRankCol] ?? 0)
         );
         for (const row of sorted.slice(0, n)) {
           result.push({ _group: group, ...row });
@@ -1232,9 +1293,12 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "date_trunc": {
       const { dateColumn, period = "month", aggColumn, aggFunction = "count" } = params;
+      const firstRow = data[0] || {};
+      const actualDateCol = resolveColumn(firstRow, dateColumn);
+      const actualAggCol = aggColumn ? resolveColumn(firstRow, aggColumn) : undefined;
       const buckets: Record<string, number[]> = {};
       for (const row of data) {
-        const raw = row[dateColumn];
+        const raw = row[actualDateCol];
         if (!raw) continue;
         const d = new Date(String(raw));
         if (isNaN(d.getTime())) continue;
@@ -1255,7 +1319,7 @@ function executeOperation(data: Record<string, any>[], operation: string, params
           default: key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
         }
         if (!buckets[key]) buckets[key] = [];
-        if (aggColumn) buckets[key].push(Number(row[aggColumn]) || 0);
+        if (aggColumn && actualAggCol) buckets[key].push(Number(row[actualAggCol]) || 0);
         else buckets[key].push(1);
       }
       return Object.entries(buckets)
@@ -1276,7 +1340,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "outlier_detect": {
       const { column, method = "zscore", threshold = 2 } = params;
-      const nums = data.map((r, i) => ({ index: i, value: Number(r[column]), row: r }))
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      const nums = data.map((r, i) => ({ index: i, value: Number(r[actualCol]), row: r }))
         .filter((d) => !isNaN(d.value));
       if (nums.length < 3) return { error: "Not enough data for outlier detection" };
 
@@ -1299,7 +1365,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "filter_outliers": {
       const { column, method = "zscore", threshold = 1.5 } = params;
-      const nums = data.map((r, i) => ({ index: i, value: Number(r[column]), row: r }))
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      const nums = data.map((r, i) => ({ index: i, value: Number(r[actualCol]), row: r }))
         .filter((d) => !isNaN(d.value));
       if (nums.length < 3) return data; // Not enough data, return all
 
@@ -1324,7 +1392,8 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       const { filters = [], logic = "AND" } = params;
       return data.filter((row) => {
         const results = filters.map((f: any) => {
-          const v = row[f.column];
+          const actualCol = resolveColumn(row, f.column);
+          const v = row[actualCol];
           switch (f.operator) {
             case ">": return v > f.value;
             case "<": return v < f.value;
@@ -1346,16 +1415,20 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "pivot": {
       const { rowColumn, colColumn, valueColumn, aggFunction = "sum" } = params;
+      const firstRow = data[0] || {};
+      const actualRowCol = resolveColumn(firstRow, rowColumn);
+      const actualColCol = resolveColumn(firstRow, colColumn);
+      const actualValueCol = resolveColumn(firstRow, valueColumn);
       const pivot: Record<string, Record<string, number[]>> = {};
       const allCols = new Set<string>();
 
       for (const row of data) {
-        const rKey = String(row[rowColumn] ?? "null");
-        const cKey = String(row[colColumn] ?? "null");
+        const rKey = String(row[actualRowCol] ?? "null");
+        const cKey = String(row[actualColCol] ?? "null");
         allCols.add(cKey);
         if (!pivot[rKey]) pivot[rKey] = {};
         if (!pivot[rKey][cKey]) pivot[rKey][cKey] = [];
-        pivot[rKey][cKey].push(Number(row[valueColumn]) || 0);
+        pivot[rKey][cKey].push(Number(row[actualValueCol]) || 0);
       }
 
       const colList = [...allCols].sort();
@@ -1572,7 +1645,7 @@ export async function* runAgent(
   const prompt = systemPromptOverride || SYSTEM_PROMPT;
   let turn = 0;
   // ── Step budget: LLM is told so it plans efficiently ──
-  const maxTurns = 8;
+  const maxTurns = 12;
 
   // ── Pre-process question for better LLM comprehension ──
   const normalizedQuestion = normalizeQuestion(question, sheetData.columns);
@@ -1781,7 +1854,7 @@ You have access to these commands:
    Returns detailed column info and sample values for a sheet.
 
 3. QuerySheet(sheet_name, operation, params)
-   Runs one intermediate data operation on a sheet.
+   Runs one intermediate data operation on a sheet or virtual sheet.
 
 4. ExecuteFinalQuery(sheet_name, operation, params)
    Runs the final data operation that answers the question.
@@ -1812,6 +1885,16 @@ Supported operations:
 - pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
 - multi_analysis {"operations":[{"name":"op1","operation":"groupby","params":{...}}, {"name":"op2","operation":"percentile","params":{...}}]} to execute multiple independent operations in parallel on the dataset
 
+Cross-Sheet / Multi-Sheet Operations:
+- join_sheets {"sheet1":"Name1","sheet2":"Name2","key1":"col1","key2":"col2","joinType":"inner|left|right|outer"}
+  Combines two sheets based on matching keys. In case of duplicate column names, columns are prefixed like 'sheetName_columnName'.
+- compare_sheets {"sheet1":"Name1","sheet2":"Name2","key1":"col1","key2":"col2","compareColumn1":"col3","compareColumn2":"col4"}
+  Aligns two sheets on matching keys and calculates differences/percentages for comparison columns.
+- union_sheets {"sheets":["Name1","Name2"]}
+  Vertically combines sheets. Adds a "_source_sheet" column to indicate each row's origin.
+- lookup_sheets {"targetSheet":"Name1","sourceSheet":"Name2","targetKey":"col1","sourceKey":"col2","valueColumn":"col3","asColumn":"new_col"}
+  Pulls a column from Name2 into Name1 based on matching keys, like VLOOKUP/XLOOKUP.
+
 Rules:
 - You have FULL read-only access to all workbook sheets and data. Perform any sequence of operations, transformations, or pipelines required to answer the user's question.
 - Do not make assumptions or refuse requests: if a query requires filtering, cleaning, truncating, or outlier removal, do so dynamically using the pipeline or individual operations.
@@ -1820,10 +1903,20 @@ Rules:
 - Use exact column names from the returned schema.
 - If GetColumns says a column contains delimited lists/tags/names inside one cell, use split_frequency to count the individual items.
 - Do not group by or aggregate the whole cell when the question is about items inside a multi-value text column.
-- For "which row has the max/min/highest/lowest value" questions, prefer a single sort+select pipeline, or include the same filter in ExecuteFinalQuery after QuerySheet finds the matching row. If the question asks for BOTH the highest and lowest, or max and min values/rows, use separate QuerySheet calls (one for max, one for min) and then combine both results in a final Answer.
-- If the question asks for MULTIPLE pieces of information (e.g. "highest and lowest", "analyze", "summary", "compare X and Y", "statistics"), use QuerySheet for EACH part (one operation per call), then combine all partial results into a comprehensive Answer. Do NOT try to answer multi-part questions with a single operation.
+- For "which row has the max/min/highest/lowest value" questions, prefer a single sort+select pipeline. If the question asks for BOTH the highest and lowest, or max and min values/rows (e.g. both poor and rich, oldest and newest), ALWAYS use a single 'multi_analysis' operation containing a pipeline for each part so they execute in parallel in a single turn.
+- If the question asks for MULTIPLE pieces of information (e.g. "highest and lowest", "analyze", "summary", "compare X and Y", "statistics"), use the 'multi_analysis' operation to execute all parts in parallel in a single command.
+- If the question is an "overall analysis", "comprehensive analysis", "statistics", "5 analysis" or requests general insights, ALWAYS use the 'multi_analysis' operation with 4-5 different operations to analyze the dataset thoroughly. Include:
+  1. An aggregate count/sum/mean of the main metric (e.g. revenue, amount).
+  2. A groupby of the main metric by the primary categorical column (e.g. region, category, department).
+  3. A date_trunc or time trend of the main metric if date columns are present.
+  4. An outlier_detect or percentile distribution of the main metric.
+  5. A head preview of the top 5-10 rows sorted by the main metric.
 - If QuerySheet returns the exact row(s), either Answer from that result or preserve that subset/filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
 - Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer when ONE operation suffices.
+- For cross-sheet/multi-sheet questions:
+  1. Start by calling GetSheetDescription() to see all sheet names and schemas.
+  2. Use QuerySheet with a cross-sheet operation (like join_sheets or union_sheets) and set the sheet_name to "cross_sheet".
+  3. The result of the cross-sheet operation will be returned to you. In subsequent turns, you can run normal operations (groupby, filter, select) on "cross_sheet" to analyze the combined data.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
@@ -1832,7 +1925,11 @@ Examples:
 {"command":"QuerySheet","args":{"sheet_name":"sales","operation":"groupby","params":{"groupColumn":"region","aggColumn":"amount","aggFunction":"sum"}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"amount","function":"sum"}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"cars","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"Horsepower","order":"desc","limit":1}},{"operation":"select","params":{"columns":["Car"],"limit":1}}]}}}
-{"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"split_frequency","params":{"column":"cast","delimiter":",","limit":10,"order":"desc"}}}`;
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"split_frequency","params":{"column":"cast","delimiter":",","limit":10,"order":"desc"}}}
+{"command":"QuerySheet","args":{"sheet_name":"cross_sheet","operation":"join_sheets","params":{"sheet1":"sales","sheet2":"customers","key1":"customer_id","key2":"id","joinType":"inner"}}}
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"groupby","params":{"groupColumn":"customers_name","aggColumn":"sales_amount","aggFunction":"sum"}}}
+{"command":"QuerySheet","args":{"sheet_name":"cross_sheet","operation":"compare_sheets","params":{"sheet1":"q1_sales","sheet2":"q2_sales","key1":"product_id","key2":"product_id","compareColumn1":"revenue","compareColumn2":"revenue"}}}
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"Employees_Data","operation":"multi_analysis","params":{"operations":[{"name":"poorest","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"salary","order":"asc","limit":1}},{"operation":"select","params":{"columns":["first_name","last_name","salary"],"limit":1}}]}},{"name":"richest","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"salary","order":"desc","limit":1}},{"operation":"select","params":{"columns":["first_name","last_name","salary"],"limit":1}}]}}]}}}`;
 
 const DEFAULT_DATABASE_AGENT_PROMPT = `You are a database analysis agent. Work one step at a time and request only the information you need.
 
@@ -1869,16 +1966,27 @@ SQL mode rules:
 - Only generate a single read-only SELECT or WITH query.
 - Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, MERGE, CALL, EXEC, GRANT, REVOKE, COPY, VACUUM, PRAGMA, transaction, or multi-statement SQL.
 - For detail/listing queries, include a sensible LIMIT/TOP/FETCH FIRST cap, usually 50 or 100. Aggregates and counts do not need a row limit.
-- Use exact table and column names from GetSchema/GetColumns.
 - Quote qualified identifiers according to the selected database dialect.
+- Use exact table and column names from GetSchema/GetColumns.
 
-SQL mode rules:
-- Use QuerySQL/ExecuteSQL for SQL databases whenever possible.
-- Only generate a single read-only SELECT or WITH query.
-- Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, MERGE, CALL, EXEC, GRANT, REVOKE, COPY, VACUUM, PRAGMA, transaction, or multi-statement SQL.
-- For detail/listing queries, include a sensible LIMIT/TOP/FETCH FIRST cap, usually 50 or 100. Aggregates and counts do not need a row limit.
-- Use exact table and column names from GetSchema/GetColumns.
-- Quote qualified identifiers according to the selected database dialect.
+TURN-EFFICIENCY RULES (critical — you have a limited step budget):
+- GetSchema already returns column names for every table. After calling GetSchema, you can immediately write SQL without calling GetColumns for every table.
+- Only call GetColumns when you specifically need sample values or detailed data types that GetSchema did not provide.
+- Prefer writing a single SQL query that answers the entire question, using JOINs, CTEs, subqueries, CASE expressions, and window functions as needed.
+- For multi-part questions ("highest and lowest", "statistics", "compare X and Y"), write ONE SQL query that computes all parts at once rather than separate queries for each part.
+- If the question is an "overall analysis", "comprehensive analysis", "statistics", "5 analysis" or requests general insights, write a single rich SELECT or WITH query that calculates:
+  1. Overall aggregates (count, total, average, min, max of main numeric columns).
+  2. Categorical distribution/breakdowns (using GROUP BY) for the primary categorical columns.
+  3. Time-based trends (using date truncation/grouping) if date columns exist.
+  4. Top ranking elements (using ORDER BY and LIMIT).
+- When a QuerySQL returns data, analyze it and issue Answer or ExecuteSQL immediately — do NOT run another query for the same data.
+- NEVER give up or say "I cannot answer". You have FULL read-only access. Always attempt to answer with the data you have.
+
+CROSS-TABLE / MULTI-TABLE QUERIES:
+- Use SQL JOINs (INNER JOIN, LEFT JOIN, etc.) to combine data across multiple tables in a single query.
+- Use CTEs (WITH clauses) for complex multi-step logic across tables.
+- Use UNION ALL to combine similar data from different tables.
+- For lookups across tables, write a single JOIN query rather than querying tables one at a time.
 
 Supported operations:
 - count {}
@@ -1922,9 +2030,10 @@ Rules:
 - Example: a request like "details of upi URS..." must filter column "upi" on a table containing "upi"; do not filter "urs" unless no "upi" column exists.
 - For identifier/detail lookups, prefer ExecuteSQL with an exact WHERE filter on the identifier column.
 - If QueryTable finds rows with a filter, either answer from that result or include the same filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
-- If the question asks for MULTIPLE pieces of information (e.g. "highest and lowest", "analyze", "summary", "compare X and Y", "statistics", "full analysis"), use QuerySQL/QueryTable for EACH part (one query per call), gathering all the partial results across multiple turns. Then combine all results into a comprehensive Answer. Do NOT try to answer multi-part questions with a single query when the question clearly asks for several different metrics or comparisons.
+- If the question asks for MULTIPLE pieces of information (e.g. "highest and lowest", "analyze", "summary", "compare X and Y", "statistics", "full analysis"), prefer writing ONE comprehensive SQL query using CASE, multiple aggregates, subqueries or UNION ALL. If that is not possible, use QuerySQL/QueryTable for EACH part (one query per call), gathering all the partial results across multiple turns. Then combine all results into a comprehensive Answer. Do NOT try to answer multi-part questions with a single query when the question clearly asks for several different metrics or comparisons.
 - If the request needs a join across multiple tables and the target table is unclear, ask one concise clarification question.
 - Use QuerySQL for intermediate SQL checks and ExecuteSQL for the final database answer when ONE query suffices.
+- ALWAYS produce an answer. If you have gathered partial data but are running low on turns, synthesize the best answer you can from available results rather than continuing to query.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
@@ -1932,7 +2041,10 @@ Examples:
 {"command":"GetColumns","args":{"table_name":"orders"}}
 {"command":"QuerySQL","args":{"sql":"SELECT status, SUM(total_amount) AS total_amount FROM orders GROUP BY status LIMIT 20"}}
 {"command":"ExecuteSQL","args":{"sql":"SELECT id, amount FROM orders WHERE status = 'completed' LIMIT 10"}}
+{"command":"ExecuteSQL","args":{"sql":"SELECT o.id, o.amount, c.name FROM orders o JOIN customers c ON o.customer_id = c.id WHERE o.status = 'completed' LIMIT 50"}}
+{"command":"ExecuteSQL","args":{"sql":"WITH summary AS (SELECT COUNT(*) as total, AVG(amount) as avg_amount, MAX(amount) as max_amount, MIN(amount) as min_amount FROM orders) SELECT * FROM summary"}}
 {"command":"Answer","args":{"value":"Which table should I use for that metric?"}}`;
+
 
 function buildDatabaseTableMap(tables: DatabaseTableData[]): DatabaseTables {
   const mapped: DatabaseTables = {};
@@ -2428,9 +2540,9 @@ function buildDatabaseColumnsDescription(tables: DatabaseTables, tableName: stri
 }
 
 function formatResultForModel(result: any) {
-  const preview = Array.isArray(result) ? result.slice(0, 20) : result;
+  const preview = Array.isArray(result) ? result.slice(0, 30) : result;
   const serialized = typeof preview === "string" ? preview : JSON.stringify(preview);
-  return serialized.length > 4000 ? `${serialized.slice(0, 4000)}... (truncated)` : serialized;
+  return serialized.length > 8000 ? `${serialized.slice(0, 8000)}... (truncated)` : serialized;
 }
 
 function parseLegacyLiteral(rawValue: string) {
@@ -2593,6 +2705,286 @@ function translateLegacyPandasQuery(pandasQuery: string) {
   return null;
 }
 
+function executeCrossSheetOperation(
+  sheets: WorkbookSheets,
+  operation: string,
+  params: Record<string, any>
+): any {
+  switch (operation) {
+    case "join_sheets": {
+      const { sheet1, sheet2, key1, key2, joinType = "inner" } = params;
+      const s1 = sheets[sheet1];
+      const s2 = sheets[sheet2];
+      if (!s1) return `ERROR: Sheet '${sheet1}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+      if (!s2) return `ERROR: Sheet '${sheet2}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+
+      const rows1 = s1.rows || [];
+      const rows2 = s2.rows || [];
+      const joined: Record<string, any>[] = [];
+
+      const firstRow1 = rows1[0] || {};
+      const firstRow2 = rows2[0] || {};
+      const actualKey1 = resolveColumn(firstRow1, key1);
+      const actualKey2 = resolveColumn(firstRow2, key2);
+
+      const mergeRows = (r1: Record<string, any>, r2: Record<string, any>, k1: string, k2: string) => {
+        const merged: Record<string, any> = {};
+        const prefix1 = sheet1 === sheet2 ? `${sheet1}_1` : sheet1;
+        const prefix2 = sheet1 === sheet2 ? `${sheet2}_2` : sheet2;
+
+        for (const [k, v] of Object.entries(r1)) {
+          if (k === k1) {
+            merged[key1] = v;
+          } else if (r2.hasOwnProperty(k)) {
+            merged[`${prefix1}_${k}`] = v;
+          } else {
+            merged[k] = v;
+          }
+        }
+        for (const [k, v] of Object.entries(r2)) {
+          if (k === k2) {
+            if (!merged.hasOwnProperty(key1)) {
+              merged[key1] = v;
+            }
+          } else if (r1.hasOwnProperty(k)) {
+            merged[`${prefix2}_${k}`] = v;
+          } else {
+            merged[k] = v;
+          }
+        }
+        return merged;
+      };
+
+      if (joinType === "inner") {
+        for (const r1 of rows1) {
+          const val1 = r1[actualKey1];
+          if (val1 === undefined || val1 === null) continue;
+          for (const r2 of rows2) {
+            const val2 = r2[actualKey2];
+            if (val2 === undefined || val2 === null) continue;
+            if (String(val1) === String(val2)) {
+              joined.push(mergeRows(r1, r2, actualKey1, actualKey2));
+            }
+          }
+        }
+      } else if (joinType === "left") {
+        for (const r1 of rows1) {
+          const val1 = r1[actualKey1];
+          let matched = false;
+          if (val1 !== undefined && val1 !== null) {
+            for (const r2 of rows2) {
+              const val2 = r2[actualKey2];
+              if (val2 !== undefined && val2 !== null && String(val1) === String(val2)) {
+                joined.push(mergeRows(r1, r2, actualKey1, actualKey2));
+                matched = true;
+              }
+            }
+          }
+          if (!matched) {
+            const emptyRow2: Record<string, any> = {};
+            if (s2.columns) {
+              for (const col of s2.columns) {
+                if (col.name !== actualKey2) emptyRow2[col.name] = null;
+              }
+            }
+            joined.push(mergeRows(r1, emptyRow2, actualKey1, actualKey2));
+          }
+        }
+      } else if (joinType === "right") {
+        for (const r2 of rows2) {
+          const val2 = r2[actualKey2];
+          let matched = false;
+          if (val2 !== undefined && val2 !== null) {
+            for (const r1 of rows1) {
+              const val1 = r1[actualKey1];
+              if (val1 !== undefined && val1 !== null && String(val1) === String(val2)) {
+                joined.push(mergeRows(r1, r2, actualKey1, actualKey2));
+                matched = true;
+              }
+            }
+          }
+          if (!matched) {
+            const emptyRow1: Record<string, any> = {};
+            if (s1.columns) {
+              for (const col of s1.columns) {
+                if (col.name !== actualKey1) emptyRow1[col.name] = null;
+              }
+            }
+            joined.push(mergeRows(emptyRow1, r2, actualKey1, actualKey2));
+          }
+        }
+      } else if (joinType === "outer") {
+        const matchedRight = new Set<number>();
+        for (const r1 of rows1) {
+          const val1 = r1[actualKey1];
+          let matched = false;
+          if (val1 !== undefined && val1 !== null) {
+            for (let idx = 0; idx < rows2.length; idx++) {
+              const r2 = rows2[idx];
+              const val2 = r2[actualKey2];
+              if (val2 !== undefined && val2 !== null && String(val1) === String(val2)) {
+                joined.push(mergeRows(r1, r2, actualKey1, actualKey2));
+                matched = true;
+                matchedRight.add(idx);
+              }
+            }
+          }
+          if (!matched) {
+            const emptyRow2: Record<string, any> = {};
+            if (s2.columns) {
+              for (const col of s2.columns) {
+                if (col.name !== actualKey2) emptyRow2[col.name] = null;
+              }
+            }
+            joined.push(mergeRows(r1, emptyRow2, actualKey1, actualKey2));
+          }
+        }
+        for (let idx = 0; idx < rows2.length; idx++) {
+          if (!matchedRight.has(idx)) {
+            const r2 = rows2[idx];
+            const emptyRow1: Record<string, any> = {};
+            if (s1.columns) {
+              for (const col of s1.columns) {
+                if (col.name !== actualKey1) emptyRow1[col.name] = null;
+              }
+            }
+            joined.push(mergeRows(emptyRow1, r2, actualKey1, actualKey2));
+          }
+        }
+      }
+      return joined;
+    }
+    case "compare_sheets": {
+      const { sheet1, sheet2, key1, key2, compareColumn1, compareColumn2 } = params;
+      const s1 = sheets[sheet1];
+      const s2 = sheets[sheet2];
+      if (!s1) return `ERROR: Sheet '${sheet1}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+      if (!s2) return `ERROR: Sheet '${sheet2}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+
+      const rows1 = s1.rows || [];
+      const rows2 = s2.rows || [];
+
+      const firstRow1 = rows1[0] || {};
+      const firstRow2 = rows2[0] || {};
+      const actualKey1 = resolveColumn(firstRow1, key1);
+      const actualKey2 = resolveColumn(firstRow2, key2);
+      const actualCompCol1 = resolveColumn(firstRow1, compareColumn1);
+      const actualCompCol2 = resolveColumn(firstRow2, compareColumn2);
+
+      const s2Map = new Map<string, Record<string, any>>();
+      for (const r2 of rows2) {
+        const val2 = r2[actualKey2];
+        if (val2 !== undefined && val2 !== null) {
+          s2Map.set(String(val2), r2);
+        }
+      }
+
+      const compared: Record<string, any>[] = [];
+      for (const r1 of rows1) {
+        const val1 = r1[actualKey1];
+        if (val1 === undefined || val1 === null) continue;
+        const keyStr = String(val1);
+        const r2 = s2Map.get(keyStr);
+
+        const v1 = r1[actualCompCol1];
+        const v2 = r2 ? r2[actualCompCol2] : null;
+
+        const num1 = Number(v1);
+        const num2 = Number(v2);
+
+        let diff: number | null = null;
+        let pctChange: number | null = null;
+
+        if (v1 != null && v2 != null && !isNaN(num1) && !isNaN(num2)) {
+          diff = num2 - num1;
+          pctChange = num1 !== 0 ? (diff / num1) * 100 : null;
+        }
+
+        compared.push({
+          [key1]: val1,
+          [`${sheet1}_${compareColumn1}`]: v1,
+          [`${sheet2}_${compareColumn2}`]: v2,
+          difference: diff,
+          pct_change: pctChange != null ? `${pctChange.toFixed(2)}%` : null,
+          status: r2 ? (v1 === v2 ? "matched" : "mismatched") : "only_in_sheet1"
+        });
+      }
+
+      const s1Keys = new Set(rows1.map(r => String(r[actualKey1])).filter(Boolean));
+      for (const r2 of rows2) {
+        const val2 = r2[actualKey2];
+        if (val2 === undefined || val2 === null) continue;
+        if (!s1Keys.has(String(val2))) {
+          compared.push({
+            [key1]: val2,
+            [`${sheet1}_${compareColumn1}`]: null,
+            [`${sheet2}_${compareColumn2}`]: r2[actualCompCol2],
+            difference: null,
+            pct_change: null,
+            status: "only_in_sheet2"
+          });
+        }
+      }
+
+      return compared;
+    }
+    case "union_sheets": {
+      const { sheets: sheetNames } = params;
+      if (!Array.isArray(sheetNames) || sheetNames.length === 0) {
+        return "ERROR: Missing sheets list for union.";
+      }
+
+      const combinedRows: Record<string, any>[] = [];
+      for (const name of sheetNames) {
+        const s = sheets[name];
+        if (!s) return `ERROR: Sheet '${name}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+        for (const row of s.rows || []) {
+          combinedRows.push({ ...row, _source_sheet: name });
+        }
+      }
+      return combinedRows;
+    }
+    case "vlookup_sheets":
+    case "lookup_sheets": {
+      const { targetSheet, sourceSheet, targetKey, sourceKey, valueColumn, asColumn } = params;
+      const tSheet = sheets[targetSheet];
+      const sSheet = sheets[sourceSheet];
+      if (!tSheet) return `ERROR: Target sheet '${targetSheet}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+      if (!sSheet) return `ERROR: Source sheet '${sourceSheet}' not found. Available: ${Object.keys(sheets).join(", ")}`;
+
+      const tRows = tSheet.rows || [];
+      const sRows = sSheet.rows || [];
+      const firstRowT = tRows[0] || {};
+      const firstRowS = sRows[0] || {};
+      const actualTargetKey = resolveColumn(firstRowT, targetKey);
+      const actualSourceKey = resolveColumn(firstRowS, sourceKey);
+      const actualValueCol = resolveColumn(firstRowS, valueColumn);
+
+      const sourceMap = new Map<string, any>();
+      for (const row of sRows) {
+        const sk = row[actualSourceKey];
+        if (sk !== undefined && sk !== null) {
+          sourceMap.set(String(sk), row[actualValueCol]);
+        }
+      }
+
+      const lookupColName = asColumn || `${sourceSheet}_${valueColumn}`;
+      const updatedRows = tRows.map((row) => {
+        const tk = row[actualTargetKey];
+        const val = tk !== undefined && tk !== null ? sourceMap.get(String(tk)) : null;
+        return {
+          ...row,
+          [lookupColName]: val !== undefined ? val : null
+        };
+      });
+
+      return updatedRows;
+    }
+    default:
+      return `ERROR: Unknown cross-sheet operation '${operation}'`;
+  }
+}
+
 function executeSheetCommand(
   args: Record<string, any>,
   sheets: WorkbookSheets,
@@ -2603,13 +2995,28 @@ function executeSheetCommand(
     ? args.sheet_name.trim()
     : defaultSheetName;
 
-  const sheet = sheets[requestedSheetName];
-  if (!sheet) {
+  const operation = typeof args.operation === "string" ? args.operation.trim() : "";
+  const isCrossSheetOp = ["join_sheets", "compare_sheets", "union_sheets", "vlookup_sheets", "lookup_sheets"].includes(operation);
+
+  if (!isCrossSheetOp && !sourceRows) {
+    const sheet = sheets[requestedSheetName];
+    if (!sheet) {
+      return {
+        args: { ...args, sheet_name: requestedSheetName },
+        result: `ERROR: Sheet '${requestedSheetName}' not found. Available: ${Object.keys(sheets).join(", ")}`,
+      };
+    }
+  }
+
+  if (isCrossSheetOp) {
+    const result = executeCrossSheetOperation(sheets, operation, args.params || {});
     return {
       args: { ...args, sheet_name: requestedSheetName },
-      result: `ERROR: Sheet '${requestedSheetName}' not found. Available: ${Object.keys(sheets).join(", ")}`,
+      result,
     };
   }
+
+  const rows = sourceRows || sheets[requestedSheetName]?.rows || [];
 
   if (typeof args.pandas_query === "string" && args.pandas_query.trim()) {
     const translated = translateLegacyPandasQuery(args.pandas_query);
@@ -2622,11 +3029,11 @@ function executeSheetCommand(
 
     return {
       args: { ...args, sheet_name: requestedSheetName },
-      result: executeOperation(sourceRows || sheet.rows, translated.operation, translated.params),
+      result: executeOperation(rows, translated.operation, translated.params),
     };
   }
 
-  if (typeof args.operation !== "string" || !args.operation.trim()) {
+  if (!operation) {
     return {
       args: { ...args, sheet_name: requestedSheetName },
       result: "QUERY_ERROR: Missing operation or pandas_query.",
@@ -2635,7 +3042,7 @@ function executeSheetCommand(
 
   return {
     args: { ...args, sheet_name: requestedSheetName },
-    result: executeOperation(sourceRows || sheet.rows, args.operation, args.params || {}),
+    result: executeOperation(rows, operation, args.params || {}),
   };
 }
 
@@ -2895,7 +3302,7 @@ export async function* runDatabaseAgent(
 
   const history: { role: string; content: string }[] = [];
   const prompt = systemPromptOverride || DEFAULT_DATABASE_AGENT_PROMPT;
-  const maxTurns = 8;
+  const maxTurns = 15;
   const inspectedTables = new Set<string>();
   const lastIntermediateFilterByTable = new Map<string, { operation: string; params: Record<string, any> }>();
   let turn = 0;
@@ -3000,9 +3407,18 @@ export async function* runDatabaseAgent(
       !inspectedTables.has(requestedTableName) &&
       !repairedExplicitIdentifierLookup
     ) {
-      command = "GetColumns";
-      args = { table_name: requestedTableName };
-      rawArgs = args as Record<string, any>;
+      // Skip forced GetColumns if table already has columns from GetSchema AND we have SQL execution
+      const tableInfo = tables[requestedTableName];
+      const hasColumnsFromSchema = tableInfo && tableInfo.columns && tableInfo.columns.length > 0;
+      const hasSqlTool = Boolean(tools.executeSql);
+      if (!hasColumnsFromSchema || !hasSqlTool) {
+        command = "GetColumns";
+        args = { table_name: requestedTableName };
+        rawArgs = args as Record<string, any>;
+      } else {
+        // Mark as inspected since we already have column info from schema
+        inspectedTables.add(requestedTableName);
+      }
     }
 
     let result: any;
@@ -3111,7 +3527,7 @@ export async function* runDatabaseAgent(
         });
         const unwrapped = unwrapDatabaseExecutionResult(toolResult);
         result = command === "QuerySQL" && Array.isArray(unwrapped.rows)
-          ? unwrapped.rows.slice(0, 20)
+          ? unwrapped.rows.slice(0, 15)
           : unwrapped.rows;
         executedSql = unwrapped.sql || sql;
         break;
@@ -3271,11 +3687,35 @@ export async function* runDatabaseAgent(
     llmInput = guidance;
   }
 
+  // Smart fallback: try to synthesize an answer from gathered intermediate results
+  const gatheredResults: any[] = [];
+  // (We don't have direct access to prior steps here, but the history contains result feedback)
+  // Extract last meaningful result from conversation history
+  const lastUserMessage = history.length >= 2 ? history[history.length - 2]?.content : "";
+  const lastResultMatch = lastUserMessage?.match(/^Result:\s*(.+)/s);
+  if (lastResultMatch) {
+    try {
+      const lastResult = JSON.parse(lastResultMatch[1].replace(/\.\.\. \(truncated\)$/, ""));
+      if (lastResult && (Array.isArray(lastResult) ? lastResult.length > 0 : Object.keys(lastResult).length > 0)) {
+        yield {
+          turn,
+          command: "ExecuteFinalQuery",
+          args: {},
+          result: lastResult,
+          tokens: { input: 0, output: 0 },
+          durationMs: 0,
+          isFinal: true,
+        };
+        return;
+      }
+    } catch { /* Not valid JSON, fall through to MaxTurnsReached */ }
+  }
+
   yield {
     turn,
     command: "MaxTurnsReached",
     args: {},
-    result: "Agent reached maximum turns without a final answer.",
+    result: "Agent reached maximum turns without a final answer. Try breaking your question into smaller, simpler parts.",
     tokens: { input: 0, output: 0 },
     durationMs: 0,
     isFinal: true,
@@ -3312,7 +3752,7 @@ export async function* runLegacyAgent(
 
   const history: { role: string; content: string }[] = [];
   const prompt = systemPromptOverride || DEFAULT_AGENT_PROMPT;
-  const maxTurns = 8;
+  const maxTurns = 12;
   const lastIntermediateRowsBySheet = new Map<string, Record<string, any>[]>();
   const lastIntermediateFilterBySheet = new Map<string, { operation: string; params: Record<string, any> }>();
   let turn = 0;
@@ -3427,8 +3867,10 @@ export async function* runLegacyAgent(
           ? { ...rawArgs, sheet_name: requestedSheetName, operation, params: operationParams }
           : { ...rawArgs, sheet_name: requestedSheetName };
         const previousRows = lastIntermediateRowsBySheet.get(requestedSheetName);
-        const sourceRows = command === "ExecuteFinalQuery" && operation
-          && canRunOnPreviousSheetRows(operation, operationParams, previousRows)
+        const isRealSheet = Boolean(sheets[requestedSheetName]);
+        const sourceRows =
+          (command === "ExecuteFinalQuery" && operation && canRunOnPreviousSheetRows(operation, operationParams, previousRows))
+          || (!isRealSheet && previousRows)
           ? previousRows
           : undefined;
 
@@ -3554,11 +3996,32 @@ export async function* runLegacyAgent(
     llmInput = `Result: ${formatResultForModel(result)}`;
   }
 
+  // Smart fallback: try to return the last intermediate result as an answer
+  const lastUserMsg = history.length >= 2 ? history[history.length - 2]?.content : "";
+  const lastResMatch = lastUserMsg?.match(/^Result:\s*(.+)/s);
+  if (lastResMatch) {
+    try {
+      const lastRes = JSON.parse(lastResMatch[1].replace(/\.\.\. \(truncated\)$/, ""));
+      if (lastRes && (Array.isArray(lastRes) ? lastRes.length > 0 : Object.keys(lastRes).length > 0)) {
+        yield {
+          turn,
+          command: "ExecuteFinalQuery",
+          args: {},
+          result: lastRes,
+          tokens: { input: 0, output: 0 },
+          durationMs: 0,
+          isFinal: true,
+        };
+        return;
+      }
+    } catch { /* Not valid JSON, fall through */ }
+  }
+
   yield {
     turn,
     command: "MaxTurnsReached",
     args: {},
-    result: "Agent reached maximum turns without a final answer.",
+    result: "Agent reached maximum turns without a final answer. Try breaking your question into smaller, simpler parts.",
     tokens: { input: 0, output: 0 },
     durationMs: 0,
     isFinal: true,

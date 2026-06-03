@@ -226,7 +226,7 @@ export async function callLLM(
   messages: { role: string; content: string }[],
   systemPrompt: string,
   temperature = 0.1,
-  maxTokens = 1024,
+  maxTokens = 2048,
   providerOptions: LLMProviderOptions = {}
 ): Promise<LLMResponse> {
   const allMessages = [{ role: "system", content: systemPrompt }, ...messages];
