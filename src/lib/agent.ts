@@ -1352,6 +1352,24 @@ function looseCompare(a: any, b: any, operator: string): boolean {
   return false;
 }
 
+// Wraps executeOperation so a malformed tool call from the model (e.g. a param
+// the code expects to be an array arriving as a string/object, which would throw
+// "x.filter is not a function") becomes a recoverable error result instead of
+// crashing the whole run. The returned { error } feeds the self-healing loop.
+function safeExecuteOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
+  if (!Array.isArray(data)) {
+    return { error: "No tabular data is available to run this operation on. Inspect the columns first with GetColumns." };
+  }
+  try {
+    return executeOperation(data, operation, params);
+  } catch (err: any) {
+    console.error(`executeOperation("${operation}") failed:`, err, { params });
+    return {
+      error: `The "${operation}" operation could not run with the given parameters (${err?.message || String(err)}). Re-check the operation name and that each parameter has the expected type (for example "columns" and "filters" must be arrays), then try again.`,
+    };
+  }
+}
+
 function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
   switch (operation) {
     case "filter": {
@@ -1573,6 +1591,16 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
     case "select": {
       const { columns, filter: filterParam, filters, logic = "AND", limit = 50 } = params;
+      // The model occasionally returns `columns` as a single string instead of
+      // an array; coerce so iteration never throws.
+      const selectCols = Array.isArray(columns)
+        ? columns
+        : typeof columns === "string" && columns.trim()
+          ? [columns]
+          : [];
+      if (selectCols.length === 0) {
+        return { error: 'The "select" operation requires a non-empty "columns" array, e.g. {"columns":["name","price"]}.' };
+      }
       let rows = data;
       if (filterParam) {
         rows = executeOperation(rows, "filter", filterParam);
@@ -1583,7 +1611,7 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
       return rows.slice(0, limit).map((row) => {
         const obj: Record<string, any> = {};
-        for (const c of columns) {
+        for (const c of selectCols) {
           const actualCol = resolveColumn(row, c);
           obj[c] = row[actualCol];
         }
@@ -1804,6 +1832,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "multi_filter": {
       const { filters = [], logic = "AND" } = params;
+      if (!Array.isArray(filters)) {
+        return { error: 'The "multi_filter" operation requires "filters" to be an array of {column, operator, value} objects.' };
+      }
       return data.filter((row) => {
         const results = filters.map((f: any) => {
           const actualCol = resolveColumn(row, f.column);
@@ -1866,6 +1897,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "pipeline": {
       const { operations } = params;
+      if (!Array.isArray(operations)) {
+        return { error: 'The "pipeline" operation requires an "operations" array of {operation, params} steps.' };
+      }
       let currentData = data;
       for (const op of operations) {
         currentData = executeOperation(currentData, op.operation, op.params || {});
@@ -1875,6 +1909,9 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
     case "multi_analysis": {
       const { operations = [] } = params;
+      if (!Array.isArray(operations)) {
+        return { error: 'The "multi_analysis" operation requires an "operations" array of {operation, params} steps.' };
+      }
       const results: Record<string, any> = {};
       for (let i = 0; i < operations.length; i++) {
         const op = operations[i];
@@ -1902,9 +1939,14 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       if (BLOCKED.test(code)) {
         return { error: "universal_compute: code contains a disallowed pattern (network / filesystem / eval access is blocked for safety)." };
       }
+      // The sandbox runs synchronously and every async API is blocked, so any
+      // `async`/`await` the model emits is meaningless and would otherwise throw
+      // "await is only valid in async functions". Strip those keywords so the
+      // computation still runs.
+      const syncCode = code.replace(/\basync\b/g, " ").replace(/\bawait\b/g, " ");
       try {
         // eslint-disable-next-line no-new-func
-        const fn = new Function("data", `"use strict";\n${code}`);
+        const fn = new Function("data", `"use strict";\n${syncCode}`);
         const result = fn(data);
         return result ?? null;
       } catch (err: any) {
@@ -2518,13 +2560,13 @@ export async function* runAgent(
         schemaInspected = true;
         break;
       case "QuerySheet":
-        result = executeOperation(currentData, args.operation, args.params || {});
+        result = safeExecuteOperation(currentData, args.operation, args.params || {});
         if (args.operation === "filter" || args.operation === "multi_filter" || args.operation === "remove_nulls" || args.operation === "transform_column") {
-          currentData = Array.isArray(result) ? result : [result];
+          if (Array.isArray(result)) currentData = result;
         }
         break;
       case "ExecuteFinalQuery":
-        result = executeOperation(currentData, args.operation, args.params || {});
+        result = safeExecuteOperation(currentData, args.operation, args.params || {});
         break;
       default:
         result = { error: `Unknown command: ${command}` };
@@ -3308,11 +3350,30 @@ function buildSheetDescription(sheets: WorkbookSheets) {
 
   const lines = names.map((name) => {
     const sheet = sheets[name];
-    const columns = sheet.columns.map((column) => column.name).join(", ");
-    return `  Sheet '${name}': ${sheet.rows.length} rows | Columns: [${columns}]`;
+    // Rich per-column profile (type, cardinality, nulls, sample values) so the
+    // model can pick the correct columns/values on turn 1 without a GetColumns
+    // round-trip — critical for medium/complex queries.
+    const colLines = sheet.columns
+      .map((column) => {
+        const sample = Array.isArray(column.sampleValues)
+          ? column.sampleValues.slice(0, 3).map((v) => String(v)).join(", ")
+          : "";
+        const type = column.dtype ? ` [${column.dtype}]` : "";
+        const unique = typeof column.uniqueCount === "number" ? ` — ${column.uniqueCount} unique` : "";
+        const nulls =
+          typeof column.nonNullCount === "number" && column.nonNullCount < sheet.rows.length
+            ? `, ${sheet.rows.length - column.nonNullCount} nulls`
+            : "";
+        return `      - "${column.name}"${type}${unique}${nulls}${sample ? ` — e.g. ${sample}` : ""}`;
+      })
+      .join("\n");
+    return `  Sheet '${name}': ${sheet.rows.length} rows × ${sheet.columns.length} columns\n${colLines}`;
   });
 
-  return "Available sheets:\n" + lines.join("\n");
+  return (
+    "Available sheets (use EXACT column names below VERBATIM — do NOT guess, paraphrase, or invent columns; match filter values to the sample values shown):\n" +
+    lines.join("\n\n")
+  );
 }
 
 function buildDatabaseSchemaDescription(tables: DatabaseTables, question = "") {

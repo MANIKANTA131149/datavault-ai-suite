@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/AppSidebar";
+import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { AccountMenu } from "@/components/AccountMenu";
 import { NotificationBell } from "@/components/NotificationBell";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -53,6 +54,17 @@ const MOBILE_NAV_ITEMS = [
   { label: "Insights", icon: Bookmark,        path: "/app/insights" },
   { label: "Settings", icon: Settings,        path: "/app/settings" },
 ];
+
+// ─── Page Content Loader ──────────────────────────────────────────────────────
+// Shown while a lazy-loaded page chunk is downloading, so navigation never
+// leaves the content area blank.
+function PageContentLoader() {
+  return (
+    <div className="flex min-h-full items-center justify-center py-24">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+    </div>
+  );
+}
 
 // ─── Page Progress Bar ────────────────────────────────────────────────────────
 function PageProgressBar({ locationKey }: { locationKey: string }) {
@@ -383,20 +395,22 @@ export default function AppLayout() {
         </header>
 
         <main className="relative min-h-0 flex-1 overflow-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.16 }}
-              className="min-h-full"
-            >
-              <Suspense fallback={null}>
-                <Outlet />
-              </Suspense>
-            </motion.div>
-          </AnimatePresence>
+          <RouteErrorBoundary resetKey={location.pathname}>
+            <Suspense fallback={<PageContentLoader />}>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={location.pathname}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.16 }}
+                  className="min-h-full"
+                >
+                  <Outlet />
+                </motion.div>
+              </AnimatePresence>
+            </Suspense>
+          </RouteErrorBoundary>
         </main>
 
         <MobileBottomNav />
