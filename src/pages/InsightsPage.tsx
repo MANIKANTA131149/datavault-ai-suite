@@ -10,9 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PageHeader } from "@/components/PageHeader";
 import { useInsightsStore, type Insight } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> = {
   blue:   { bg: "bg-blue-500/10",   text: "text-blue-400",   border: "border-blue-500/20" },
@@ -180,32 +181,16 @@ export default function InsightsPage() {
 
   return (
     <div className="page-shell space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Insight library</p>
-            <h1 className="page-title">Keep the best results close</h1>
-            <p className="page-copy">
-              Collect notable findings, annotate them, and revisit them from any device in a cleaner, presentation-ready
-              layout.
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Saved</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{insights.length}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Pinned</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{pinnedIds.length}</p>
-            </div>
-            <div className="inline-stat col-span-2 sm:col-span-1">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Tags</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{allTags.length}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Insights"
+        titleIcon={Bookmark}
+        info="Collect notable findings, annotate them, and revisit them from any device in a cleaner, presentation-ready layout."
+        stats={[
+          { label: "Saved", value: insights.length },
+          { label: "Pinned", value: pinnedIds.length },
+          { label: "Tags", value: allTags.length },
+        ]}
+      />
 
       <div className="toolbar-panel">
         <div className="flex gap-3 flex-wrap">

@@ -4,15 +4,18 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Bookmark,
   Cable,
+  ChevronRight,
   Clock,
   Database,
   LayoutDashboard,
   Menu,
   MessageSquare,
   Moon,
+  Search,
   Settings,
   Sun,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AccountMenu } from "@/components/AccountMenu";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -26,10 +29,11 @@ import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { useNotificationsStore } from "@/stores/notifications-store";
 import { useConnectionStore } from "@/stores/connection-store";
+import { useCommandStore } from "@/stores/command-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/ProviderLogo";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/get-started": "Get Started",
@@ -82,7 +86,7 @@ function PageProgressBar({ locationKey }: { locationKey: string }) {
       className="pointer-events-none absolute top-0 left-0 h-[2.5px] z-50 progress-bar-glow rounded-r-full"
       style={{
         width: `${width}%`,
-        background: "linear-gradient(90deg, hsl(217 91% 60%), hsl(263 70% 58%))",
+        background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
         transition: width === 100
           ? "width 0.18s ease-out"
           : "width 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
@@ -122,24 +126,24 @@ function MobileBottomNav() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/70 bg-background/96 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_30px_-22px_hsl(var(--foreground)/0.85)] backdrop-blur-xl md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/50 bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_-8px_hsl(var(--foreground)/0.12)] backdrop-blur-2xl md:hidden"
       aria-label="Mobile navigation"
     >
-      <div 
+      <div
         className="relative grid"
         style={{ gridTemplateColumns: `repeat(${MOBILE_NAV_ITEMS.length}, minmax(0, 1fr))` }}
       >
-        {/* Sliding pill indicator */}
+        {/* Sliding top indicator */}
         {active && (
           <motion.div
             layoutId="mobile-tab-pill"
-            className="pointer-events-none absolute top-0 left-0 h-[2px] rounded-full"
+            className="pointer-events-none absolute top-0 left-0 h-[2px] rounded-b-full"
             style={{
-              background: "linear-gradient(90deg, hsl(217 91% 60%), hsl(263 70% 58%))",
+              background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
               width: `${100 / MOBILE_NAV_ITEMS.length}%`,
               x: `${MOBILE_NAV_ITEMS.indexOf(active) * 100}%`,
             }}
-            transition={{ type: "spring", stiffness: 420, damping: 36 }}
+            transition={{ type: "spring", stiffness: 420, damping: 38 }}
           />
         )}
 
@@ -152,17 +156,23 @@ function MobileBottomNav() {
               aria-label={label}
               aria-current={isActive ? "page" : undefined}
               onClick={() => navigate(path)}
-              className="flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors duration-150"
-              style={{ color: isActive ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))", opacity: isActive ? 1 : 0.6 }}
+              className="flex flex-col items-center gap-1 px-1 py-2.5 text-[10px] font-medium transition-colors duration-150"
+              style={{
+                color: isActive ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
+                opacity: isActive ? 1 : 0.65,
+              }}
             >
               <motion.span
-                animate={isActive ? { scale: [1, 1.22, 1] } : { scale: 1 }}
-                transition={{ duration: 0.28, ease: [0.34, 1.56, 0.64, 1] }}
-                className="flex items-center justify-center"
+                animate={isActive ? { scale: [1, 1.2, 1] } : { scale: 1 }}
+                transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-xl transition-colors duration-150",
+                  isActive ? "bg-primary/10" : "",
+                )}
               >
-                <Icon size={18} strokeWidth={isActive ? 2.2 : 1.7} />
+                <Icon size={17} strokeWidth={isActive ? 2.25 : 1.75} />
               </motion.span>
-              <span className={isActive ? "font-semibold" : ""}>{label}</span>
+              <span className={cn("text-[10px]", isActive ? "font-semibold" : "font-medium")}>{label}</span>
             </button>
           );
         })}
@@ -184,6 +194,7 @@ export default function AppLayout() {
   const { fetchPlan }                  = usePlanStore();
   const { fetchNotifications }         = useNotificationsStore();
   const { fetchConnections }           = useConnectionStore();
+  const { setOpen: openCommand }       = useCommandStore();
   const [sidebarOpen, setSidebarOpen]  = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
 
@@ -232,9 +243,16 @@ export default function AppLayout() {
   if (!hasHydrated) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-sm">Loading…</p>
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative h-11 w-11">
+            <div className="absolute inset-0 rounded-full border-2 border-primary/8" />
+            <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            <div className="absolute inset-[5px] rounded-full border border-primary/15" />
+          </div>
+          <div className="flex flex-col items-center gap-0.5">
+            <p className="text-[13px] font-medium text-foreground">Loading</p>
+            <p className="text-[11px] text-muted-foreground">Please wait…</p>
+          </div>
         </div>
       </div>
     );
@@ -245,9 +263,16 @@ export default function AppLayout() {
   if (bootstrapping) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-sm">Loading your workspace…</p>
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative h-11 w-11">
+            <div className="absolute inset-0 rounded-full border-2 border-primary/8" />
+            <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            <div className="absolute inset-[5px] rounded-full border border-primary/15" />
+          </div>
+          <div className="flex flex-col items-center gap-0.5">
+            <p className="text-[13px] font-medium text-foreground">Setting up workspace</p>
+            <p className="text-[11px] text-muted-foreground">Fetching your data…</p>
+          </div>
         </div>
       </div>
     );
@@ -268,9 +293,9 @@ export default function AppLayout() {
       </Sheet>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.04),_transparent_30%)]" />
 
-        <header className="relative shrink-0 border-b border-border/70 bg-background/70 backdrop-blur-xl">
+        <header className="relative shrink-0 border-b border-border/50 bg-background/80 backdrop-blur-xl">
           <PageProgressBar locationKey={location.pathname} />
           <div className="flex min-h-14 items-center justify-between gap-3 px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
@@ -285,35 +310,51 @@ export default function AppLayout() {
                 <Menu size={18} />
               </Button>
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs sm:text-sm">
-                  <span className="shrink-0 rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-primary sm:text-[11px]">
+                <div className="flex items-center gap-1.5 text-xs sm:text-sm">
+                  <span className="shrink-0 rounded-md border border-primary/20 bg-primary/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary sm:text-[11px]">
                     Querify
                   </span>
+                  <ChevronRight size={13} className="shrink-0 text-muted-foreground/40" />
                   <span className="truncate font-medium text-foreground">
                     {BREADCRUMBS[location.pathname] || "Page"}
                   </span>
                 </div>
-                <p className="truncate text-[11px] text-muted-foreground sm:hidden">
-                  {PROVIDER_LABELS[activeProvider]} | {activeModel}
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground sm:hidden">
+                  {PROVIDER_LABELS[activeProvider]} · {activeModel}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {/* Cmd+K search trigger */}
+              <button
+                type="button"
+                aria-label="Open command palette"
+                onClick={() => openCommand(true)}
+                className="hidden items-center gap-2 rounded-lg border border-border/45 bg-background/50 px-2.5 py-1.5 text-[12px] text-muted-foreground/70 transition-colors hover:border-border/70 hover:bg-background/80 hover:text-muted-foreground sm:flex"
+              >
+                <Search size={12} className="shrink-0" />
+                <span className="hidden lg:inline">Search</span>
+                <span className="flex items-center gap-0.5">
+                  <kbd className="rounded border border-border/40 bg-muted/30 px-1 font-mono text-[10px] leading-4">⌘</kbd>
+                  <kbd className="rounded border border-border/40 bg-muted/30 px-1 font-mono text-[10px] leading-4">K</kbd>
+                </span>
+              </button>
+
               <Badge
                 variant="outline"
-                className="hidden max-w-[18rem] items-center gap-1.5 font-mono text-xs text-muted-foreground sm:inline-flex"
+                className="hidden max-w-[20rem] items-center gap-1.5 rounded-lg border-border/60 bg-background/60 px-2.5 py-1 font-mono text-[11px] text-muted-foreground backdrop-blur-sm sm:inline-flex"
               >
                 <ProviderLogo provider={activeProvider} size="sm" />
                 <span className="truncate">
-                  {PROVIDER_LABELS[activeProvider]} | {activeModel}
+                  {PROVIDER_LABELS[activeProvider]} · {activeModel}
                 </span>
               </Badge>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
+                className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-card/80 hover:text-foreground"
                 aria-label={theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "Switch to light mode" : "Switch to dark mode"}
                 onClick={async () => {
                   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -322,8 +363,8 @@ export default function AppLayout() {
                 }}
               >
                 {(theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches))
-                  ? <Sun size={16} />
-                  : <Moon size={16} />}
+                  ? <Sun size={15} />
+                  : <Moon size={15} />}
               </Button>
               <NotificationBell />
               <AccountMenu
@@ -331,7 +372,7 @@ export default function AppLayout() {
                   <button
                     type="button"
                     aria-label="Open account menu"
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-xs font-semibold text-primary shadow-[0_10px_24px_-18px_hsl(var(--primary)/0.95)] transition-colors hover:bg-primary/15"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/40 hover:bg-primary/15 hover:shadow-[0_0_12px_-2px_hsl(var(--primary)/0.3)]"
                   >
                     {user.avatarInitials}
                   </button>

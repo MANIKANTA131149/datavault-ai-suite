@@ -17,7 +17,8 @@ import {
   Search, Eye, X, Database, Table2, LayoutTemplate, Keyboard, RefreshCw, FileJson,
   FileText, Code2, TrendingUp, Trash2, BarChart3, FileDown, Layout, Maximize2,
   Minimize2, Star, Rows3, Palette, Share2, Mic, CheckCircle2, AlertTriangle, HelpCircle,
-  Sun, Moon, PanelLeftClose, PanelLeftOpen, Info, Activity, Globe
+  Sun, Moon, PanelLeftClose, PanelLeftOpen, Info, Activity, Globe,
+  ClipboardCheck, Clipboard, MessageSquareText, RotateCcw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +33,7 @@ import { getApiBaseUrl } from "@/lib/api-base";
 import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
 import { parseOptionsFromText, cleanPromptText } from "@/lib/clarification-options";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { generatePDF } from "@/lib/pdf-report";
 import html2canvas from "html2canvas";
 import {
@@ -60,8 +61,8 @@ const COMMAND_COLORS: Record<string, string> = {
 };
 
 const CHART_COLORS = [
-  "hsl(240, 5.9%, 10%)", "hsl(240, 5.9%, 30%)", "hsl(240, 5.9%, 50%)",
-  "hsl(240, 5.9%, 70%)", "hsl(240, 5.9%, 90%)",
+  "hsl(222, 8%, 18%)", "hsl(222, 7%, 34%)", "hsl(222, 6%, 50%)",
+  "hsl(222, 6%, 68%)", "hsl(222, 6%, 86%)",
 ];
 
 const DEFAULT_CHART_ROWS = 50;
@@ -79,7 +80,7 @@ type ChartType = "bar" | "pie" | "line" | "area";
 // ─── Query Templates ──────────────────────────────────────────────────────────
 const QUERY_TEMPLATES = [
   {
-    category: "📊 Sales & Metrics",
+    category: "Sales & Metrics",
     templates: [
       "What is the total revenue?",
       "Show top 10 products by sales",
@@ -89,7 +90,7 @@ const QUERY_TEMPLATES = [
     ],
   },
   {
-    category: "👥 Groupings & Summaries",
+    category: "Groupings & Summaries",
     templates: [
       "How many items are there by status?",
       "Show category distribution",
@@ -98,7 +99,7 @@ const QUERY_TEMPLATES = [
     ],
   },
   {
-    category: "🔍 Data Exploration",
+    category: "Data Exploration",
     templates: [
       "What is this dataset about?",
       "Show me a preview of the columns",
@@ -889,6 +890,7 @@ export default function DeployedChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const cancelRequestedRef = useRef(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Layout parameters
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -915,6 +917,13 @@ export default function DeployedChatPage() {
     }
     setHitlState(null);
     setIsRunning(false);
+  };
+
+  const clearConversation = () => {
+    setMessages([]);
+    setConversationContext([]);
+    setCurrentSteps([]);
+    setInput("");
   };
 
   const handleHitlSubmit = (val: string) => {
@@ -1090,7 +1099,7 @@ export default function DeployedChatPage() {
     cancelRequestedRef.current = false;
     setInput("");
     queryStartRef.current = Date.now();
-    setMessages((prev) => [...prev, { role: "user", content: question, query: question }]);
+    setMessages((prev) => [...prev, { role: "user", content: question, query: question, ts: Date.now() }]);
     setCurrentSteps([]);
 
     const steps: AgentStep[] = [];
@@ -1202,7 +1211,7 @@ export default function DeployedChatPage() {
       if (finalStep) {
         setConversationContext((prev) => [...prev, { question, answer: finalStep.result }]);
       }
-      setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps], query: question }]);
+      setMessages((prev) => [...prev, { role: "agent", content: "", steps: [...steps], query: question, ts: Date.now() }]);
       setCurrentSteps([]);
     } catch (err: any) {
       toast.error(err.message || "Failed to execute chatbot reasoning");
@@ -1285,7 +1294,7 @@ export default function DeployedChatPage() {
                 D
               </span>
               <div>
-                <h1 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-55">DataVault AI</h1>
+                <h1 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-50">DataVault AI</h1>
                 <p className="text-[9px] text-zinc-400 dark:text-zinc-500 font-mono tracking-widest leading-none mt-0.5">ENTERPRISE CHATBOT</p>
               </div>
             </div>
@@ -1381,13 +1390,17 @@ export default function DeployedChatPage() {
                 </div>
               )}
 
+
             </div>
 
             {/* Sidebar Security Footer */}
             <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 shrink-0 bg-zinc-50 dark:bg-zinc-900 text-center">
-              <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500 flex items-center justify-center gap-1">
-                <Globe size={9} /> Sandbox Secure Mode
-              </span>
+              <div className="flex items-center justify-between text-[9px] font-mono text-zinc-400 dark:text-zinc-500">
+                <span className="flex items-center gap-1"><Globe size={9} /> Sandbox Secure Mode</span>
+                {conversationContext.length > 0 && (
+                  <span className="flex items-center gap-1"><MessageSquareText size={9} /> {conversationContext.length} turns</span>
+                )}
+              </div>
             </div>
           </motion.aside>
         )}
@@ -1422,6 +1435,22 @@ export default function DeployedChatPage() {
 
             {/* Quick Actions & Themes */}
             <div className="flex items-center gap-2 shrink-0">
+              {messages.length > 0 && (
+                <button
+                  onClick={clearConversation}
+                  type="button"
+                  className="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800 shrink-0 border border-zinc-200 dark:border-zinc-800 bg-card transition-all font-medium"
+                  title="Clear conversation"
+                >
+                  <RotateCcw size={12} />
+                  <span className="hidden sm:inline">Clear</span>
+                </button>
+              )}
+              {messages.length > 0 && (
+                <span className="hidden sm:flex h-7 items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700 bg-card px-2 text-[10px] font-mono text-zinc-400">
+                  <MessageSquareText size={9} /> {messages.length}
+                </span>
+              )}
               <button
                 onClick={toggleTheme}
                 type="button"
@@ -1465,14 +1494,30 @@ export default function DeployedChatPage() {
           )}
 
           {messages.length === 0 && !isRunning && !isBroken && (
-            <div className="flex h-[75%] flex-col items-center justify-center gap-4 text-center py-12 max-w-md mx-auto">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700/60 mb-1">
-                <Sparkles size={18} className="text-foreground animate-pulse" />
+            <div className="flex flex-col items-center gap-6 py-10 max-w-xl mx-auto w-full">
+              <div className="text-center space-y-2">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700/60 mx-auto mb-2">
+                  <Sparkles size={22} className="text-foreground" />
+                </div>
+                <h3 className="text-base font-bold text-foreground">Ask anything about {sourceName}</h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                  Ask in plain English — the AI will reason over your data, run queries, and return charts, tables, or narrative insights.
+                </p>
               </div>
-              <h3 className="text-sm font-bold text-foreground leading-none">Query anything in {sourceName}</h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                This public chatbot uses an advanced enterprise AI reasoning loop. Ask questions in plain English or select prompt cards from the sidebar library to fetch live data outputs, pivots, and Recharts visualization plots securely.
-              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
+                {QUERY_TEMPLATES[0].templates.slice(0, 4).map((tpl, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => executeDirectTemplate(tpl)}
+                    className="group flex items-start gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card p-3 text-left text-xs hover:border-zinc-400 dark:hover:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 transition-all text-zinc-600 dark:text-zinc-400"
+                  >
+                    <Sparkles size={13} className="text-zinc-400 shrink-0 mt-0.5 group-hover:text-foreground transition-colors" />
+                    <span className="leading-snug group-hover:text-foreground transition-colors">{tpl}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-600 font-mono">Shift+Enter for new line · Enter to send</p>
             </div>
           )}
 
@@ -1482,8 +1527,25 @@ export default function DeployedChatPage() {
               <div key={i} className="space-y-4">
                 {msg.role === "user" ? (
                   <div className="flex justify-end">
-                    <div className="max-w-[85%] min-w-0 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-card px-4 py-3 sm:max-w-md shadow-sm">
-                      <p className="text-xs sm:text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
+                    <div className="group relative max-w-[85%] min-w-0 sm:max-w-md">
+                      <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-card px-4 py-3 shadow-sm">
+                        <p className="text-xs sm:text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
+                      </div>
+                      <div className="mt-1 flex items-center justify-end gap-2">
+                        {msg.ts && <span className="text-[10px] text-zinc-400 font-mono">{new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
+                        <button
+                          type="button"
+                          title="Copy message"
+                          onClick={() => {
+                            navigator.clipboard.writeText(msg.content);
+                            setCopiedId(`user-${i}`);
+                            setTimeout(() => setCopiedId(null), 1800);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-all"
+                        >
+                          {copiedId === `user-${i}` ? <ClipboardCheck size={11} className="text-emerald-500" /> : <Clipboard size={11} />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -1497,6 +1559,7 @@ export default function DeployedChatPage() {
                     )}
                     {msg.steps && msg.steps.length > 0 && (
                       <div className="flex flex-wrap gap-3 pt-1 text-[10px] text-zinc-400 dark:text-zinc-500 sm:pl-10 items-center font-mono">
+                        {msg.ts && <span className="flex items-center gap-1">{new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
                         <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s: number, st: any) => s + st.durationMs, 0).toLocaleString()}ms</span>
                         <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s: number, st: any) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
                         {finalStep && (
@@ -1550,7 +1613,11 @@ export default function DeployedChatPage() {
                     <span className="thinking-dot" />
                     <span className="thinking-dot" />
                   </div>
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500 font-medium mr-2">Scanning workbook tables... {Math.floor(elapsedMs / 1000)}s</span>
+                  <span className="text-xs text-zinc-400 dark:text-zinc-500 font-medium mr-2">
+                    {currentSteps.length > 0
+                      ? `${currentSteps[currentSteps.length - 1].command} · ${Math.floor(elapsedMs / 1000)}s`
+                      : `Reasoning · ${Math.floor(elapsedMs / 1000)}s`}
+                  </span>
                   <Button variant="outline" size="sm" className="h-6 border-zinc-200 dark:border-zinc-800 text-[10px] rounded-lg font-bold" onClick={handleStopQuery}>
                     <X size={10} className="mr-1" /> Stop
                   </Button>
@@ -1563,6 +1630,21 @@ export default function DeployedChatPage() {
         {/* Global Input Bar */}
         <footer className="sticky bottom-0 z-20 shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-background/95 px-4 py-3 pb-[env(safe-area-inset-bottom)] backdrop-blur-md sm:px-5">
           <div className="mx-auto w-full max-w-5xl">
+            {messages.length > 0 && !isRunning && !input && (
+              <div className="flex flex-wrap gap-1.5 mb-2 px-1">
+                {QUERY_TEMPLATES.flatMap(c => c.templates).slice(0, 3).map((tpl, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setInput(tpl)}
+                    className="flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-card px-3 py-1 text-[11px] text-zinc-500 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-500 hover:text-foreground transition-all whitespace-nowrap"
+                  >
+                    <Sparkles size={9} className="shrink-0" />
+                    {tpl.length > 38 ? tpl.slice(0, 36) + "…" : tpl}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="relative flex flex-wrap items-end gap-2 rounded-[24px] border border-zinc-200 dark:border-zinc-800 bg-card p-2 shadow-sm focus-within:border-zinc-900 dark:focus-within:border-zinc-100 focus-within:ring-1 focus-within:ring-zinc-900 dark:focus-within:ring-zinc-100 transition-all">
               <div className="relative min-w-0 flex-1">
                 {isListening && (

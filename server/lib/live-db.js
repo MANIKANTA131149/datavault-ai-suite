@@ -554,7 +554,17 @@ async function createSqliteAdapter(config) {
 async function createMongoAdapter(config) {
   const client = new MongoClient(config.connectionUri);
   await client.connect();
-  const db = client.db();
+  const db = config.database ? client.db(config.database) : client.db();
+
+  function getDbAndCollection(tableName) {
+    const dotIndex = tableName.indexOf(".");
+    if (dotIndex !== -1 && !config.database) {
+      const dbName = tableName.substring(0, dotIndex);
+      const collName = tableName.substring(dotIndex + 1);
+      return { db: client.db(dbName), collectionName: collName };
+    }
+    return { db, collectionName: tableName };
+  }
 
   return {
     async close() {
@@ -565,23 +575,272 @@ async function createMongoAdapter(config) {
       return { success: true };
     },
     async listTables() {
-      const collections = await db.listCollections().toArray();
-      return collections.map((collection) => ({
-        name: collection.name,
-        schema: "",
-        kind: "collection",
-      }));
+      const collectionsList = [];
+      let listedDbsSuccess = false;
+
+      if (!config.database) {
+        try {
+          const adminDb = client.db().admin();
+          const dbInfo = await adminDb.listDatabases();
+          const systemDbs = ["admin", "local", "config"];
+
+          for (const dbMeta of dbInfo.databases) {
+            if (systemDbs.includes(dbMeta.name)) continue;
+            try {
+              const targetDb = client.db(dbMeta.name);
+              const collections = await targetDb.listCollections().toArray();
+              for (const coll of collections) {
+                collectionsList.push({
+                  name: `${dbMeta.name}.${coll.name}`,
+                  schema: "",
+                  kind: "collection",
+                });
+              }
+            } catch (err) {
+              // Ignore errors for specific databases we might not have access to
+            }
+          }
+          listedDbsSuccess = collectionsList.length > 0;
+        } catch (err) {
+          // Ignore error, fallback below
+        }
+      }
+
+      if (!listedDbsSuccess) {
+        const collections = await db.listCollections().toArray();
+        for (const coll of collections) {
+          collectionsList.push({
+            name: coll.name,
+            schema: "",
+            kind: "collection",
+          });
+        }
+      }
+
+      return collectionsList;
     },
     async getColumns(tableName) {
-      const rows = sanitizeRows(await db.collection(tableName).find({}).limit(50).toArray());
+      const { db: targetDb, collectionName } = getDbAndCollection(tableName);
+      const rows = sanitizeRows(await targetDb.collection(collectionName).find({}).limit(50).toArray());
       return buildColumnInfo(rows);
     },
     async fetchRows(tableName, limit = MAX_DB_SCAN_ROWS) {
-      const rows = await db.collection(tableName).find({}).limit(Number(limit)).toArray();
+      const { db: targetDb, collectionName } = getDbAndCollection(tableName);
+      const rows = await targetDb.collection(collectionName).find({}).limit(Number(limit)).toArray();
       return sanitizeRows(rows);
     },
     async countTable(tableName) {
-      return db.collection(tableName).countDocuments({});
+      const { db: targetDb, collectionName } = getDbAndCollection(tableName);
+      return targetDb.collection(collectionName).countDocuments({});
+    },
+    async executeOperation(tableName, operation, params = {}) {
+      const { db: targetDb, collectionName } = getDbAndCollection(tableName);
+
+      function escapeRegExp(string) {
+        return String(string || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+
+      function translateFilter(f) {
+        if (!f || typeof f !== "object") return {};
+        const column = f.column;
+        const op = f.operator;
+        const value = f.value;
+
+        if (op === "==") return { [column]: value };
+        if (op === "!=") return { [column]: { $ne: value } };
+
+        const numVal = Number(value);
+        const resolvedVal = Number.isFinite(numVal) && value !== "" ? numVal : value;
+
+        if (op === ">") return { [column]: { $gt: resolvedVal } };
+        if (op === "<") return { [column]: { $lt: resolvedVal } };
+        if (op === ">=") return { [column]: { $gte: resolvedVal } };
+        if (op === "<=") return { [column]: { $lte: resolvedVal } };
+        if (op === "contains") return { [column]: { $regex: value, $options: "i" } };
+        if (op === "starts_with") return { [column]: { $regex: "^" + escapeRegExp(value), $options: "i" } };
+        if (op === "ends_with") return { [column]: { $regex: escapeRegExp(value) + "$", $options: "i" } };
+        if (op === "is_null") return { $or: [{ [column]: null }, { [column]: { $exists: false } }] };
+        if (op === "not_null") return { [column]: { $ne: null, $exists: true } };
+
+        return {};
+      }
+
+      if (operation === "multi_analysis") {
+        const results = {};
+        for (let i = 0; i < (params.operations || []).length; i++) {
+          const op = params.operations[i];
+          const key = op.name || op.label || `analysis_${i}_${op.operation}`;
+          const subResult = await this.executeOperation(tableName, op.operation, op.params || {});
+          results[key] = subResult.data;
+        }
+        return {
+          data: results,
+          columns: [],
+          rowCount: Object.keys(results).length,
+          message: `Executed multi_analysis with ${Object.keys(results).length} sub-queries.`,
+        };
+      }
+
+      if (operation === "preview_table" || operation === "head") {
+        const limit = params.limit || params.n || 100;
+        const rows = await targetDb.collection(collectionName).find({}).limit(Number(limit)).toArray();
+        const sanitized = sanitizeRows(rows);
+        return {
+          data: sanitized,
+          columns: buildColumnInfo(sanitized),
+          rowCount: sanitized.length,
+          message: `Returned ${sanitized.length} preview rows from ${collectionName}.`,
+        };
+      }
+
+      if (operation === "count") {
+        const count = await targetDb.collection(collectionName).countDocuments({});
+        const result = { count };
+        return {
+          data: [result],
+          columns: buildColumnInfo([result]),
+          rowCount: 1,
+          message: `Counted ${count} documents in ${collectionName}.`,
+        };
+      }
+
+      const pipeline = [];
+
+      function buildPipelineForOp(op, p) {
+        if (op === "count") {
+          pipeline.push({ $count: "count" });
+        } else if (op === "head") {
+          if (p.n || p.limit) {
+            pipeline.push({ $limit: Number(p.n || p.limit) });
+          }
+        } else if (op === "filter") {
+          pipeline.push({ $match: translateFilter(p) });
+        } else if (op === "multi_filter") {
+          const conds = (p.filters || []).map(translateFilter).filter(c => Object.keys(c).length > 0);
+          if (conds.length > 0) {
+            const matchStage = p.logic === "OR" ? { $or: conds } : { $and: conds };
+            pipeline.push({ $match: matchStage });
+          }
+        } else if (op === "sort") {
+          if (p.column) {
+            const dir = p.order === "asc" ? 1 : -1;
+            pipeline.push({ $sort: { [p.column]: dir } });
+          }
+          if (p.limit) {
+            pipeline.push({ $limit: Number(p.limit) });
+          }
+        } else if (op === "select") {
+          if (p.filter) {
+            pipeline.push({ $match: translateFilter(p.filter) });
+          } else if (p.filters) {
+            const conds = Object.entries(p.filter || {}).map(([col, val]) => ({ [col]: val }));
+            if (conds.length > 0) pipeline.push({ $match: { $and: conds } });
+          }
+          if (p.columns && Array.isArray(p.columns)) {
+            const proj = {};
+            p.columns.forEach(col => { proj[col] = 1; });
+            pipeline.push({ $project: proj });
+          }
+          if (p.limit) {
+            pipeline.push({ $limit: Number(p.limit) });
+          }
+        } else if (op === "unique") {
+          if (p.column) {
+            pipeline.push({ $group: { _id: `$${p.column}` } });
+            pipeline.push({ $project: { [p.column]: "$_id", _id: 0 } });
+          }
+        } else if (op === "aggregate") {
+          const groupStage = { _id: null };
+          const aggCol = p.column;
+          const aggFunc = p.function || "sum";
+          const fieldName = "result";
+
+          let mongoFunc = "";
+          if (aggFunc === "sum") mongoFunc = "$sum";
+          else if (aggFunc === "mean" || aggFunc === "avg") mongoFunc = "$avg";
+          else if (aggFunc === "min") mongoFunc = "$min";
+          else if (aggFunc === "max") mongoFunc = "$max";
+          else if (aggFunc === "std" || aggFunc === "variance") mongoFunc = "$stdDevPop";
+
+          if (aggFunc === "count") {
+            groupStage[fieldName] = { $sum: 1 };
+          } else if (aggFunc === "count_distinct") {
+            groupStage["_items"] = { $addToSet: `$${aggCol}` };
+          } else if (mongoFunc) {
+            groupStage[fieldName] = { [mongoFunc]: `$${aggCol}` };
+          }
+
+          pipeline.push({ $group: groupStage });
+
+          if (aggFunc === "count_distinct") {
+            pipeline.push({ $project: { [fieldName]: { $size: "$_items" }, _id: 0 } });
+          } else {
+            pipeline.push({ $project: { _id: 0 } });
+          }
+        } else if (op === "groupby") {
+          const groupStage = { _id: `$${p.groupColumn}` };
+          const aggCol = p.aggColumn;
+          const aggFunc = p.aggFunction || "count";
+          const fieldName = aggFunc;
+
+          let mongoFunc = "";
+          if (aggFunc === "sum") mongoFunc = "$sum";
+          else if (aggFunc === "mean" || aggFunc === "avg") mongoFunc = "$avg";
+          else if (aggFunc === "min") mongoFunc = "$min";
+          else if (aggFunc === "max") mongoFunc = "$max";
+
+          if (aggFunc === "count") {
+            groupStage[fieldName] = { $sum: 1 };
+          } else if (aggFunc === "count_distinct") {
+            groupStage["_items"] = { $addToSet: `$${aggCol}` };
+          } else if (mongoFunc) {
+            groupStage[fieldName] = { [mongoFunc]: `$${aggCol}` };
+          }
+
+          if (p.filter) {
+            pipeline.push({ $match: translateFilter(p.filter) });
+          }
+
+          pipeline.push({ $group: groupStage });
+
+          const proj = { [p.groupColumn]: "$_id", _id: 0 };
+          if (aggFunc === "count_distinct") {
+            proj[fieldName] = { $size: "$_items" };
+          } else {
+            proj[fieldName] = 1;
+          }
+          pipeline.push({ $project: proj });
+
+          if (p.order) {
+            const dir = p.order === "asc" ? 1 : -1;
+            pipeline.push({ $sort: { [fieldName]: dir } });
+          }
+          if (p.limit) {
+            pipeline.push({ $limit: Number(p.limit) });
+          }
+        } else if (op === "pipeline") {
+          for (const subOp of p.operations || []) {
+            buildPipelineForOp(subOp.operation, subOp.params || {});
+          }
+        }
+      }
+
+      buildPipelineForOp(operation, params);
+
+      let rows;
+      if (pipeline.length === 0) {
+        rows = await targetDb.collection(collectionName).find({}).limit(50).toArray();
+      } else {
+        rows = await targetDb.collection(collectionName).aggregate(pipeline).toArray();
+      }
+
+      const sanitized = sanitizeRows(rows);
+      return {
+        data: sanitized,
+        columns: buildColumnInfo(sanitized),
+        rowCount: sanitized.length,
+        message: `Executed MongoDB aggregation pipeline with ${pipeline.length} stages.`,
+      };
     },
   };
 }

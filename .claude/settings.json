@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vitest *)",
+      "Bash(grep -v \"//\\\\|useToast\\\\|Toaster\\\\|sonner\")",
+      "Bash(grep -v \"Toaster\\\\|sonner\\\\|import\\\\|//\\\\|className\\\\|toastOptions\\\\|useToast\")",
+      "Bash(cat .env)",
+      "Bash(cat .env.local)",
+      "Bash(Get-Content src/pages/QueryPage.tsx)",
+      "Bash(Measure-Object -Line)",
+      "Bash(Select-Object -ExpandProperty Lines)",
+      "Bash(bun add *)",
+      "PowerShell($bun = Get-Command bun -ErrorAction SilentlyContinue; if \\($bun\\) { Write-Output \"bun at $\\($bun.Source\\)\" } else { Write-Output \"bun NOT on PATH\" }; $npm = Get-Command npm -ErrorAction SilentlyContinue; if \\($npm\\) { Write-Output \"npm at $\\($npm.Source\\)\" })"
+    ]
+  }
+}

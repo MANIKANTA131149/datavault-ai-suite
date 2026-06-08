@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useMotionValue, animate } from "framer-motion";
 import {
   Activity,
   ArrowRight,
   BarChart2,
   Cable,
-  CheckCircle,
+  ChevronRight,
   Clock,
   Database,
   MessageSquare,
@@ -15,17 +15,18 @@ import {
   TrendingDown,
   TrendingUp,
   Upload,
-  XCircle,
   Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Area,
   AreaChart,
   Bar,
   BarChart,
   Cell,
+  Line,
+  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -37,6 +38,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/PageHeader";
+import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
@@ -44,14 +46,30 @@ import { useLLMStore, PROVIDER_LABELS } from "@/stores/llm-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import type { Provider } from "@/lib/llm-client";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
 const CHART_COLORS = [
-  "hsl(217, 91%, 60%)",
-  "hsl(263, 70%, 58%)",
-  "hsl(160, 84%, 39%)",
-  "hsl(38, 92%, 50%)",
-  "hsl(0, 84%, 60%)",
+  "hsl(214, 65%, 54%)",
+  "hsl(252, 52%, 57%)",
+  "hsl(160, 60%, 42%)",
+  "hsl(38, 85%, 50%)",
+  "hsl(0, 72%, 56%)",
 ];
 
+// ─── Animation variants ───────────────────────────────────────────────────────
+const fadeUp = {
+  hidden: { opacity: 0, y: 14 },
+  visible: (i = 0) => ({
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.45, delay: i * 0.06, ease: [0.22, 1, 0.36, 1] },
+  }),
+};
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function isWithinDays(dateStr: string, days: number): boolean {
   return Date.now() - new Date(dateStr).getTime() < days * 86400000;
 }
@@ -65,9 +83,7 @@ function TrendBadge({ current, previous }: { current: number; previous: number }
       </span>
     );
   }
-
   const up = current >= previous;
-
   return (
     <span className={`flex items-center gap-1 text-xs ${up ? "text-success" : "text-destructive"}`}>
       {up ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
@@ -78,9 +94,8 @@ function TrendBadge({ current, previous }: { current: number; previous: number }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
-
   return (
-    <div className="rounded-2xl border border-border/70 bg-card/95 px-3 py-2 text-xs shadow-[0_16px_34px_-22px_hsl(var(--foreground)/0.8)] backdrop-blur-sm">
+    <div className="rounded-xl border border-border/50 bg-card/95 px-3 py-2 text-xs shadow-[0_4px_16px_-6px_hsl(var(--foreground)/0.1)] backdrop-blur-sm">
       <p className="mb-1 text-muted-foreground">{label}</p>
       {payload.map((item: any) => (
         <p key={item.dataKey} style={{ color: item.color }} className="font-medium">
@@ -91,6 +106,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
@@ -98,6 +114,8 @@ export default function DashboardPage() {
   const { entries, fetchHistory } = useHistoryStore();
   const { connections, fetchConnections } = useConnectionStore();
   const { providerConfigs } = useLLMStore();
+
+  const [chartDays, setChartDays] = useState<7 | 14 | 30>(14);
 
   useEffect(() => {
     fetchHistory();
@@ -109,35 +127,56 @@ export default function DashboardPage() {
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const lastUpdated = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  const totalRows = datasets.reduce((sum, dataset) => sum + Object.values(dataset.rowCounts).reduce((a, b) => a + b, 0), 0);
+  const totalRows = datasets.reduce(
+    (sum, dataset) => sum + Object.values(dataset.rowCounts).reduce((a, b) => a + b, 0),
+    0,
+  );
   const totalTokens = entries.reduce((sum, entry) => sum + entry.totalTokens, 0);
-
-  const last7Queries = entries.filter((entry) => isWithinDays(entry.date, 7)).length;
-  const previous7Queries = entries.filter((entry) => isWithinDays(entry.date, 14) && !isWithinDays(entry.date, 7)).length;
-  const last7Tokens = entries.filter((entry) => isWithinDays(entry.date, 7)).reduce((sum, entry) => sum + entry.totalTokens, 0);
-  const previous7Tokens = entries.filter((entry) => isWithinDays(entry.date, 14) && !isWithinDays(entry.date, 7)).reduce((sum, entry) => sum + entry.totalTokens, 0);
-
   const successRate = entries.length
-    ? Math.round((entries.filter((entry) => entry.status === "success").length / entries.length) * 100)
+    ? Math.round((entries.filter((e) => e.status === "success").length / entries.length) * 100)
     : 0;
   const averageDuration = entries.length
-    ? Math.round(entries.reduce((sum, entry) => sum + entry.durationMs, 0) / entries.length)
+    ? Math.round(entries.reduce((sum, e) => sum + e.durationMs, 0) / entries.length)
     : 0;
-
   const activeConnectionsCount = connections.filter((c) => c.status === "connected").length;
+  const configuredProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(
+    (p) => !!providerConfigs[p]?.apiKey,
+  );
 
-  const configuredProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((provider) => !!providerConfigs[provider]?.apiKey);
+  // ── Weekly digest ──────────────────────────────────────────────────────────
+  const weeklyDigest = useMemo(() => {
+    const thisWeek = entries.filter((e) => isWithinDays(e.date, 7));
+    const lastWeek = entries.filter((e) => isWithinDays(e.date, 14) && !isWithinDays(e.date, 7));
+    const pct = (cur: number, prev: number): number | null =>
+      prev === 0 ? null : Math.round(((cur - prev) / prev) * 100);
 
+    const qCur = thisWeek.length;
+    const qPrev = lastWeek.length;
+    const tCur = thisWeek.reduce((s, e) => s + e.totalTokens, 0);
+    const tPrev = lastWeek.reduce((s, e) => s + e.totalTokens, 0);
+    const srCur = thisWeek.length
+      ? Math.round((thisWeek.filter((e) => e.status === "success").length / thisWeek.length) * 100)
+      : 0;
+    const srPrev = lastWeek.length
+      ? Math.round((lastWeek.filter((e) => e.status === "success").length / lastWeek.length) * 100)
+      : 0;
+
+    return {
+      queries: { cur: qCur, prev: qPrev, delta: pct(qCur, qPrev) },
+      tokens:  { cur: tCur, prev: tPrev, delta: pct(tCur, tPrev) },
+      success: { cur: srCur, delta: srCur - srPrev },
+    };
+  }, [entries]);
+
+  // ── Activity chart (variable range) ───────────────────────────────────────
   const activityData = useMemo(() => {
-    const days = Array.from({ length: 14 }, (_, index) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (13 - index));
-      return date.toISOString().split("T")[0];
+    const days = Array.from({ length: chartDays }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (chartDays - 1 - i));
+      return d.toISOString().split("T")[0];
     });
-
     const byDate: Record<string, { queries: number; tokens: number }> = {};
     for (const day of days) byDate[day] = { queries: 0, tokens: 0 };
-
     for (const entry of entries) {
       const day = entry.date.split("T")[0];
       if (byDate[day]) {
@@ -145,18 +184,64 @@ export default function DashboardPage() {
         byDate[day].tokens += entry.totalTokens;
       }
     }
-
     return days.map((day) => ({
       date: new Date(`${day}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       Queries: byDate[day].queries,
       Tokens: Math.round(byDate[day].tokens / 1000),
     }));
+  }, [entries, chartDays]);
+
+  // ── Sparkline data (7-day per-metric) ─────────────────────────────────────
+  const sparklineData = useMemo(() => {
+    const days7 = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      return d.toISOString().split("T")[0];
+    });
+    const byDay = (fn: (e: typeof entries[number]) => number) =>
+      days7.map((day) => ({
+        v: entries.filter((e) => e.date.startsWith(day)).reduce((s, e) => s + fn(e), 0),
+      }));
+    return {
+      queries:     byDay(() => 1),
+      tokens:      byDay((e) => e.totalTokens),
+      successRate: days7.map((day) => {
+        const de = entries.filter((e) => e.date.startsWith(day));
+        return {
+          v: de.length
+            ? Math.round((de.filter((e) => e.status === "success").length / de.length) * 100)
+            : 0,
+        };
+      }),
+    };
   }, [entries]);
 
+  // ── Model performance ──────────────────────────────────────────────────────
+  const modelPerf = useMemo(() => {
+    const map = new Map<string, { total: number; success: number; dur: number }>();
+    for (const e of entries) {
+      const cur = map.get(e.model) ?? { total: 0, success: 0, dur: 0 };
+      map.set(e.model, {
+        total:   cur.total + 1,
+        success: cur.success + (e.status === "success" ? 1 : 0),
+        dur:     cur.dur + e.durationMs,
+      });
+    }
+    return Array.from(map.entries())
+      .map(([model, s]) => ({
+        model,
+        rate:  Math.round((s.success / s.total) * 100),
+        avgMs: Math.round(s.dur / s.total),
+        count: s.total,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [entries]);
+
+  // ── Provider & dataset charts ──────────────────────────────────────────────
   const providerData = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const entry of entries) counts[entry.provider] = (counts[entry.provider] || 0) + 1;
-
+    for (const e of entries) counts[e.provider] = (counts[e.provider] || 0) + 1;
     return Object.entries(counts)
       .sort(([, a], [, b]) => b - a)
       .map(([provider, value]) => ({
@@ -167,14 +252,14 @@ export default function DashboardPage() {
 
   const datasetUsage = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const entry of entries) counts[entry.datasetName] = (counts[entry.datasetName] || 0) + 1;
-
+    for (const e of entries) counts[e.datasetName] = (counts[e.datasetName] || 0) + 1;
     return Object.entries(counts)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 5)
       .map(([name, queries]) => ({ name: name.slice(0, 20), Queries: queries }));
   }, [entries]);
 
+  // ── KPI definitions ────────────────────────────────────────────────────────
   const kpis = [
     {
       label: "Datasets",
@@ -186,53 +271,64 @@ export default function DashboardPage() {
       bg: "bg-primary/10",
       glow: "card-glow-blue",
       trend: null,
+      sparkKey: null as "queries" | "tokens" | "successRate" | null,
+      sparkColor: "",
     },
     {
       label: "Connections",
       rawValue: connections.length,
       value: connections.length.toLocaleString(),
-      sub: `${activeConnectionsCount} active ${activeConnectionsCount === 1 ? "connection" : "connections"}`,
+      sub: `${activeConnectionsCount} active`,
       icon: Cable,
       color: "text-pink-500",
       bg: "bg-pink-500/10",
       glow: "card-glow-pink",
       trend: null,
+      sparkKey: null as "queries" | "tokens" | "successRate" | null,
+      sparkColor: "",
     },
     {
       label: "Queries Run",
       rawValue: entries.length,
       value: entries.length.toLocaleString(),
-      sub: `${last7Queries} this week`,
+      sub: `${weeklyDigest.queries.cur} this week`,
       icon: MessageSquare,
       color: "text-accent",
       bg: "bg-accent/10",
       glow: "card-glow-purple",
-      trend: { current: last7Queries, previous: previous7Queries },
+      trend: { current: weeklyDigest.queries.cur, previous: weeklyDigest.queries.prev },
+      sparkKey: "queries" as const,
+      sparkColor: CHART_COLORS[1],
     },
     {
       label: "Tokens Used",
       rawValue: totalTokens,
       value: totalTokens.toLocaleString(),
-      sub: `${(last7Tokens / 1000).toFixed(1)}k this week`,
+      sub: `${(weeklyDigest.tokens.cur / 1000).toFixed(1)}k this week`,
       icon: Zap,
       color: "text-warning",
       bg: "bg-warning/10",
       glow: "card-glow-amber",
-      trend: { current: last7Tokens, previous: previous7Tokens },
+      trend: { current: weeklyDigest.tokens.cur, previous: weeklyDigest.tokens.prev },
+      sparkKey: "tokens" as const,
+      sparkColor: CHART_COLORS[3],
     },
     {
       label: "Success Rate",
       rawValue: successRate,
       value: `${successRate}%`,
-      sub: `${averageDuration.toLocaleString()}ms avg response`,
+      sub: `${averageDuration.toLocaleString()}ms avg`,
       icon: Activity,
       color: "text-success",
       bg: "bg-success/10",
       glow: "card-glow-green",
       trend: null,
+      sparkKey: "successRate" as const,
+      sparkColor: CHART_COLORS[2],
     },
   ];
 
+  // ── JSX ────────────────────────────────────────────────────────────────────
   return (
     <div className="page-shell-wide space-y-6">
       <PageHeader
@@ -245,41 +341,37 @@ export default function DashboardPage() {
         ]}
         actions={
           <>
-          <Button
-            onClick={async () => {
-              try {
-                await Promise.all([fetchHistory(), fetchDatasets(), fetchConnections()]);
-                toast.success("Dashboard refreshed");
-              } catch (e) {
-                toast.error("Failed to refresh dashboard");
-              }
-            }}
-            variant="outline"
-            size="sm"
-            className="h-9 flex-1 gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:flex-none"
-          >
-            <RefreshCw size={14} /> Refresh
-          </Button>
-          <Button
-            onClick={() => navigate("/app/query")}
-            size="sm"
-            className="h-9 flex-1 gap-1.5 sm:flex-none"
-          >
-            <MessageSquare size={14} /> New Query
-          </Button>
+            <Button
+              onClick={async () => {
+                try {
+                  await Promise.all([fetchHistory(), fetchDatasets(), fetchConnections()]);
+                  toast.success("Dashboard refreshed");
+                } catch {
+                  toast.error("Failed to refresh dashboard");
+                }
+              }}
+              variant="outline"
+              size="sm"
+              className="h-9 flex-1 gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:flex-none"
+            >
+              <RefreshCw size={14} /> Refresh
+            </Button>
+            <Button
+              onClick={() => navigate("/app/query")}
+              size="sm"
+              className="h-9 flex-1 gap-1.5 sm:flex-none"
+            >
+              <MessageSquare size={14} /> New Query
+            </Button>
           </>
         }
       />
 
-      <div className="space-y-6 animate-in fade-in duration-300">
+      <motion.div className="space-y-6" initial="hidden" animate="visible" variants={stagger}>
+        {/* Welcome card */}
         {datasets.length === 0 && entries.length === 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.4 }}
-          >
+          <motion.div variants={fadeUp}>
             <Card className="relative overflow-hidden p-6">
-              {/* Decorative background gradient */}
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_hsl(var(--primary)/0.1),_transparent_60%)]" />
               <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-start gap-4">
@@ -294,7 +386,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:shrink-0">
-                  <Button className="w-full whitespace-nowrap shadow-[0_4px_14px_-4px_hsl(var(--primary)/0.4)]" onClick={() => navigate("/app/datasets")}>
+                  <Button className="w-full whitespace-nowrap" onClick={() => navigate("/app/datasets")}>
                     <Upload size={14} className="mr-2" /> Upload dataset
                   </Button>
                   <Button variant="outline" className="w-full whitespace-nowrap" onClick={() => navigate("/app/settings")}>
@@ -309,9 +401,15 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        <div className="metric-strip">
+        {/* KPI strip */}
+        <motion.div variants={fadeUp} className="metric-strip">
           {kpis.map((kpi, index) => (
-            <motion.div key={kpi.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
+            <motion.div
+              key={kpi.label}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.05 }}
+            >
               <Card className={`metric-card ${kpi.glow}`}>
                 <div className="mb-3 flex items-center justify-between">
                   <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
@@ -320,6 +418,16 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <CountUpValue value={kpi.rawValue} formatted={kpi.value} />
+                <div className="mt-1.5 opacity-60">
+                  {kpi.sparkKey != null ? (
+                    <KpiSparkline
+                      data={sparklineData[kpi.sparkKey]}
+                      color={kpi.sparkColor}
+                    />
+                  ) : (
+                    <div className="h-8" />
+                  )}
+                </div>
                 <div className="mt-1 flex items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">{kpi.sub}</p>
                   {kpi.trend && <TrendBadge current={kpi.trend.current} previous={kpi.trend.previous} />}
@@ -327,46 +435,104 @@ export default function DashboardPage() {
               </Card>
             </motion.div>
           ))}
-        </div>
+        </motion.div>
 
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+        {/* Weekly digest banner */}
+        {entries.length > 0 && (
+          <motion.div variants={fadeUp}>
+            <Card className="px-5 py-3.5">
+              <div className="flex flex-wrap items-center gap-x-0 gap-y-3 divide-y sm:divide-y-0 sm:divide-x divide-border/40">
+                <DigestStat
+                  label="Queries this week"
+                  value={weeklyDigest.queries.cur}
+                  delta={weeklyDigest.queries.delta}
+                  className="w-full sm:w-auto sm:pr-6"
+                />
+                <DigestStat
+                  label="Tokens this week"
+                  value={`${(weeklyDigest.tokens.cur / 1000).toFixed(1)}k`}
+                  delta={weeklyDigest.tokens.delta}
+                  className="w-full sm:w-auto sm:px-6"
+                />
+                <DigestStat
+                  label="Success rate (7d)"
+                  value={`${weeklyDigest.success.cur}%`}
+                  delta={weeklyDigest.success.delta}
+                  isPoints
+                  className="w-full sm:w-auto sm:pl-6"
+                />
+              </div>
+            </Card>
+          </motion.div>
+        )}
+
+        {/* Activity chart */}
+        <motion.div variants={fadeUp}>
           <Card className="p-6">
-            <div className="mb-4">
-              <h3 className="text-sm font-semibold text-foreground">Query Activity</h3>
-              <p className="text-xs text-muted-foreground">Queries and token usage over the last 14 days</p>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Query Activity</h3>
+                <p className="text-xs text-muted-foreground">
+                  Queries and token usage over the last {chartDays} days
+                </p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                {([7, 14, 30] as const).map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setChartDays(d)}
+                    className={cn(
+                      "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                      chartDays === d
+                        ? "border-primary/30 bg-primary/15 text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted/40 hover:text-foreground",
+                    )}
+                  >
+                    {d}D
+                  </button>
+                ))}
+              </div>
             </div>
             {entries.length === 0 ? (
-              <div className="flex h-40 flex-col items-center justify-center gap-3">
-                <div className="breathe">
-                  <BarChart2 size={36} className="text-muted-foreground/30" />
+              <div className="flex h-44 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/40 bg-muted/10">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-muted/30">
+                  <BarChart2 size={20} className="text-muted-foreground/40" />
                 </div>
-                <p className="text-sm text-muted-foreground">Run your first query to see activity here</p>
+                <div className="text-center">
+                  <p className="text-sm font-medium text-foreground">No activity yet</p>
+                  <p className="text-xs text-muted-foreground">Run your first query to see trends here</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => navigate("/app/query")}>
+                  <MessageSquare size={13} className="mr-1.5" /> Start querying
+                </Button>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={190}>
                 <AreaChart data={activityData} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorQ" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0} />
+                      <stop offset="5%" stopColor="hsl(214, 65%, 54%)" stopOpacity={0.22} />
+                      <stop offset="95%" stopColor="hsl(214, 65%, 54%)" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="colorT" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(263, 70%, 58%)" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="hsl(263, 70%, 58%)" stopOpacity={0} />
+                      <stop offset="5%" stopColor="hsl(252, 52%, 57%)" stopOpacity={0.18} />
+                      <stop offset="95%" stopColor="hsl(252, 52%, 57%)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="date" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="Queries" stroke="hsl(217, 91%, 60%)" fill="url(#colorQ)" strokeWidth={2} dot={false} />
-                  <Area type="monotone" dataKey="Tokens" stroke="hsl(263, 70%, 58%)" fill="url(#colorT)" strokeWidth={2} dot={false} />
+                  <Area type="monotone" dataKey="Queries" stroke="hsl(214, 65%, 54%)" fill="url(#colorQ)" strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
+                  <Area type="monotone" dataKey="Tokens" stroke="hsl(252, 52%, 57%)" fill="url(#colorT)" strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </Card>
         </motion.div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* 3-column grid */}
+        <motion.div variants={fadeUp} className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Provider usage */}
           <Card className="p-6">
             <h3 className="mb-4 text-sm font-semibold text-foreground">Provider Usage</h3>
             {providerData.length === 0 ? (
@@ -401,6 +567,7 @@ export default function DashboardPage() {
             )}
           </Card>
 
+          {/* Top datasets */}
           <Card className="p-6">
             <h3 className="mb-4 text-sm font-semibold text-foreground">Top Datasets</h3>
             {datasetUsage.length === 0 ? (
@@ -414,52 +581,52 @@ export default function DashboardPage() {
                   <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} axisLine={false} tickLine={false} width={80} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="Queries" fill="hsl(217, 91%, 60%)" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="Queries" fill="hsl(214, 65%, 54%)" radius={[0, 4, 4, 0]} maxBarSize={10} />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </Card>
 
+          {/* Model performance */}
           <Card className="p-6">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">System Status</h3>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Shield size={14} className="text-primary" />
-                  <span className="text-sm text-foreground">API Keys</span>
-                </div>
-                <span className="text-xs text-muted-foreground">{configuredProviders.length} configured</span>
+            <h3 className="mb-4 text-sm font-semibold text-foreground">Model Performance</h3>
+            {modelPerf.length === 0 ? (
+              <div className="flex h-32 flex-col items-center justify-center gap-2">
+                <div className="breathe"><Activity size={28} className="text-muted-foreground/25" /></div>
+                <p className="text-xs text-muted-foreground">No model data yet</p>
               </div>
-              <div className="space-y-1.5">
-                {(Object.keys(PROVIDER_LABELS) as Provider[]).slice(0, 5).map((provider) => (
-                  <div key={provider} className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {configuredProviders.includes(provider) ? (
-                      <CheckCircle size={11} className="text-success" />
-                    ) : (
-                      <XCircle size={11} className="text-muted-foreground/40" />
-                    )}
-                    {PROVIDER_LABELS[provider]}
+            ) : (
+              <div className="space-y-3.5">
+                {modelPerf.map((m, i) => (
+                  <div key={m.model} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="truncate text-foreground max-w-[140px]" title={m.model}>
+                        {(m.model.split("/").pop() ?? m.model).slice(0, 22)}
+                      </span>
+                      <div className="flex gap-2.5 text-muted-foreground shrink-0 ml-2">
+                        <span className="tabular-nums">{m.rate}%</span>
+                        <span className="tabular-nums text-muted-foreground/60">{m.avgMs}ms</span>
+                      </div>
+                    </div>
+                    <div className="h-1 rounded-full bg-muted/40 overflow-hidden">
+                      <motion.div
+                        className="h-full rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${m.rate}%` }}
+                        transition={{ duration: 0.8, delay: i * 0.1, ease: "easeOut" }}
+                        style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
-              <Separator />
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Datasets stored</span>
-                <span className="font-medium text-foreground">{datasets.length}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Connections</span>
-                <span className="font-medium text-foreground">{connections.length}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">History entries</span>
-                <span className="font-medium text-foreground">{entries.length}</span>
-              </div>
-            </div>
+            )}
           </Card>
-        </div>
+        </motion.div>
 
-        <div className="grid grid-cols-1 gap-6 pb-16 lg:grid-cols-2 lg:pb-10">
+        {/* Bottom row */}
+        <motion.div variants={fadeUp} className="grid grid-cols-1 gap-6 pb-16 lg:grid-cols-2 lg:pb-10">
+          {/* Recent queries */}
           <Card className="p-6">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Recent Queries</h3>
@@ -471,42 +638,49 @@ export default function DashboardPage() {
             </div>
             {entries.length === 0 ? (
               <div className="flex flex-col items-center py-8">
-                <div className="breathe mb-3">
-                  <MessageSquare size={32} className="text-muted-foreground/30" />
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-muted/30">
+                  <MessageSquare size={20} className="text-muted-foreground/40" />
                 </div>
-                <p className="text-sm text-muted-foreground">No queries yet — ask your first question</p>
+                <p className="text-sm font-medium text-foreground">No queries yet</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Ask your first question in plain English</p>
                 <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate("/app/query")}>
                   <MessageSquare size={13} className="mr-1.5" /> Start querying
                 </Button>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {entries.slice(0, 6).map((entry) => (
-                  <div key={entry.id} className="flex items-start gap-3 border-b border-border py-2 last:border-0">
+                  <button
+                    key={entry.id}
+                    onClick={() => navigate("/app/query")}
+                    className="flex w-full cursor-pointer items-start gap-3 rounded-lg border-b border-border/40 px-2 py-2 text-left last:border-0 transition-colors hover:bg-primary/5"
+                  >
                     <div className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${entry.status === "success" ? "bg-success" : "bg-destructive"}`} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-foreground">{entry.query}</p>
                       <p className="text-xs text-muted-foreground">
-                        {entry.datasetName} | {PROVIDER_LABELS[entry.provider as Provider]}
+                        {entry.datasetName} · {PROVIDER_LABELS[entry.provider as Provider]}
                       </p>
                     </div>
                     <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
                       {new Date(entry.date).toLocaleDateString()}
                     </span>
-                  </div>
+                    <ChevronRight size={13} className="mt-1 shrink-0 text-muted-foreground/40" />
+                  </button>
                 ))}
               </div>
             )}
           </Card>
 
+          {/* Quick actions */}
           <Card className="p-6">
             <h3 className="mb-4 text-sm font-semibold text-foreground">Quick Actions</h3>
             <div className="space-y-2">
               {[
-                { icon: Upload, label: "Upload a dataset", sub: `${datasets.length} datasets stored`, path: "/app/datasets" },
-                { icon: MessageSquare, label: "Start a new query", sub: "Chat with your data", path: "/app/query" },
-                { icon: Clock, label: "Browse history", sub: `${entries.length} past queries`, path: "/app/history" },
-                { icon: Shield, label: "Configure API keys", sub: `${configuredProviders.length} providers ready`, path: "/app/settings" },
+                { icon: Upload,       label: "Upload a dataset",   sub: `${datasets.length} datasets stored`,       path: "/app/datasets" },
+                { icon: MessageSquare,label: "Start a new query",  sub: "Chat with your data",                      path: "/app/query" },
+                { icon: Clock,        label: "Browse history",     sub: `${entries.length} past queries`,           path: "/app/history" },
+                { icon: Shield,       label: "Configure API keys", sub: `${configuredProviders.length} providers ready`, path: "/app/settings" },
               ].map(({ icon: Icon, label, sub, path }) => (
                 <button
                   key={label}
@@ -527,13 +701,13 @@ export default function DashboardPage() {
               ))}
             </div>
           </Card>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
     </div>
   );
 }
 
-// ─── CountUp animated KPI value ─────────────────────────────────────────────
+// ─── CountUp animated KPI value ───────────────────────────────────────────────
 function CountUpValue({ value, formatted }: { value: number; formatted: string }) {
   const motionValue = useMotionValue(0);
   const displayRef  = useRef<HTMLParagraphElement>(null);
@@ -545,7 +719,6 @@ function CountUpValue({ value, formatted }: { value: number; formatted: string }
       ease: "easeOut",
       onUpdate(latest) {
         if (!displayRef.current) return;
-        // Format the same way as the original (keep % suffix if present)
         const hasSuffix = formatted.endsWith("%");
         const numStr    = Math.round(latest).toLocaleString();
         displayRef.current.textContent = hasSuffix ? `${numStr}%` : numStr;
@@ -559,6 +732,59 @@ function CountUpValue({ value, formatted }: { value: number; formatted: string }
     <p ref={displayRef} className="text-2xl font-bold text-foreground tabular-nums">
       {formatted}
     </p>
+  );
+}
+
+// ─── KPI sparkline ────────────────────────────────────────────────────────────
+function KpiSparkline({ data, color }: { data: { v: number }[]; color: string }) {
+  return (
+    <ResponsiveContainer width="100%" height={32}>
+      <LineChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+        <Line
+          type="monotone"
+          dataKey="v"
+          stroke={color}
+          strokeWidth={1.5}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── Digest stat ──────────────────────────────────────────────────────────────
+function DigestStat({
+  label,
+  value,
+  delta,
+  isPoints = false,
+  className,
+}: {
+  label: string;
+  value: string | number;
+  delta: number | null;
+  isPoints?: boolean;
+  className?: string;
+}) {
+  const up = delta !== null && delta > 0;
+  const dn = delta !== null && delta < 0;
+  return (
+    <div className={cn("flex flex-col gap-0.5", className)}>
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className="text-sm font-semibold tabular-nums text-foreground">{value}</span>
+        {delta !== null && (
+          <span className={cn(
+            "flex items-center gap-0.5 text-[11px]",
+            up ? "text-success" : dn ? "text-destructive" : "text-muted-foreground",
+          )}>
+            {up ? <TrendingUp size={10} /> : dn ? <TrendingDown size={10} /> : <Minus size={10} />}
+            {Math.abs(delta)}{isPoints ? "pp" : "%"}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

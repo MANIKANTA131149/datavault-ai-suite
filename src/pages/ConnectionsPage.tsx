@@ -32,6 +32,9 @@ import {
   Calendar,
   KeyRound,
   SlidersHorizontal,
+  RefreshCw,
+  Activity,
+  Zap,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,13 +47,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/PageHeader";
-import { toast } from "sonner";
+import { DbTypeIcon } from "@/components/DbTypeIcon";
+import { toast } from "@/lib/toast";
 import { api } from "@/lib/api-client";
 import { AlertTriangle } from "lucide-react";
 import {
   useConnectionStore,
   DB_TYPE_LABELS,
-  DB_TYPE_ICONS,
   DB_TYPE_FIELDS,
   DB_TYPE_DEFAULTS,
   DB_TYPE_CONNECTION_TYPE,
@@ -104,6 +107,15 @@ const SORT_LABELS: Record<ConnectionSort, string> = {
   status: "Status",
 };
 
+const fadeUp = {
+  hidden: { opacity: 0, y: 10 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } },
+};
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.06, delayChildren: 0.03 } },
+};
+
 function readJson<T>(key: string, fallback: T): T {
   try {
     return JSON.parse(localStorage.getItem(key) || "") as T;
@@ -147,6 +159,19 @@ function ConnectionNameText({ label, query }: { label: string; query: string }) 
 function formatDate(value?: string | null) {
   if (!value) return "Never";
   return new Date(value).toLocaleDateString();
+}
+
+function relativeTime(value?: string | null): string {
+  if (!value) return "Never tested";
+  const diff = Date.now() - new Date(value).getTime();
+  const mins = Math.floor(diff / 60_000);
+  const hours = Math.floor(diff / 3_600_000);
+  const days = Math.floor(diff / 86_400_000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 30) return `${days}d ago`;
+  return formatDate(value);
 }
 
 function getConnectionCategory(dbType: DbType) {
@@ -330,7 +355,7 @@ function ConnectionFormDialog({
                           dbType === type ? "border-primary/50 bg-primary/10" : "border-border bg-card/70"
                         }`}
                       >
-                        <span className="text-xl">{DB_TYPE_ICONS[type]}</span>
+                        <DbTypeIcon dbType={type} size={16} className="text-primary/70" />
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium text-foreground">{DB_TYPE_LABELS[type]}</p>
                           <p className="text-[10px] text-muted-foreground">{DB_CONNECTION_TYPE_LABELS[DB_TYPE_CONNECTION_TYPE[type]]}</p>
@@ -353,7 +378,7 @@ function ConnectionFormDialog({
             )}
 
             <div className="flex items-center gap-3 rounded-xl border border-border bg-card/70 p-3">
-              <span className="text-2xl">{DB_TYPE_ICONS[dbType]}</span>
+              <DbTypeIcon dbType={dbType} size={20} className="text-primary/80" />
               <div>
                 <p className="text-sm font-semibold text-foreground">{DB_TYPE_LABELS[dbType]}</p>
                 <Badge variant="outline" className="mt-0.5 border-border text-[10px]">
@@ -649,6 +674,7 @@ function ConnectionCard({
   onDelete,
   onTest,
   onQuery,
+  onTagClick,
   testing,
 }: {
   conn: Connection;
@@ -659,6 +685,7 @@ function ConnectionCard({
   onDelete: () => void;
   onTest: () => void;
   onQuery: () => void;
+  onTagClick: (tag: string) => void;
   testing: boolean;
 }) {
   const cfg = STATUS_CFG[conn.status] || STATUS_CFG.untested;
@@ -667,10 +694,10 @@ function ConnectionCard({
   const compact = density === "compact";
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}>
+    <motion.div variants={fadeUp} exit={{ opacity: 0, scale: 0.96 }} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
       <Card
         onClick={onOpen}
-        className={`group relative min-h-full cursor-pointer overflow-hidden border-border bg-background-secondary transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)] ${
+        className={`group relative min-h-full cursor-pointer overflow-hidden border-border bg-background-secondary transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_6px_20px_-10px_hsl(var(--primary)/0.22)] ${
           compact ? "p-3" : "p-4"
         }`}
       >
@@ -679,8 +706,8 @@ function ConnectionCard({
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <div className={`flex shrink-0 items-center justify-center rounded-2xl border border-border bg-card shadow-sm ${compact ? "h-10 w-10 text-xl" : "h-12 w-12 text-2xl"}`}>
-              {DB_TYPE_ICONS[conn.dbType]}
+            <div className={`flex shrink-0 items-center justify-center rounded-2xl border border-border bg-card shadow-sm ${compact ? "h-10 w-10" : "h-12 w-12"}`}>
+              <DbTypeIcon dbType={conn.dbType} size={compact ? 16 : 18} className="text-primary/70" />
             </div>
             <div className="min-w-0">
               <ConnectionNameText label={conn.name} query={query} />
@@ -733,10 +760,12 @@ function ConnectionCard({
             {DB_CONNECTION_TYPE_LABELS[DB_TYPE_CONNECTION_TYPE[conn.dbType]]}
           </Badge>
           {(conn.tags || []).slice(0, compact ? 2 : 4).map((tag) => (
-            <Badge key={tag} variant="outline" className="border-border text-[10px] text-muted-foreground">
-              <Tag size={8} className="mr-1" />
-              {tag}
-            </Badge>
+            <button key={tag} type="button" onClick={(e) => { e.stopPropagation(); onTagClick(tag); }}>
+              <Badge variant="outline" className="border-border text-[10px] text-muted-foreground cursor-pointer hover:bg-primary/10 hover:border-primary/30 hover:text-primary transition-colors">
+                <Tag size={8} className="mr-1" />
+                {tag}
+              </Badge>
+            </button>
           ))}
           {(conn.tags || []).length > (compact ? 2 : 4) && (
             <Badge variant="outline" className="border-border text-[10px] text-muted-foreground">
@@ -748,7 +777,7 @@ function ConnectionCard({
         <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
           <div className="min-w-0 text-[11px] text-muted-foreground">
             <span className={cfg.color}>{cfg.label}</span>
-            <span> - tested {formatDate(conn.lastTestedAt)}</span>
+            <span> · {relativeTime(conn.lastTestedAt)}</span>
           </div>
           <ConnectionActions
             conn={conn}
@@ -786,7 +815,7 @@ function ConnectionDetailPanel({
 
   return (
     <motion.div
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-full flex-col border-l border-border bg-background-secondary shadow-2xl sm:max-w-xl"
+      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-full flex-col border-l border-border/55 bg-background-secondary shadow-[-24px_0_48px_-24px_hsl(var(--foreground)/0.25)] sm:max-w-xl"
       initial={{ x: "100%" }}
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
@@ -794,8 +823,8 @@ function ConnectionDetailPanel({
     >
       <div className="flex items-start justify-between gap-3 border-b border-border p-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border bg-card text-2xl">
-            {DB_TYPE_ICONS[connection.dbType]}
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
+            <DbTypeIcon dbType={connection.dbType} size={18} className="text-primary/80" />
           </div>
           <div className="min-w-0">
             <h3 className="truncate font-semibold text-foreground">{connection.name}</h3>
@@ -923,6 +952,7 @@ export default function ConnectionsPage() {
   const [deleteConn, setDeleteConn] = useState<Connection | null>(null);
   const [selectedConn, setSelectedConn] = useState<Connection | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [testingAll, setTestingAll] = useState(false);
 
   useEffect(() => {
     fetchConnections();
@@ -962,6 +992,7 @@ export default function ConnectionsPage() {
     total: connections.length,
     connected: connections.filter((conn) => conn.status === "connected").length,
     error: connections.filter((conn) => conn.status === "error").length,
+    untested: connections.filter((conn) => conn.status === "untested").length,
     types: new Set(connections.map((conn) => conn.dbType)).size,
   }), [connections]);
 
@@ -1001,6 +1032,21 @@ export default function ConnectionsPage() {
     setStatusFilter("all");
   };
 
+  const testAll = async () => {
+    const toTest = connections.filter((c) => c.status !== "connected");
+    if (toTest.length === 0) return;
+    setTestingAll(true);
+    try {
+      const results = await Promise.allSettled(toTest.map((c) => testConnection(c._id)));
+      const passed = results.filter((r) => r.status === "fulfilled" && (r.value as any).success).length;
+      toast.success(`${passed} of ${toTest.length} connection${toTest.length === 1 ? "" : "s"} passed`);
+    } catch {
+      toast.error("Some tests failed");
+    } finally {
+      setTestingAll(false);
+    }
+  };
+
   return (
     <div className="page-shell space-y-6">
       <PageHeader
@@ -1014,6 +1060,33 @@ export default function ConnectionsPage() {
           { label: "DB types", value: stats.types, tone: "info" },
         ]}
       />
+
+      {connections.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {([
+            { label: "Total", value: stats.total, icon: Cable, color: "text-primary", bg: "bg-primary/10", filter: null as string | null },
+            { label: "Connected", value: stats.connected, icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-500/10", filter: "connected" },
+            { label: "Error", value: stats.error, icon: XCircle, color: "text-red-400", bg: "bg-red-500/10", filter: "error" },
+            { label: "DB types", value: stats.types, icon: Database, color: "text-blue-400", bg: "bg-blue-500/10", filter: null as string | null },
+          ] as const).map(({ label, value, icon: Icon, color, bg, filter }) => (
+            <Card
+              key={label}
+              className={`flex items-center gap-3 p-3 bg-background-secondary border-border transition-all ${
+                filter ? "cursor-pointer hover:border-primary/30" : ""
+              } ${statusFilter === filter && filter ? "border-primary/40 bg-primary/5" : ""}`}
+              onClick={() => { if (filter) setStatusFilter(statusFilter === filter ? "all" : filter); }}
+            >
+              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${bg}`}>
+                <Icon size={14} className={color} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground">{value}</p>
+                <p className="text-xs text-muted-foreground">{label}</p>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {connections.length > 0 && (
         <div className="toolbar-panel">
@@ -1068,7 +1141,7 @@ export default function ConnectionsPage() {
                   <SelectItem value="all">All types</SelectItem>
                   {Object.entries(DB_TYPE_LABELS).map(([key, label]) => (
                     <SelectItem key={key} value={key}>
-                      <span className="flex items-center gap-2">{DB_TYPE_ICONS[key as DbType]} {label}</span>
+                      <span className="flex items-center gap-2"><DbTypeIcon dbType={key as DbType} size={14} className="text-muted-foreground" /> {label}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1117,6 +1190,51 @@ export default function ConnectionsPage() {
                 {density === "comfortable" ? "Compact" : "Comfortable"}
               </Button>
             </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {([
+                { key: "all", label: "All", count: connections.length },
+                { key: "connected", label: "Connected", count: stats.connected },
+                { key: "error", label: "Error", count: stats.error },
+                { key: "untested", label: "Untested", count: stats.untested },
+              ] as const).map(({ key, label, count }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setStatusFilter(key)}
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    statusFilter === key
+                      ? "border-primary/30 bg-primary/15 text-primary"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    statusFilter === key ? "bg-primary/20" : "bg-muted/60"
+                  }`}>{count}</span>
+                </button>
+              ))}
+              {(search || typeFilter !== "all" || statusFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X size={10} /> Clear
+                </button>
+              )}
+              {connections.some((c) => c.status !== "connected") && (
+                <button
+                  type="button"
+                  onClick={testAll}
+                  disabled={testingAll}
+                  className="ml-auto flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+                >
+                  <RefreshCw size={10} className={testingAll ? "animate-spin" : ""} />
+                  {testingAll ? "Testing..." : "Test all"}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1132,22 +1250,26 @@ export default function ConnectionsPage() {
           ))}
         </div>
       ) : connections.length === 0 ? (
-        <div className="empty-panel">
-          <Cable size={48} className="mx-auto mb-4 text-muted-foreground/30" />
-          <p className="text-muted-foreground">No database connections yet</p>
-          <p className="mt-1 text-xs text-muted-foreground">Add PostgreSQL, MySQL, Snowflake, BigQuery, and more.</p>
-          <Button className="mt-4" onClick={() => { setEditConn(null); setFormOpen(true); }}>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">
+            <Cable size={26} className="text-primary/50" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No database connections yet</p>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">Connect PostgreSQL, MySQL, Snowflake, BigQuery, and more to start querying your data with AI.</p>
+          <Button className="mt-5" onClick={() => { setEditConn(null); setFormOpen(true); }}>
             <Plus size={14} className="mr-2" />
             Add your first connection
           </Button>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="empty-panel">
-          <Search size={48} className="mx-auto mb-4 text-muted-foreground/30" />
-          <p className="text-muted-foreground">No matching connections</p>
-          <p className="mt-1 text-xs text-muted-foreground">Try a different host, tag, type, or status.</p>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/30">
+            <Search size={22} className="text-muted-foreground/50" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No matching connections</p>
+          <p className="mt-1 text-xs text-muted-foreground">Try a different search term, type, or status filter.</p>
           <Button variant="outline" className="mt-4 border-border" onClick={clearFilters}>
-            Clear filters
+            Clear all filters
           </Button>
         </div>
       ) : viewMode === "list" ? (
@@ -1168,13 +1290,15 @@ export default function ConnectionsPage() {
                 <tr key={conn._id} className="cursor-pointer border-t border-border hover:bg-card/50" onClick={() => setSelectedConn(conn)}>
                   <td className="px-4 py-3">
                     <div className="flex min-w-0 items-start gap-2">
-                      <span className="mt-0.5 text-lg">{DB_TYPE_ICONS[conn.dbType]}</span>
+                      <DbTypeIcon dbType={conn.dbType} size={15} className="mt-0.5 shrink-0 text-primary/70" />
                       <div className="min-w-0">
                         <ConnectionNameText label={conn.name} query={search} />
                         <div className="mt-1 flex flex-wrap gap-1">
                           {conn.description && <span className="max-w-xs truncate text-xs text-muted-foreground">{conn.description}</span>}
                           {conn.tags.map((tag) => (
-                            <Badge key={tag} variant="outline" className="border-border text-[10px]">{tag}</Badge>
+                            <button key={tag} type="button" onClick={(e) => { e.stopPropagation(); setSearch(tag); }}>
+                              <Badge variant="outline" className="border-border text-[10px] cursor-pointer hover:bg-primary/10 hover:text-primary transition-colors">{tag}</Badge>
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -1188,7 +1312,11 @@ export default function ConnectionsPage() {
                       <p className="truncate text-xs text-muted-foreground" title={getSecondaryTarget(conn)}>{getSecondaryTarget(conn) || getConnectionCategory(conn.dbType)}</p>
                     </div>
                   </td>
-                  <td className="hidden px-4 py-3 text-xs text-muted-foreground lg:table-cell">{formatDate(conn.lastTestedAt)}</td>
+                  <td className="hidden px-4 py-3 text-xs text-muted-foreground lg:table-cell">
+                    <span className="flex items-center gap-1" title={formatDate(conn.lastTestedAt)}>
+                      <Clock size={10} />{relativeTime(conn.lastTestedAt)}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end">
                       <ConnectionActions
@@ -1208,7 +1336,12 @@ export default function ConnectionsPage() {
           </table>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <motion.div
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+          variants={stagger}
+          initial="hidden"
+          animate="visible"
+        >
           <AnimatePresence mode="popLayout">
             {filtered.map((conn) => (
               <ConnectionCard
@@ -1221,11 +1354,12 @@ export default function ConnectionsPage() {
                 onDelete={() => openDelete(conn)}
                 onTest={() => handleTest(conn._id)}
                 onQuery={() => openQuery(conn)}
+                onTagClick={(tag) => setSearch(tag)}
                 testing={testingId === conn._id}
               />
             ))}
           </AnimatePresence>
-        </div>
+        </motion.div>
       )}
 
       <AnimatePresence>

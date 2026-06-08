@@ -122,7 +122,7 @@ export const DB_TYPE_FIELDS: Record<DbType, string[]> = {
   oracle: ["host", "port", "serviceName", "username", "password"],
   mariadb: ["host", "port", "database", "username", "password"],
   sqlite: ["filePath"],
-  mongodb: ["connectionUri"],
+  mongodb: ["connectionUri", "database"],
   snowflake: ["account", "warehouse", "database", "schema", "username", "password"],
   bigquery: ["projectId", "serviceAccountJson"],
   redshift: ["host", "port", "database", "username", "password"],

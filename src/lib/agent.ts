@@ -277,7 +277,7 @@ A: {"command":"ExecuteFinalQuery","args":{"operation":"unique","params":{"column
 Q: "Give me a preview of the data"
 A: {"command":"ExecuteFinalQuery","args":{"operation":"head","params":{"n":10}}}
 
-Q: "What is the highest revenue product?"
+Q: "What is the highest revenue product?" (return full row — all columns)
 A: {"command":"ExecuteFinalQuery","args":{"operation":"sort","params":{"column":"revenue","order":"desc","limit":1}}}
 
 Q: "Count orders by status"
@@ -310,10 +310,8 @@ A: {"command":"ExecuteFinalQuery","args":{"operation":"pipeline","params":{"oper
 Q: "Give me the average salary, min and max salary, and a department breakdown" (multiple independent questions in a single request -> use multi_analysis to execute in parallel in a single turn)
 A: {"command":"ExecuteFinalQuery","args":{"operation":"multi_analysis","params":{"operations":[{"name":"average_salary","operation":"aggregate","params":{"column":"salary","function":"mean"}},{"name":"min_salary","operation":"aggregate","params":{"column":"salary","function":"min"}},{"name":"max_salary","operation":"aggregate","params":{"column":"salary","function":"max"}},{"name":"department_breakdown","operation":"groupby","params":{"groupColumn":"department","aggColumn":"salary","aggFunction":"mean"}}]}}}
 
-Q: "Which employee has the highest and lowest salary?" (multi-part → use QuerySheet for each part, then Answer)
-Turn 1: {"command":"QuerySheet","args":{"operation":"sort","params":{"column":"salary","order":"desc","limit":1}}}
-Turn 2: {"command":"QuerySheet","args":{"operation":"sort","params":{"column":"salary","order":"asc","limit":1}}}
-Turn 3: {"command":"Answer","args":{"value":"Highest salary: Henry Allen ($95,000). Lowest salary: ..."}} (combines both results)
+Q: "Which employee has the highest and lowest salary?" (multi-part → use multi_analysis to return full rows)
+A: {"command":"ExecuteFinalQuery","args":{"operation":"multi_analysis","params":{"operations":[{"name":"highest_salary","operation":"sort","params":{"column":"salary","order":"desc","limit":1}},{"name":"lowest_salary","operation":"sort","params":{"column":"salary","order":"asc","limit":1}}]}}}
 
 Q: "Analyze the employee data" or "Give me a complete analysis" (broad analysis → multiple QuerySheet then Answer)
 Turn 1: {"command":"QuerySheet","args":{"operation":"count","params":{}}}
@@ -324,6 +322,15 @@ Turn 4: {"command":"Answer","args":{"value":"Dataset has N records. Average sala
 Q: "Show sales"
 A: {"command":"Answer","args":{"value":"Do you want total sales, sales by a category, or sales over time?"}}
 
+Q: "Which employee is good?" (subjective adjective with no measurable metric → ALWAYS clarify, never guess)
+A: {"command":"Answer","args":{"value":"\"Good\" needs a specific metric. What should I use to decide who is good?","options":["Highest Salary","Highest Score","Most Senior","Most Recent Joiner","Highest Rating"]}}
+
+Q: "Which employee is bad?" (same pattern — subjective quality word without metric → clarify, do NOT filter or guess)
+A: {"command":"Answer","args":{"value":"\"Bad\" needs a specific metric. What should I use to decide who is bad?","options":["Lowest Salary","Lowest Score","Least Senior","Lowest Rating","Lowest Performance"]}}
+
+Q: "Who is the worst employee?" (subjective ranking without a metric column stated → clarify)
+A: {"command":"Answer","args":{"value":"\"Worst\" by which measure?","options":["Lowest Salary","Lowest Score","Lowest Rating","Least Projects","Least Senior"]}}
+
 ═══════════════════════════════════════════════════════
 STRICT RULES — NEVER VIOLATE
 ═══════════════════════════════════════════════════════
@@ -333,10 +340,10 @@ STRICT RULES — NEVER VIOLATE
 ✅ Output ONLY valid JSON — no prose, no markdown, no explanation
 ✅ Use EXACT column names from the schema
 ✅ Call GetColumns before QuerySheet or ExecuteFinalQuery if the current turn has not already shown the schema
-✅ Use ExecuteFinalQuery when one supported operation fully answers the question
-✅ Use QuerySheet when the answer requires interpreting an intermediate result
+✅ Use ExecuteFinalQuery when one supported operation fully answers the question. If the user expects a list, table, or rows of data, ALWAYS use ExecuteFinalQuery.
+✅ Use QuerySheet when the answer requires interpreting an intermediate result.
 ✅ When the user asks for MULTIPLE things (e.g. "highest AND lowest", "analyze", "summary", "compare", "statistics"), prefer using the "multi_analysis" operation to execute all parts in a single turn, OR use separate QuerySheet operations for sequential multi-turn evaluation, then combine all results in a final Answer.
-✅ Use Answer for metadata, clarification questions, and final interpretation after QuerySheet
+✅ Use Answer only for metadata, clarification questions, and final text-only calculations, but NEVER to wrap tabular results (rows) in a text message. If the question expects a table or row-list, ALWAYS return it using ExecuteFinalQuery.
 ✅ If the user asks "which/what/who <category> has/gives highest/lowest/best/most <metric>", use groupby with limit:1
 ✅ If the user asks for "most diverse", "most unique", or "most distinct" values within a category, use groupby with aggFunction:"count_distinct"
 ✅ If the user says "manufacturer", the groupColumn must be the manufacturer/make/brand column, not Title, name, or id
@@ -354,12 +361,211 @@ STRICT RULES — NEVER VIOLATE
 ✅ Use topN_groupby for "top N per group/category" questions
 ✅ Use outlier_detect for "anomaly/outlier/unusual values"
 ✅ Use correlation for "relationship between two numeric columns"
+✅ When returning a row result (ranked record, filtered rows, top/bottom entity), return ALL columns from the schema — do NOT use a select step to strip them down. Only use select to restrict columns when the user explicitly asks for specific fields (e.g. "show only name and salary").
 ❌ NEVER output text outside of JSON
 ❌ NEVER invent column names not in the schema
 ❌ Do not use ExecuteFinalQuery for ambiguous requests that need clarification
 ❌ Do not use QuerySheet when a single ExecuteFinalQuery operation fully answers the question
-❌ Do not skip schema inspection before writing a query`;
+❌ Do not skip schema inspection before writing a query
+❌ NEVER interpret subjective quality words (good, bad, great, poor, excellent, terrible, strong, weak, successful, unsuccessful, effective, ineffective, productive, unproductive) as a data operation. These words are inherently ambiguous — ALWAYS respond with an Answer clarification question that lists 2–6 concrete metric options from the schema. Do NOT filter, sort, or guess based on prior conversation context.
 
+═══════════════════════════════════════════════════════
+UNIVERSAL COMPUTE — USE WHEN NO STANDARD OPERATION FITS
+═══════════════════════════════════════════════════════
+
+When you need a computation that doesn't map to any named operation, use:
+  {"command":"ExecuteFinalQuery","args":{"operation":"universal_compute","params":{"code":"<JS body>"}}}
+
+The code runs as: function(data) { "use strict"; <your code here> }
+where data = the full array of row objects (each row is {colName: value, ...}).
+Return any serializable value — a number, string, array, or object.
+
+Examples:
+  Count rows matching a custom condition:
+    {"code":"return data.filter(r => r.status === 'active' && r.score > 90).length"}
+
+  Compute ratio of two aggregates:
+    {"code":"const sold=data.filter(r=>r.status==='sold').length; return {sold, total:data.length, pct:(sold/data.length*100).toFixed(1)+'%'}"}
+
+  Multi-step custom ranking:
+    {"code":"return data.map(r=>({...r, score: (+r.revenue||0)*0.6 + (+r.units||0)*0.4})).sort((a,b)=>b.score-a.score).slice(0,10)"}
+
+  Text frequency across cells:
+    {"code":"const freq={}; data.forEach(r=>{String(r.tags||'').split(',').forEach(t=>{t=t.trim();if(t)freq[t]=(freq[t]||0)+1;})}); return Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([k,v])=>({tag:k,count:v}))"}
+
+RULE: NEVER say "I cannot compute this." If no named operation fits, use universal_compute.
+RULE: universal_compute is blocked from network/filesystem access — it only operates on the in-memory data array.
+
+═══════════════════════════════════════════════════════
+SELF-CORRECTION PROTOCOL (follow whenever a result is an error)
+═══════════════════════════════════════════════════════
+- If a tool result is an error (e.g. "Unknown operation", "Unknown column", "No numeric data"), treat it as RECOVERABLE feedback, not a dead end.
+- Diagnose the cause, then immediately reissue ONE corrected command. Never apologize, never give up, never tell the user you cannot do it.
+- If a column name was wrong, re-read the schema and use the EXACT name; issue GetColumns again if unsure.
+- If an operation was unsupported, pick the closest SUPPORTED operation OR use universal_compute with a JS snippet.
+- If a filter/value returned an error, fix the casing or broaden it. You have full read access to the entire dataset.
+- Keep iterating until you produce a correct final answer. Only ask the user a clarification question when the request is genuinely ambiguous — never merely because a command failed.`;
+
+
+// ─── Supported Operations Registry ────────────────────────────────────────────
+// Single source of truth. Add new operations here and every system prompt
+// automatically picks them up via buildOperationsBlock().
+const SUPPORTED_OPERATIONS: Array<{ name: string; params: string; note?: string }> = [
+  { name: "filter",           params: '{"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}' },
+  { name: "sort",             params: '{"column":"col","order":"asc|desc","limit":N}' },
+  { name: "remove_nulls",     params: '{"column":"col"} or {} to remove all null rows' },
+  { name: "groupby",          params: '{"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"desc|asc","filter":{optional},"transformColumn":{optional},"transformFunction":{optional},"removeOutliers":{optional},"removeNulls":{true|false}}' },
+  { name: "aggregate",        params: '{"column":"col","function":"sum|count|mean|min|max|median|std|variance"}' },
+  { name: "select",           params: '{"columns":["col1","col2"],"limit":N}' },
+  { name: "head",             params: '{"n":N}' },
+  { name: "transform_column", params: '{"column":"col","function":"extract_number|to_lower|to_upper|trim","skipNulls":true}' },
+  { name: "unique",           params: '{"column":"col"}' },
+  { name: "count",            params: '{}' },
+  { name: "percentile",       params: '{"column":"col","percentiles":[25,50,75]}' },
+  { name: "correlation",      params: '{"column1":"col1","column2":"col2"}' },
+  { name: "topN_groupby",     params: '{"groupColumn":"col","rankColumn":"col2","n":3,"order":"desc|asc"}' },
+  { name: "date_trunc",       params: '{"dateColumn":"col","period":"day|week|month|quarter|year","aggColumn":"col2","aggFunction":"count|sum|mean"}' },
+  { name: "outlier_detect",   params: '{"column":"col","method":"zscore|iqr","threshold":2}' },
+  { name: "filter_outliers",  params: '{"column":"col","method":"zscore|iqr","threshold":1.5}' },
+  { name: "multi_filter",     params: '{"filters":[{"column":"col","operator":"==","value":X}],"logic":"AND|OR"}' },
+  { name: "pivot",            params: '{"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}' },
+  { name: "split_frequency",  params: '{"column":"col","delimiter":",","limit":N,"order":"asc|desc","uniquePerRow":true|false}', note: "for multi-value text columns (comma/pipe/semicolon delimited)" },
+  { name: "pipeline",          params: '{"operations":[{"operation":"filter","params":{...}},{"operation":"transform_column","params":{...}},...]}' },
+  { name: "multi_analysis",    params: '{"operations":[{"name":"label1","operation":"groupby","params":{...}},{"name":"label2","operation":"aggregate","params":{...}}]}', note: "execute multiple independent operations in a single turn" },
+  // ── Extended / escape-hatch operations ─────────────────────────────────────
+  { name: "fuzzy_search",      params: '{"column":"col","query":"text","limit":20}  OR  {"query":"text"} to search all string columns', note: "partial text match, case-insensitive" },
+  { name: "regex_filter",      params: '{"column":"col","pattern":"regex","flags":"i","limit":N}', note: "filter rows by regex pattern" },
+  { name: "running_total",     params: '{"column":"col","sortColumn":"date","order":"asc"}', note: "cumulative sum" },
+  { name: "rank",              params: '{"column":"col","order":"desc","limit":N}', note: "add rank 1..N column" },
+  { name: "value_counts",      params: '{"column":"col","limit":N,"order":"desc"}', note: "alias for groupby count (pandas-style)" },
+  { name: "describe",          params: '{"columns":["col1","col2"]} or {}', note: "count/mean/std/min/p25/median/p75/max for all numeric cols" },
+  {
+    name: "universal_compute",
+    params: '{"code":"JS function body — receives data (array of row objects), must return a serializable value"}',
+    note: "ESCAPE HATCH: use when no other operation fits. Write any JS computation against the data rows. Example: {\"code\":\"return data.filter(r=>r.price>1000 && /pro/i.test(r.name)).length\"}",
+  },
+];
+
+function buildOperationsBlock(): string {
+  return SUPPORTED_OPERATIONS
+    .map((op) => `${op.name.padEnd(18)} ${op.params}${op.note ? `  ← ${op.note}` : ""}`)
+    .join("\n");
+}
+
+// ─── Model Size Detector ───────────────────────────────────────────────────────
+// Returns true for known small/weak models that need terse, ultra-direct prompts.
+function isSmallModel(model: string): boolean {
+  const m = (model || "").toLowerCase();
+  return (
+    m.includes("mini") ||
+    m.includes("haiku") ||
+    m.includes("flash") ||
+    m.includes("gemma") ||
+    m.includes("phi") ||
+    m.includes("llama") ||
+    m.includes("mistral-7b") ||
+    m.includes("mixtral") ||
+    m.includes("3.5-turbo") ||
+    m.includes("o1-mini") ||
+    m.includes("small")
+  );
+}
+
+// ─── Schema-Grounded Example Generator ────────────────────────────────────────
+// Generates 2-4 concrete few-shot examples using ACTUAL column names from the
+// loaded dataset. This dramatically reduces column-name hallucination in small
+// models because they see their own data in the examples.
+function buildSchemaGroundedExamples(columns: SheetData["columns"]): string {
+  const numericCols = columns.filter((c) => c.dtype === "number" || c.dtype === "float" || c.dtype === "integer");
+  const catCols = columns.filter((c) => c.dtype === "string" && c.uniqueCount <= 50);
+  const dateCols = columns.filter((c) => c.dtype === "date");
+  const anyCols = columns;
+
+  const examples: string[] = [];
+
+  // Example 1: count
+  examples.push(`Q: "How many records are there?"\nA: {"command":"ExecuteFinalQuery","args":{"operation":"count","params":{}}}`);
+
+  // Example 2: groupby using real categorical + numeric columns
+  if (catCols.length > 0 && numericCols.length > 0) {
+    examples.push(
+      `Q: "What is the total ${numericCols[0].name} by ${catCols[0].name}?"\nA: {"command":"ExecuteFinalQuery","args":{"operation":"groupby","params":{"groupColumn":"${catCols[0].name}","aggColumn":"${numericCols[0].name}","aggFunction":"sum"}}}`
+    );
+  }
+
+  // Example 3: aggregate using first numeric column
+  if (numericCols.length > 0) {
+    examples.push(
+      `Q: "What is the average ${numericCols[0].name}?"\nA: {"command":"ExecuteFinalQuery","args":{"operation":"aggregate","params":{"column":"${numericCols[0].name}","function":"mean"}}}`
+    );
+  }
+
+  // Example 4: sort using first numeric column
+  if (numericCols.length > 0 && anyCols.length > 0) {
+    examples.push(
+      `Q: "Which record has the highest ${numericCols[0].name}?"\nA: {"command":"ExecuteFinalQuery","args":{"operation":"sort","params":{"column":"${numericCols[0].name}","order":"desc","limit":1}}}`
+    );
+  }
+
+  // Example 5: date_trunc if date column exists
+  if (dateCols.length > 0 && numericCols.length > 0) {
+    examples.push(
+      `Q: "Show ${numericCols[0].name} trend by month"\nA: {"command":"ExecuteFinalQuery","args":{"operation":"date_trunc","params":{"dateColumn":"${dateCols[0].name}","period":"month","aggColumn":"${numericCols[0].name}","aggFunction":"sum"}}}`
+    );
+  }
+
+  // Example 6: multi_analysis with 2 real columns
+  if (numericCols.length >= 2) {
+    examples.push(
+      `Q: "Give me both the highest and lowest ${numericCols[0].name}"\nA: {"command":"ExecuteFinalQuery","args":{"operation":"multi_analysis","params":{"operations":[{"name":"highest","operation":"sort","params":{"column":"${numericCols[0].name}","order":"desc","limit":1}},{"name":"lowest","operation":"sort","params":{"column":"${numericCols[0].name}","order":"asc","limit":1}}]}}}`
+    );
+  }
+
+  return examples.join("\n\n");
+}
+
+// ─── Runtime Schema Context Block ─────────────────────────────────────────────
+// Builds a compact, structured schema block injected into the USER message.
+// Putting this in the user message (not system prompt) is more reliable for
+// small models that may de-prioritize long system prompts.
+function buildSchemaContextBlock(sheetData: SheetData): string {
+  const lines: string[] = [
+    `EXACT COLUMN NAMES — use these VERBATIM (do NOT guess or paraphrase):`,
+  ];
+  for (const col of sheetData.columns) {
+    const sample = col.sampleValues.slice(0, 3).join(", ");
+    const nullNote = col.nonNullCount < sheetData.rows.length
+      ? `, ${sheetData.rows.length - col.nonNullCount} nulls`
+      : "";
+    lines.push(`  "${col.name}" [${col.dtype}] — ${col.uniqueCount} unique${nullNote} — e.g. ${sample}`);
+  }
+  lines.push(`Dataset size: ${sheetData.rows.length} rows × ${sheetData.columns.length} columns`);
+  return lines.join("\n");
+}
+
+// ─── Runtime-Enriched System Prompt ───────────────────────────────────────────
+// Appends the live operations list (from SUPPORTED_OPERATIONS registry) and
+// dataset-specific few-shot examples to the base system prompt.
+// This is called at query time so the prompt always reflects the current
+// operation set — no manual update needed when new ops are added.
+function buildRuntimeSystemPrompt(sheetData: SheetData, basePrompt: string): string {
+  const examples = buildSchemaGroundedExamples(sheetData.columns);
+  const opsBlock = buildOperationsBlock();
+
+  return `${basePrompt}
+
+═══════════════════════════════════════════════════════
+CURRENT OPERATION SET (authoritative — always up-to-date)
+═══════════════════════════════════════════════════════
+${opsBlock}
+
+═══════════════════════════════════════════════════════
+DATASET-SPECIFIC EXAMPLES (using YOUR actual column names)
+═══════════════════════════════════════════════════════
+${examples}
+
+FINAL REMINDER: output ONLY a single JSON object. Zero prose. Zero markdown. Zero explanation.`;
+}
 
 // ─── Intent Normalizer ─────────────────────────────────────────────────────────
 // Pre-processes the user's question to resolve ambiguities BEFORE sending to LLM.
@@ -463,6 +669,71 @@ function buildColumnHints(question: string, columns: SheetData["columns"]): stri
   return `\n\nRelevant columns for this question: ${matched.map((n) => `"${n}"`).join(", ")} — use EXACT names as shown.`;
 }
 
+// ─── Subjective Query Detector ────────────────────────────────────────────────
+// Catches questions using vague quality adjectives (good, bad, great, poor, etc.)
+// WITHOUT a measurable metric, and forces a deterministic clarification BEFORE
+// the LLM is called. This prevents small models from hallucinating random
+// interpretations of subjective terms.
+const PURE_SUBJECTIVE_ADJECTIVES = [
+  "good", "bad", "great", "poor", "excellent", "terrible",
+  "strong", "weak", "successful", "unsuccessful",
+  "effective", "ineffective", "productive", "unproductive",
+  "talented", "incompetent", "capable", "skilled",
+];
+
+const METRIC_SIGNAL_WORDS = [
+  "salary", "revenue", "sales", "profit", "income", "earning",
+  "score", "rating", "performance", "age", "experience", "tenure",
+  "spend", "spending", "cost", "amount", "value", "total", "rank",
+  "grade", "hours", "points", "marks", "growth", "target", "quota",
+];
+
+function detectSubjectiveQuery(
+  originalQuestion: string,
+  columns: SheetData["columns"]
+): { prompt: string; options: string[] } | null {
+  const q = originalQuestion.toLowerCase().trim();
+
+  // Only fire when user is asking about a specific entity (which/who/what)
+  if (!/\b(which|who|what)\b/i.test(q)) return null;
+
+  // Find which subjective adjective matched
+  const matchedAdj = PURE_SUBJECTIVE_ADJECTIVES.find((adj) =>
+    new RegExp(`\\b${adj}\\b`, "i").test(q)
+  );
+  if (!matchedAdj) return null;
+
+  // Don't fire if a concrete metric word is already in the question
+  if (METRIC_SIGNAL_WORDS.some((m) => q.includes(m))) return null;
+
+  // Don't fire if a numeric column name is directly mentioned
+  const numericCols = columns.filter(
+    (c) => c.dtype === "number" || c.dtype === "float" || c.dtype === "integer"
+  );
+  if (
+    numericCols.some((c) =>
+      q.includes(c.name.toLowerCase().replace(/_+/g, " "))
+    )
+  )
+    return null;
+
+  // Build clarification options from numeric columns (pretty labels)
+  const options: string[] = numericCols.slice(0, 5).map((c) =>
+    c.name.replace(/_+/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())
+  );
+
+  // Always ensure at least a few fallback options
+  if (options.length === 0) {
+    options.push("Most recent joiner", "Highest ranked", "Most experienced");
+  }
+
+  const label = matchedAdj.charAt(0).toUpperCase() + matchedAdj.slice(1);
+  return {
+    prompt: `"${label}" is subjective and needs a specific metric. What should I use to decide who is "${matchedAdj}"?`,
+    options,
+  };
+}
+
 // ─── Query Plan Classifier ─────────────────────────────────────────────────────
 // Detects question intent and injects a focused hint into the prompt.
 // Helps weak models pick the right operation without guessing.
@@ -470,6 +741,9 @@ function classifyIntent(question: string): string {
   const q = question.toLowerCase();
 
   const intents: Array<[RegExp, string]> = [
+    // Subjective quality words without a metric → must ask for clarification
+    [/\b(which|what|who)\b.{0,50}\b(is|are|was|were)\b.{0,20}\b(good|bad|great|poor|excellent|terrible|strong|weak|successful|unsuccessful|effective|ineffective|productive|unproductive)\b/i,
+      "INTENT: subjective quality question with no metric → use Answer to ask a clarification question with 2–6 concrete metric options from the column list. Do NOT guess or execute a query."],
     [/\banalyze|analysis|statistics|overview|summary|multiple (metrics|operations|questions|parts)|highest (and|or) lowest|max (and|or) min|high (and|or) low\b/i, "INTENT: comprehensive multi-part analysis → use the 'multi_analysis' operation inside ExecuteFinalQuery to execute multiple independent operations (e.g. groupby, aggregate, percentile, outlier_detect) on the dataset in parallel in a single turn. Structure it as {\"operation\":\"multi_analysis\",\"params\":{\"operations\":[{\"name\":\"label1\",\"operation\":\"groupby\",\"params\":{...}},...]}}"],
     [/\b(which|what|who)\b.+\b(diverse|diversity|variety|distinct|unique)\b/i, "INTENT: grouped diversity ranking → use groupby with aggFunction count_distinct; groupColumn is the entity/category being compared, aggColumn is the thing whose diversity is counted; use limit:1 for most/least"],
     [/\b(which|what|who)\b.+\b(maximum|max|highest|largest|most|top|best|minimum|min|lowest|smallest|least|bottom|worst|common)\b/i, "INTENT: category comparison/ranking → if a category/type/entity is mentioned, use groupby with the category as groupColumn and limit:1; do not use aggregate unless asking for one overall dataset value"],
@@ -790,6 +1064,91 @@ function buildSplitFrequencyFallback(
   };
 }
 
+function sheetHasColumn(sheet: SheetData | undefined, columnName: string): boolean {
+  if (!sheet || !sheet.columns) return false;
+  const normalized = normalizeColumnName(columnName);
+  return sheet.columns.some(c => normalizeColumnName(c.name) === normalized);
+}
+
+function getReferencedColumnsFromPandasQuery(pandasQuery: string): string[] {
+  const columns: string[] = [];
+  const matches = pandasQuery.matchAll(/['"]([^'"]+)['"]/g);
+  for (const match of matches) {
+    columns.push(match[1]);
+  }
+  return columns;
+}
+
+function repairLegacyCommandSheet(
+  parsed: { command: string; args?: Record<string, any> },
+  sheets: WorkbookSheets,
+  defaultSheetName: string
+) {
+  const args = parsed.args || {};
+  if (parsed.command !== "QuerySheet" && parsed.command !== "ExecuteFinalQuery") {
+    return parsed;
+  }
+
+  const requestedSheetName =
+    typeof args.sheet_name === "string" && args.sheet_name.trim()
+      ? args.sheet_name.trim()
+      : defaultSheetName;
+
+  const operation = typeof args.operation === "string" ? args.operation.trim() : "";
+  let referencedColumns = getReferencedSheetColumns(operation, args.params || {});
+  if (referencedColumns.length === 0 && typeof args.pandas_query === "string") {
+    referencedColumns = getReferencedColumnsFromPandasQuery(args.pandas_query);
+  }
+
+  if (referencedColumns.length === 0) return parsed;
+
+  // Check how many of the referenced columns are in the requested sheet
+  const requestedSheet = sheets[requestedSheetName];
+  let requestedMatchCount = 0;
+  if (requestedSheet) {
+    for (const col of referencedColumns) {
+      if (sheetHasColumn(requestedSheet, col)) {
+        requestedMatchCount++;
+      }
+    }
+  }
+
+  // If the requested sheet matches all referenced columns, no need to change sheet
+  if (requestedMatchCount === referencedColumns.length && requestedMatchCount > 0) {
+    return parsed;
+  }
+
+  // Find a sheet that matches the maximum number of referenced columns
+  let bestSheetName = requestedSheetName;
+  let maxMatchCount = requestedMatchCount;
+
+  for (const [sheetName, sheet] of Object.entries(sheets)) {
+    if (sheetName === requestedSheetName) continue;
+    let matchCount = 0;
+    for (const col of referencedColumns) {
+      if (sheetHasColumn(sheet, col)) {
+        matchCount++;
+      }
+    }
+    if (matchCount > maxMatchCount) {
+      maxMatchCount = matchCount;
+      bestSheetName = sheetName;
+    }
+  }
+
+  if (bestSheetName !== requestedSheetName) {
+    return {
+      ...parsed,
+      args: {
+        ...args,
+        sheet_name: bestSheetName,
+      },
+    };
+  }
+
+  return parsed;
+}
+
 function repairLegacyCommandForQuestion(
   parsed: { command: string; args?: Record<string, any> },
   question: string,
@@ -938,6 +1297,61 @@ function resolveColumn(row: Record<string, any>, name: string): string {
   return name;
 }
 
+function looseEquals(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a == b;
+
+  const strA = String(a).trim().toLowerCase();
+  const strB = String(b).trim().toLowerCase();
+
+  if (strA === strB) return true;
+
+  // Handle Gender abbreviations: male/m, female/f
+  if ((strA === "male" && strB === "m") || (strA === "m" && strB === "male")) {
+    return true;
+  }
+  if ((strA === "female" && strB === "f") || (strA === "f" && strB === "female")) {
+    return true;
+  }
+
+  // Handle Yes/No to Boolean
+  if ((strA === "yes" && (b === true || strB === "true")) || (strB === "yes" && (a === true || strA === "true"))) {
+    return true;
+  }
+  if ((strA === "no" && (b === false || strB === "false")) || (strB === "no" && (a === false || strA === "false"))) {
+    return true;
+  }
+
+  return false;
+}
+
+function looseCompare(a: any, b: any, operator: string): boolean {
+  if (a == null || b == null) return false;
+
+  // Attempt to parse both as numbers
+  const numA = Number(String(a).replace(/,/g, ""));
+  const numB = Number(String(b).replace(/,/g, ""));
+
+  if (!isNaN(numA) && !isNaN(numB)) {
+    switch (operator) {
+      case ">": return numA > numB;
+      case "<": return numA < numB;
+      case ">=": return numA >= numB;
+      case "<=": return numA <= numB;
+    }
+  }
+
+  // Fallback to standard comparison
+  switch (operator) {
+    case ">": return a > b;
+    case "<": return a < b;
+    case ">=": return a >= b;
+    case "<=": return a <= b;
+  }
+
+  return false;
+}
+
 function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
   switch (operation) {
     case "filter": {
@@ -955,12 +1369,12 @@ function executeOperation(data: Record<string, any>[], operation: string, params
         const actualCol = resolveColumn(row, column);
         const v = row[actualCol];
         switch (operator) {
-          case ">": return v > value;
-          case "<": return v < value;
-          case ">=": return v >= value;
-          case "<=": return v <= value;
-          case "==": return v == value;
-          case "!=": return v != value;
+          case ">": return looseCompare(v, value, ">");
+          case "<": return looseCompare(v, value, "<");
+          case ">=": return looseCompare(v, value, ">=");
+          case "<=": return looseCompare(v, value, "<=");
+          case "==": return looseEquals(v, value);
+          case "!=": return !looseEquals(v, value);
           case "contains": return String(v).toLowerCase().includes(String(value).toLowerCase());
           case "starts_with": return String(v).toLowerCase().startsWith(String(value).toLowerCase());
           case "ends_with": return String(v).toLowerCase().endsWith(String(value).toLowerCase());
@@ -1395,12 +1809,12 @@ function executeOperation(data: Record<string, any>[], operation: string, params
           const actualCol = resolveColumn(row, f.column);
           const v = row[actualCol];
           switch (f.operator) {
-            case ">": return v > f.value;
-            case "<": return v < f.value;
-            case ">=": return v >= f.value;
-            case "<=": return v <= f.value;
-            case "==": return v == f.value;
-            case "!=": return v != f.value;
+            case ">": return looseCompare(v, f.value, ">");
+            case "<": return looseCompare(v, f.value, "<");
+            case ">=": return looseCompare(v, f.value, ">=");
+            case "<=": return looseCompare(v, f.value, "<=");
+            case "==": return looseEquals(v, f.value);
+            case "!=": return !looseEquals(v, f.value);
             case "contains": return String(v).toLowerCase().includes(String(f.value).toLowerCase());
             case "starts_with": return String(v).toLowerCase().startsWith(String(f.value).toLowerCase());
             case "ends_with": return String(v).toLowerCase().endsWith(String(f.value).toLowerCase());
@@ -1470,8 +1884,176 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       return results;
     }
 
+    // ── universal_compute: LLM writes a JS snippet run against the data ──────
+    // This is the "any computation" escape hatch. The LLM supplies a JS function
+    // body that receives `data` (array of row objects) and must return any
+    // serializable value.  The executor runs it in a strict-mode sandbox.
+    //
+    // Example param:
+    //   {"code":"return data.filter(r=>r.price>1000).map(r=>r.name)"}
+    //   {"code":"const total=data.reduce((s,r)=>s+(+r.revenue||0),0); return {total,avg:total/data.length}"}
+    case "universal_compute": {
+      const { code } = params;
+      if (typeof code !== "string" || !code.trim()) {
+        return { error: "universal_compute requires a 'code' param containing a JS function body that receives 'data' and returns a result." };
+      }
+      // Block patterns that could exfiltrate data or access the environment.
+      const BLOCKED = /\b(fetch|XMLHttpRequest|require|import|process|__dirname|__filename|eval|setTimeout|setInterval|setImmediate|clearTimeout|clearInterval|WebSocket|localStorage|sessionStorage|indexedDB|document|window\s*\.|global\s*\.|Buffer\s*\.|crypto\s*\.|fs\s*\.|child_process|exec\s*\(|spawn\s*\()\b/;
+      if (BLOCKED.test(code)) {
+        return { error: "universal_compute: code contains a disallowed pattern (network / filesystem / eval access is blocked for safety)." };
+      }
+      try {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function("data", `"use strict";\n${code}`);
+        const result = fn(data);
+        return result ?? null;
+      } catch (err: any) {
+        return { error: `universal_compute execution error: ${err?.message || String(err)}` };
+      }
+    }
+
+    // ── fuzzy_search: case-insensitive partial-text search across columns ─────
+    // Useful when the LLM isn't sure of the exact filter value.
+    // {"column":"name","query":"john","limit":20}  — search one column
+    // {"query":"john","limit":20}                  — search ALL string columns
+    case "fuzzy_search": {
+      const { column, query = "", limit = 50, caseSensitive = false } = params;
+      if (!query) return { error: "fuzzy_search requires a 'query' param." };
+      const q = caseSensitive ? String(query) : String(query).toLowerCase();
+      const cols = column
+        ? [column]
+        : (data[0] ? Object.keys(data[0]).filter((k) => typeof data[0][k] === "string") : []);
+      const results = data.filter((row) =>
+        cols.some((c) => {
+          const v = caseSensitive ? String(row[c] ?? "") : String(row[c] ?? "").toLowerCase();
+          return v.includes(q);
+        })
+      );
+      return limit ? results.slice(0, Number(limit)) : results;
+    }
+
+    // ── regex_filter: filter rows where a column matches a regex pattern ──────
+    // {"column":"email","pattern":"@gmail\\.com$"} or {"column":"id","pattern":"^USR-\\d+"}
+    case "regex_filter": {
+      const { column, pattern, flags = "i", limit } = params;
+      if (!column || !pattern) return { error: "regex_filter requires 'column' and 'pattern' params." };
+      let re: RegExp;
+      try { re = new RegExp(String(pattern), String(flags)); }
+      catch { return { error: `regex_filter: invalid regex pattern: ${pattern}` }; }
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      const results = data.filter((row) => re.test(String(row[actualCol] ?? "")));
+      return limit ? results.slice(0, Number(limit)) : results;
+    }
+
+    // ── running_total: cumulative sum of a column (optionally sorted first) ──
+    // {"column":"revenue","sortColumn":"date","order":"asc"}
+    case "running_total": {
+      const { column, sortColumn, order = "asc" } = params;
+      if (!column) return { error: "running_total requires a 'column' param." };
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      let rows = [...data];
+      if (sortColumn) {
+        const actualSort = resolveColumn(firstRow, sortColumn);
+        rows.sort((a, b) => {
+          const av = a[actualSort], bv = b[actualSort];
+          if (av == null) return 1; if (bv == null) return -1;
+          return order === "asc" ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+        });
+      }
+      let cumSum = 0;
+      return rows.map((row) => {
+        cumSum += Number(row[actualCol]) || 0;
+        return { ...row, [`running_${column}`]: +cumSum.toFixed(4) };
+      });
+    }
+
+    // ── rank: add a rank column to rows sorted by a metric ───────────────────
+    // {"column":"revenue","order":"desc","limit":10}
+    case "rank": {
+      const { column, order = "desc", limit } = params;
+      if (!column) return { error: "rank requires a 'column' param." };
+      const firstRow = data[0] || {};
+      const actualCol = resolveColumn(firstRow, column);
+      const sorted = [...data].sort((a, b) => {
+        const av = Number(a[actualCol] ?? 0), bv = Number(b[actualCol] ?? 0);
+        return order === "asc" ? av - bv : bv - av;
+      });
+      const ranked = sorted.map((row, i) => ({ rank: i + 1, ...row }));
+      return limit ? ranked.slice(0, Number(limit)) : ranked;
+    }
+
+    // ── value_counts: shorthand alias for groupby count ───────────────────────
+    // LLMs often reach for "value_counts" (pandas terminology).
+    // {"column":"status","limit":20,"order":"desc"}
+    case "value_counts": {
+      const { column, limit, order = "desc" } = params;
+      if (!column) return { error: "value_counts requires a 'column' param." };
+      return executeOperation(data, "groupby", {
+        groupColumn: column,
+        aggColumn: column,
+        aggFunction: "count",
+        limit,
+        order,
+      });
+    }
+
+    // ── describe: summary statistics for all numeric columns ─────────────────
+    // {"columns":["price","qty"]}  or {}  for all numeric columns
+    case "describe": {
+      const { columns: colFilter } = params;
+      const numericCols = (data[0] ? Object.keys(data[0]) : []).filter((k) => {
+        if (colFilter && !colFilter.includes(k)) return false;
+        return !isNaN(Number(data.find((r) => r[k] != null)?.[k]));
+      });
+      if (numericCols.length === 0) return { error: "describe: no numeric columns found." };
+      const result: Record<string, any> = {};
+      for (const col of numericCols) {
+        const nums = data.map((r) => Number(r[col])).filter((n) => !isNaN(n));
+        if (nums.length === 0) continue;
+        nums.sort((a, b) => a - b);
+        const sum = nums.reduce((s, v) => s + v, 0);
+        const mean = sum / nums.length;
+        const mid = Math.floor(nums.length / 2);
+        result[col] = {
+          count: nums.length,
+          mean: +mean.toFixed(4),
+          std: +(Math.sqrt(nums.reduce((s, v) => s + (v - mean) ** 2, 0) / nums.length)).toFixed(4),
+          min: nums[0],
+          p25: nums[Math.floor(nums.length * 0.25)],
+          median: nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2,
+          p75: nums[Math.floor(nums.length * 0.75)],
+          max: nums[nums.length - 1],
+        };
+      }
+      return result;
+    }
+
     default:
-      return { error: `Unknown operation: ${operation}` };
+      // Last-resort: try to map common LLM naming variations to supported ops
+      // before giving up with an error (reduces self-healing round-trips).
+      {
+        const opAliases: Record<string, string> = {
+          group_by: "groupby",   groupBy: "groupby",   group: "groupby",
+          agg: "aggregate",      aggregation: "aggregate",
+          top: "sort",           bottom: "sort",
+          search: "fuzzy_search", text_search: "fuzzy_search", contains_search: "fuzzy_search",
+          cumsum: "running_total", cumulative_sum: "running_total",
+          freq: "value_counts",  frequency: "value_counts",
+          stats: "describe",     summary_stats: "describe", statistics: "describe",
+          order: "sort",         order_by: "sort",
+          limit: "head",         take: "head",   sample_rows: "head",
+          remove_outliers: "filter_outliers",
+          regex: "regex_filter",
+          compute: "universal_compute", js: "universal_compute", eval: "universal_compute",
+        };
+        const resolved = opAliases[operation] || opAliases[operation.toLowerCase()];
+        if (resolved) {
+          return executeOperation(data, resolved, params);
+        }
+        return { error: `Unknown operation: "${operation}". Supported: ${SUPPORTED_OPERATIONS.map((o) => o.name).join(", ")}. Use 'universal_compute' with a JS code snippet for any custom logic.` };
+      }
   }
 }
 
@@ -1628,6 +2210,122 @@ function buildColumnSummary(sheetData: SheetData): string {
     .join("\n");
 }
 
+// ─── Self-Healing & Resilience Utilities ───────────────────────────────────────
+// These make the agent robust enough that even small/weak models can recover from
+// transient API failures and their own mistakes (bad columns, empty results, SQL
+// errors) by feeding the failure back and letting the model issue a corrected
+// command — instead of giving up after a single attempt.
+
+// Max number of times the agent will feed an execution error back for correction
+// within a single question. Keeps self-healing bounded so it can never loop forever.
+const MAX_HEAL_ATTEMPTS = 3;
+
+// Classifies an LLM transport error as transient (worth retrying) vs. fatal.
+// Free/small-model endpoints rate-limit aggressively, so retrying transient
+// failures dramatically improves perceived reliability.
+function isTransientLLMError(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  // Fatal — never retry (auth/config problems won't fix themselves):
+  if (/\(401\)|\(403\)|unauthorized|forbidden|invalid api key|api key is missing|missing\.|unknown provider|requires resource/.test(m)) {
+    return false;
+  }
+  // Transient — retry with backoff:
+  return /\(429\)|\(408\)|\(425\)|\(500\)|\(502\)|\(503\)|\(504\)|rate.?limit|too many requests|timeout|timed out|network|fetch failed|failed to fetch|econnreset|socket hang up|etimedout|enotfound|temporarily|overloaded|capacity|try again|service unavailable/.test(m);
+}
+
+// Wraps callLLM with bounded exponential-backoff retries on transient errors.
+// On success it calls callLLM exactly once (no behavior change for healthy calls).
+async function callLLMWithRetry(
+  provider: Provider,
+  model: string,
+  apiKey: string,
+  messages: { role: string; content: string }[],
+  prompt: string,
+  temperature: number,
+  maxTokens: number,
+  providerOptions: LLMProviderOptions,
+  maxRetries = 2,
+): Promise<LLMResponse> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await callLLM(provider, model, apiKey, messages, prompt, temperature, maxTokens, providerOptions);
+    } catch (err: any) {
+      lastErr = err;
+      const msg = err?.message || String(err);
+      if (attempt >= maxRetries || !isTransientLLMError(msg)) break;
+      // Exponential backoff with jitter: ~0.4s, ~0.8s (capped at 2s).
+      const backoff = Math.min(2000, 400 * 2 ** attempt) + Math.random() * 200;
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
+  }
+  throw lastErr;
+}
+
+// Detects a hard execution failure that the model should be asked to self-correct.
+// Returns a human-readable error string, or null if the result is acceptable.
+// IMPORTANT: only flags unambiguous failures (explicit error payloads / ERROR-prefixed
+// strings). Empty arrays and zero values are valid answers and are NOT flagged here,
+// so legitimate "no matching rows" results are never second-guessed.
+function detectExecutionError(result: any): string | null {
+  if (result == null) return null;
+  if (typeof result === "string") {
+    const t = result.trim();
+    return /^error\b[:\s-]/i.test(t) ? t : null;
+  }
+  if (Array.isArray(result)) return null;
+  if (typeof result === "object") {
+    if (typeof result.error === "string" && result.error.trim()) return result.error.trim();
+  }
+  return null;
+}
+
+// Builds a corrective instruction that helps any model (especially small ones)
+// fix the failing command on the next turn.
+function buildHealingHint(
+  errorText: string,
+  command: string,
+  validNames: string[],
+  options: { kind?: "sheet" | "table" | "sql"; tableNames?: string[] } = {},
+): string {
+  const kind = options.kind || "sheet";
+  const colsLine = validNames.length
+    ? `Valid ${kind === "sql" ? "column" : "column"} names (use EXACT spelling): ${validNames.slice(0, 60).map((n) => `"${n}"`).join(", ")}.`
+    : "";
+  const tablesLine = options.tableNames && options.tableNames.length
+    ? `Available tables you may search instead: ${options.tableNames.slice(0, 40).map((n) => `"${n}"`).join(", ")}.`
+    : "";
+  const fixes = kind === "sql"
+    ? "Common fixes: (1) correct the column/table name using the exact spelling above; (2) fix SQL syntax for this dialect; (3) qualify ambiguous columns; (4) if the value was not found, search another table or loosen the WHERE filter (e.g. use ILIKE/LOWER for case-insensitive text); (5) call GetSchema or GetColumns if you are unsure of the schema."
+    : "Common fixes: (1) use an exact column name from the list above; (2) choose a SUPPORTED operation; (3) if a filter/value returned an error, fix the column or value casing; (4) if you are unsure of the schema, issue GetColumns first.";
+  return [
+    `Your previous ${command} command FAILED with this error: "${errorText}".`,
+    `This is recoverable. Do NOT give up, do NOT apologize, and do NOT ask the user — diagnose the cause and reissue ONE corrected JSON command that answers the original question.`,
+    colsLine,
+    tablesLine,
+    fixes,
+    `Respond with a single corrected JSON command only.`,
+  ].filter(Boolean).join(" ");
+}
+
+// Appended to every agent system prompt so models know failures are recoverable
+// and exactly how to behave when they receive an error result.
+const SELF_CORRECTION_PROTOCOL = `
+
+═══════════════════════════════════════════════════════
+SELF-CORRECTION PROTOCOL (follow whenever a result is an error)
+═══════════════════════════════════════════════════════
+- If a tool result is an error (e.g. "Unknown operation", "Unknown column", a SQL error, or "No numeric data"), treat it as RECOVERABLE feedback, not a dead end.
+- Diagnose the cause, then immediately reissue ONE corrected command. Never apologize, never give up, never tell the user you cannot do it.
+- If a column/table name was wrong, re-read the schema you were given and use the EXACT name; call GetColumns/GetSchema again if you are unsure.
+- If an operation was unsupported, pick the closest SUPPORTED operation that answers the question. As a last resort, use universal_compute with a JS code snippet that operates on the data array.
+- If a search/filter returned an error or nothing useful, broaden it (case-insensitive match, fewer conditions) or search a different table/sheet — you have full read access to ALL of them.
+- Keep iterating until you can produce a correct final answer. Only ask the user a clarification question when the request is genuinely ambiguous, never merely because a command failed.
+
+LAST-RESORT RULE: If no named operation fits what you need, use universal_compute:
+  {"command":"ExecuteFinalQuery","args":{"operation":"universal_compute","params":{"code":"return data.filter(r => ...).map(r => ...)"}}}
+The code receives data (array of row objects) and must return a serializable value. Network and filesystem access are blocked.`;
+
 // ─── Main Agent Runner ─────────────────────────────────────────────────────────
 export async function* runAgent(
   question: string,
@@ -1642,7 +2340,13 @@ export async function* runAgent(
   providerOptions: LLMProviderOptions = {}
 ): AsyncGenerator<AgentStep> {
   const messages: { role: string; content: string }[] = [];
-  const prompt = systemPromptOverride || SYSTEM_PROMPT;
+  // Use the runtime-enriched prompt (adds live ops list + dataset-specific examples).
+  // For small/weak models we still use the same prompt but inject the schema directly
+  // into the first user message so they don't need to waste a turn on GetColumns.
+  const basePrompt = systemPromptOverride || SYSTEM_PROMPT;
+  const prompt = systemPromptOverride
+    ? basePrompt
+    : buildRuntimeSystemPrompt(sheetData, basePrompt);
   let turn = 0;
   // ── Step budget: LLM is told so it plans efficiently ──
   const maxTurns = 12;
@@ -1652,11 +2356,28 @@ export async function* runAgent(
   const intentHint = classifyIntent(normalizedQuestion);
   const columnHints = buildColumnHints(normalizedQuestion, sheetData.columns);
 
+  // ── Pre-flight: deterministic subjective-query guard ──
+  // Catches "which employee is good/bad/great/poor/..." without a metric BEFORE
+  // the LLM runs, so small models cannot hallucinate a random interpretation.
+  const subjectiveClarification = !systemPromptOverride
+    ? detectSubjectiveQuery(question, sheetData.columns)
+    : null;
+  if (subjectiveClarification) {
+    yield {
+      turn: 1,
+      command: "Answer",
+      args: { value: subjectiveClarification.prompt, options: subjectiveClarification.options },
+      result: subjectiveClarification.prompt,
+      tokens: { input: 0, output: 0 },
+      durationMs: 0,
+      isFinal: true,
+    };
+    return;
+  }
+
   // ── LangChain-style BufferWindowMemory: last 3 Q/A turns (compact) ──
-  // Accepts both old ConversationContext[] and a pre-built contextBlock string.
   let contextBlock = "";
   if (conversationHistory && conversationHistory.length > 0) {
-    // Keep last 3 turns, truncate each A to 200 chars — mirrors LangChain's window memory
     const recent = conversationHistory.slice(-3);
     contextBlock =
       "\n\nPrior conversation (last " + recent.length + " turn" + (recent.length !== 1 ? "s" : "") + " — use for follow-up context):\n" +
@@ -1670,22 +2391,30 @@ export async function* runAgent(
         .join("\n");
   }
 
+  // ── Pre-inject schema so the model can write a query on turn 1 ──
+  // This saves a GetColumns round-trip (critical for small models).
+  // We embed the schema in the user message so even models that skim
+  // the system prompt will see the exact column names right before the question.
+  const schemaBlock = !systemPromptOverride ? `\n\n${buildSchemaContextBlock(sheetData)}` : "";
+
   // ── Build the enriched first user message ──
-  // Step budget disclosure: helps LLM plan (don't waste turns on unnecessary GetColumns loops)
   const firstMessage = [
-    `Dataset: ${sheetData.rows.length} rows × ${sheetData.columns.length} columns`,
-    `\nStep budget: you have at most ${maxTurns} steps total (including this one). Be efficient.`,
-    `\nThe schema is available through GetColumns. Call GetColumns before writing QuerySheet or ExecuteFinalQuery.`,
+    `Step budget: you have at most ${maxTurns} steps total. Be efficient.`,
+    schemaBlock,
     contextBlock,
     `\nQuestion: "${normalizedQuestion}"`,
     intentHint,
-    columnHints,
-    `\n\nRespond with a single JSON command only. No prose. No explanation.`,
+    // Only add redundant column hints when NOT pre-injecting schema (avoids token waste)
+    !schemaBlock ? columnHints : "",
+    `\n\nRespond with ONE JSON command only. No prose. No explanation. No markdown.`,
   ].filter(Boolean).join("");
 
   messages.push({ role: "user", content: firstMessage });
-  let schemaInspected = false;
+  // Schema is pre-injected above — mark as inspected so we don't force a GetColumns
+  // round-trip on turn 1. The repair guards still run if column names don't match.
+  let schemaInspected = !systemPromptOverride;
   let currentData = sheetData.rows; // Track current data state for intermediate operations
+  let healAttempts = 0; // Bounded self-healing budget for execution errors
 
   while (turn < maxTurns) {
     turn++;
@@ -1693,7 +2422,7 @@ export async function* runAgent(
 
     let llmResponse: LLMResponse;
     try {
-      llmResponse = await callLLM(provider, model, apiKey, messages, prompt, temperature, maxTokens, providerOptions);
+      llmResponse = await callLLMWithRetry(provider, model, apiKey, messages, prompt, temperature, maxTokens, providerOptions);
     } catch (err: any) {
       yield {
         turn,
@@ -1801,8 +2530,33 @@ export async function* runAgent(
         result = { error: `Unknown command: ${command}` };
     }
 
-    const isFinal = command === "ExecuteFinalQuery" || command === "Answer" || command === "NarrativeAnswer";
+    let isFinal = command === "ExecuteFinalQuery" || command === "Answer" || command === "NarrativeAnswer";
     const durationMs = Date.now() - startTime;
+
+    // ── Self-healing: if a data operation errored, feed the error back for correction
+    //    instead of finalizing — so the model can fix the column/operation and retry. ──
+    const execError =
+      command === "ExecuteFinalQuery" || command === "QuerySheet"
+        ? detectExecutionError(result)
+        : null;
+    if (execError && healAttempts < MAX_HEAL_ATTEMPTS && turn < maxTurns) {
+      healAttempts++;
+      yield {
+        turn,
+        command,
+        args,
+        result,
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs,
+        isFinal: false,
+      };
+      messages.push({ role: "assistant", content: assistantCommandContent });
+      messages.push({
+        role: "user",
+        content: buildHealingHint(execError, command, sheetData.columns.map((c) => c.name), { kind: "sheet" }),
+      });
+      continue;
+    }
 
     yield {
       turn,
@@ -1911,7 +2665,12 @@ Rules:
   3. A date_trunc or time trend of the main metric if date columns are present.
   4. An outlier_detect or percentile distribution of the main metric.
   5. A head preview of the top 5-10 rows sorted by the main metric.
-- If QuerySheet returns the exact row(s), either Answer from that result or preserve that subset/filter in ExecuteFinalQuery. Never follow a successful filtered lookup with an unfiltered final select.
+- If the user's question asks for a list, table, or rows of data (e.g., "show me", "give me", "list", "filter", "find all"), and it can be answered with a single operation or pipeline, ALWAYS use ExecuteFinalQuery. NEVER use QuerySheet followed by Answer for questions that expect a table output.
+- Answer should ONLY be used for:
+  1. Clarification questions.
+  2. Questions that ask for metadata/schema info (e.g., column list).
+  3. Final text-based calculations/conclusions (like "Yes", "No", or a specific single number) that cannot be returned as a table.
+- If you ran a QuerySheet and got the exact tabular result (rows) that answers the user's question, DO NOT issue an Answer command with a text summary. Instead, issue ExecuteFinalQuery with the exact same operation/params to return the final table result.
 - Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer when ONE operation suffices.
 - For cross-sheet/multi-sheet questions:
   1. Start by calling GetSheetDescription() to see all sheet names and schemas.
@@ -1924,12 +2683,12 @@ Examples:
 {"command":"GetColumns","args":{"sheet_name":"sales"}}
 {"command":"QuerySheet","args":{"sheet_name":"sales","operation":"groupby","params":{"groupColumn":"region","aggColumn":"amount","aggFunction":"sum"}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"amount","function":"sum"}}}
-{"command":"ExecuteFinalQuery","args":{"sheet_name":"cars","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"Horsepower","order":"desc","limit":1}},{"operation":"select","params":{"columns":["Car"],"limit":1}}]}}}
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"cars","operation":"sort","params":{"column":"Horsepower","order":"desc","limit":1}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"split_frequency","params":{"column":"cast","delimiter":",","limit":10,"order":"desc"}}}
 {"command":"QuerySheet","args":{"sheet_name":"cross_sheet","operation":"join_sheets","params":{"sheet1":"sales","sheet2":"customers","key1":"customer_id","key2":"id","joinType":"inner"}}}
 {"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"groupby","params":{"groupColumn":"customers_name","aggColumn":"sales_amount","aggFunction":"sum"}}}
 {"command":"QuerySheet","args":{"sheet_name":"cross_sheet","operation":"compare_sheets","params":{"sheet1":"q1_sales","sheet2":"q2_sales","key1":"product_id","key2":"product_id","compareColumn1":"revenue","compareColumn2":"revenue"}}}
-{"command":"ExecuteFinalQuery","args":{"sheet_name":"Employees_Data","operation":"multi_analysis","params":{"operations":[{"name":"poorest","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"salary","order":"asc","limit":1}},{"operation":"select","params":{"columns":["first_name","last_name","salary"],"limit":1}}]}},{"name":"richest","operation":"pipeline","params":{"operations":[{"operation":"sort","params":{"column":"salary","order":"desc","limit":1}},{"operation":"select","params":{"columns":["first_name","last_name","salary"],"limit":1}}]}}]}}}`;
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"Employees_Data","operation":"multi_analysis","params":{"operations":[{"name":"poorest","operation":"sort","params":{"column":"salary","order":"asc","limit":1}},{"name":"richest","operation":"sort","params":{"column":"salary","order":"desc","limit":1}}]}}}` + SELF_CORRECTION_PROTOCOL;
 
 const DEFAULT_DATABASE_AGENT_PROMPT = `You are a database analysis agent. Work one step at a time and request only the information you need.
 
@@ -2043,8 +2802,88 @@ Examples:
 {"command":"ExecuteSQL","args":{"sql":"SELECT id, amount FROM orders WHERE status = 'completed' LIMIT 10"}}
 {"command":"ExecuteSQL","args":{"sql":"SELECT o.id, o.amount, c.name FROM orders o JOIN customers c ON o.customer_id = c.id WHERE o.status = 'completed' LIMIT 50"}}
 {"command":"ExecuteSQL","args":{"sql":"WITH summary AS (SELECT COUNT(*) as total, AVG(amount) as avg_amount, MAX(amount) as max_amount, MIN(amount) as min_amount FROM orders) SELECT * FROM summary"}}
-{"command":"Answer","args":{"value":"Which table should I use for that metric?"}}`;
+{"command":"Answer","args":{"value":"Which table should I use for that metric?"}}` + SELF_CORRECTION_PROTOCOL;
 
+const DEFAULT_NOSQL_DATABASE_AGENT_PROMPT = `You are a NoSQL database analysis agent. Work one step at a time and request only the information you need.
+
+You are working with NoSQL database collections/tables. Since this is a NoSQL database, you CANNOT write SQL. Raw SQL queries are NOT supported. You must ONLY use the structured NoSQL operation commands listed below (QueryTable, ExecuteFinalQuery).
+
+You have access to these commands:
+
+1. GetSchema()
+   Returns the database collection inventory with field names. It does not load rows.
+
+2. GetColumns(table_name)
+   Returns detailed field info and sample values for a collection.
+
+3. QueryTable(table_name, operation, params)
+   Runs one intermediate data operation on a collection.
+
+4. ExecuteFinalQuery(table_name, operation, params)
+   Runs the final data operation that answers the question.
+
+5. Answer(value, options?)
+   Use only for clarification questions or schema-only final answers.
+   For clarifications, always include args.options with 2–6 clickable choices.
+
+NoSQL operation rules:
+- Do NOT output QuerySQL or ExecuteSQL commands. If you do, they will fail. Only use QueryTable or ExecuteFinalQuery.
+- Use exact collection and field names from GetSchema/GetColumns.
+
+TURN-EFFICIENCY RULES (critical — you have a limited step budget):
+- GetSchema already returns field names for every collection. After calling GetSchema, you can immediately write operations without calling GetColumns for every collection.
+- Only call GetColumns when you specifically need sample values or detailed data types.
+- When a QueryTable returns data, analyze it and issue Answer or ExecuteFinalQuery immediately — do NOT run another query for the same data.
+- NEVER give up or say "I cannot answer". You have FULL read-only access. Always attempt to answer with the data you have.
+
+Supported operations:
+- count {}
+- head {"n": 10}
+- filter {"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}
+- multi_filter {"filters":[...],"logic":"AND|OR"}
+- sort {"column":"col","order":"asc|desc","limit":N}
+- select {"columns":["col1","col2"],"limit":N,"filter":{"column":"col","operator":"==","value":X} OR {"col":X}}
+- unique {"column":"col"}
+- aggregate {"column":"col","function":"sum|count|count_distinct|mean|min|max|median|std|variance"}
+- groupby {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"asc|desc"}
+- split_frequency {"column":"col","delimiter":",","limit":N,"order":"asc|desc","uniquePerRow":true|false}
+- percentile {"column":"col","percentiles":[25,50,75]}
+- correlation {"column1":"col1","column2":"col2"}
+- date_trunc {"dateColumn":"col","period":"day|week|month|quarter|year","aggColumn":"col2","aggFunction":"count|sum|mean"}
+- outlier_detect {"column":"col","method":"zscore|iqr","threshold":2}
+- pivot {"rowColumn":"col","colColumn":"col2","valueColumn":"col3","aggFunction":"sum|count|mean"}
+- pipeline {"operations":[{"operation":"filter","params":{...}}, {"operation":"aggregate","params":{...}}]}
+- multi_analysis {"operations":[{"name":"op1","operation":"groupby","params":{...}}, {"name":"op2","operation":"percentile","params":{...}}]} to execute multiple independent operations in parallel on the table
+
+CRITICAL RULES FOR MULTI-TABLE QUERIES:
+- When the user provides an identifier (ID, code, name) without specifying a collection, ALWAYS call GetSchema first.
+- Search the most relevant collections in order of likelihood.
+- Call GetColumns for each candidate collection before querying.
+
+Respond with exactly one JSON object and no extra text.
+
+Examples:
+{"command":"GetSchema","args":{}}
+{"command":"GetColumns","args":{"table_name":"orders"}}
+{"command":"ExecuteFinalQuery","args":{"table_name":"orders","operation":"groupby","params":{"groupColumn":"status","aggColumn":"total_amount","aggFunction":"sum"}}}
+{"command":"Answer","args":{"value":"Which collection should I use for that metric?"}}` + SELF_CORRECTION_PROTOCOL;
+
+// ─── Prompt Hardening Wrapper ──────────────────────────────────────────────────
+// Appends the auto-generated, always-current operations block to any prompt.
+// Call this at the usage site so DEFAULT_*_PROMPT strings don't need editing
+// when new operations are added to SUPPORTED_OPERATIONS.
+function withAutoOps(basePrompt: string): string {
+  const opsBlock = buildOperationsBlock();
+  return `${basePrompt}
+
+═══════════════════════════════════════════════════════
+AUTHORITATIVE OPERATION LIST (auto-generated from code — always current)
+Use ONLY these operation names. Unknown operations return errors.
+═══════════════════════════════════════════════════════
+${opsBlock}
+
+OUTPUT RULE: respond with exactly ONE JSON object. No prose. No markdown. No trailing text.`;
+}
 
 function buildDatabaseTableMap(tables: DatabaseTableData[]): DatabaseTables {
   const mapped: DatabaseTables = {};
@@ -2306,8 +3145,17 @@ function resolveDefaultTableName(tables: DatabaseTables, selectedTableName: stri
   return Object.keys(tables)[0] || "";
 }
 
+function isNoSqlDb(dbTypeLabel: string): boolean {
+  const label = dbTypeLabel.toLowerCase();
+  return label.includes("mongo") || label.includes("elastic") || label.includes("opensearch");
+}
+
 function buildSqlDialectGuidance(dbTypeLabel: string) {
   const label = dbTypeLabel.toLowerCase();
+
+  if (isNoSqlDb(dbTypeLabel)) {
+    return "This is a NoSQL database. SQL is not supported. Use NoSQL operations (QueryTable/ExecuteFinalQuery) to query data.";
+  }
 
   if (label.includes("postgres") || label.includes("redshift")) {
     return 'SQL dialect: PostgreSQL/Redshift. Quote schema/table/columns with double quotes when needed, e.g. "schema"."table". Use LIMIT for row caps.';
@@ -3301,11 +4149,14 @@ export async function* runDatabaseAgent(
   }
 
   const history: { role: string; content: string }[] = [];
-  const prompt = systemPromptOverride || DEFAULT_DATABASE_AGENT_PROMPT;
+  const prompt = systemPromptOverride
+    ? systemPromptOverride
+    : withAutoOps(isNoSqlDb(dbTypeLabel) ? DEFAULT_NOSQL_DATABASE_AGENT_PROMPT : DEFAULT_DATABASE_AGENT_PROMPT);
   const maxTurns = 15;
   const inspectedTables = new Set<string>();
   const lastIntermediateFilterByTable = new Map<string, { operation: string; params: Record<string, any> }>();
   let turn = 0;
+  let healAttempts = 0; // Bounded self-healing budget for execution errors
 
   // Detect if this is an identifier lookup query
   const identifierPattern = /^(?:give me|show me|details of|find|get|look for|search for|find details?\s+(?:of|for)|what.*(?:id|identifier|code)\s+)/i;
@@ -3346,7 +4197,7 @@ export async function* runDatabaseAgent(
 
     let llmResponse: LLMResponse;
     try {
-      llmResponse = await callLLM(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
+      llmResponse = await callLLMWithRetry(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
     } catch (err: any) {
       yield {
         turn,
@@ -3663,6 +4514,34 @@ export async function* runDatabaseAgent(
       command === "FinalAnswer" ||
       command === "NarrativeAnswer";
 
+    // ── Self-healing: a failed SQL/data command (syntax error, unknown column/table,
+    //    unsupported operation) is fed back for correction instead of finalizing. ──
+    const execError =
+      command === "ExecuteSQL" || command === "QuerySQL" ||
+      command === "ExecuteFinalQuery" || command === "QueryTable"
+        ? detectExecutionError(result)
+        : null;
+    if (execError && healAttempts < MAX_HEAL_ATTEMPTS && turn < maxTurns) {
+      healAttempts++;
+      const healTable = tables[requestedTableName];
+      const validNames = (healTable?.columns || []).map((c) => c.name);
+      yield {
+        turn,
+        command,
+        args: normalizedArgs,
+        result,
+        sql: executedSql,
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = buildHealingHint(execError, command, validNames, {
+        kind: "sql",
+        tableNames: Object.keys(tables),
+      });
+      continue;
+    }
+
     yield {
       turn,
       command,
@@ -3675,15 +4554,15 @@ export async function* runDatabaseAgent(
     };
 
     if (isFinal) return;
-    
+
     // Smart guidance for empty identifier searches
     let guidance = `Result: ${formatResultForModel(result)}`;
-    if (isIdentifierQuery && command === "ExecuteFinalQuery" && 
-        ((Array.isArray(result) && result.length === 0) || 
+    if (isIdentifierQuery && command === "ExecuteFinalQuery" &&
+        ((Array.isArray(result) && result.length === 0) ||
          (typeof result === "object" && result.rowCount === 0))) {
       guidance += `\n\nThe identifier was not found in ${requestedTableName}. Try searching in other available tables using GetSchema and ExecuteFinalQuery on likely tables.`;
     }
-    
+
     llmInput = guidance;
   }
 
@@ -3751,16 +4630,18 @@ export async function* runLegacyAgent(
   }
 
   const history: { role: string; content: string }[] = [];
-  const prompt = systemPromptOverride || DEFAULT_AGENT_PROMPT;
+  const prompt = systemPromptOverride ? systemPromptOverride : withAutoOps(DEFAULT_AGENT_PROMPT);
   const maxTurns = 12;
   const lastIntermediateRowsBySheet = new Map<string, Record<string, any>[]>();
   const lastIntermediateFilterBySheet = new Map<string, { operation: string; params: Record<string, any> }>();
   let turn = 0;
+  let healAttempts = 0; // Bounded self-healing budget for execution errors
 
+  const sheetInventory = buildSheetDescription(sheets);
   const introParts = [
     `Question: ${question}`,
     `Current selected sheet: "${defaultSheetName}"`,
-    `Available sheet count: ${Object.keys(sheets).length}`,
+    `Workbook Inventory:\n${sheetInventory}`,
   ];
 
   if (conversationHistory && conversationHistory.length > 0) {
@@ -3780,7 +4661,7 @@ export async function* runLegacyAgent(
 
     let llmResponse: LLMResponse;
     try {
-      llmResponse = await callLLM(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
+      llmResponse = await callLLMWithRetry(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
     } catch (err: any) {
       yield {
         turn,
@@ -3810,6 +4691,8 @@ export async function* runLegacyAgent(
       llmInput = "Invalid response. Reply ONLY with a JSON command object.";
       continue;
     }
+
+    parsed = repairLegacyCommandSheet(parsed, sheets, defaultSheetName);
 
     const requestedSheetName =
       typeof parsed.args?.sheet_name === "string" && parsed.args.sheet_name.trim()
@@ -3981,6 +4864,34 @@ export async function* runLegacyAgent(
       command === "Answer" ||
       command === "FinalAnswer" ||
       command === "NarrativeAnswer";
+
+    // ── Self-healing: feed a failed data operation back for correction. ──
+    const execError =
+      command === "ExecuteFinalQuery" || command === "QuerySheet"
+        ? detectExecutionError(result)
+        : null;
+    if (execError && healAttempts < MAX_HEAL_ATTEMPTS && turn < maxTurns) {
+      healAttempts++;
+      const healSheetName =
+        typeof normalizedArgs.sheet_name === "string" && sheets[normalizedArgs.sheet_name]
+          ? normalizedArgs.sheet_name
+          : defaultSheetName;
+      const validNames = (sheets[healSheetName]?.columns || []).map((c) => c.name);
+      yield {
+        turn,
+        command,
+        args: normalizedArgs,
+        result,
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = buildHealingHint(execError, command, validNames, {
+        kind: "sheet",
+        tableNames: Object.keys(sheets),
+      });
+      continue;
+    }
 
     yield {
       turn,

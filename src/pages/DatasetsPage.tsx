@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info, Search, Copy, Grid3X3, List, ArrowUpDown, Star, Pin, Pencil, StickyNote, Rows3, Columns3, SlidersHorizontal, CheckSquare, Square, RotateCcw } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info, Search, Copy, Grid3X3, List, ArrowUpDown, Star, Pin, Pencil, StickyNote, Rows3, Columns3, SlidersHorizontal, CheckSquare, Square, RotateCcw, Database, Clock, Filter } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,8 +22,9 @@ import { useNotificationsStore } from "@/stores/notifications-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { formatFileSizeLimit, type PlanDefinition } from "@/lib/plans";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api } from "@/lib/api-client";
+import { PageHeader } from "@/components/PageHeader";
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 
 type DatasetSort = "newest" | "oldest" | "name" | "type" | "rows";
@@ -493,6 +494,9 @@ export default function DatasetsPage() {
   const [sortBy, setSortBy] = useState<DatasetSort>(savedFilters.sortBy || "newest");
   const [viewMode, setViewMode] = useState<DatasetView>(savedFilters.viewMode || "grid");
   const [density, setDensity] = useState<DatasetDensity>(savedFilters.density || "comfortable");
+  const [typeFilter, setTypeFilter] = useState<"all" | "csv" | "xlsx" | "xls">("all");
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showRecentOnly, setShowRecentOnly] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
 
   useEffect(() => {
@@ -618,6 +622,9 @@ export default function DatasetsPage() {
       .filter((ds) => {
         const meta = uiMeta[ds.id];
         if (ds.archived) return false;
+        if (typeFilter !== "all" && ds.fileType.toLowerCase() !== typeFilter) return false;
+        if (showFavoritesOnly && !meta?.favorite) return false;
+        if (showRecentOnly && !isRecentlyUsed(ds)) return false;
         if (!q) return true;
         return [
           ds.fileName,
@@ -641,7 +648,7 @@ export default function DatasetsPage() {
         if (sortBy === "rows") return bTotals.rows - aTotals.rows;
         return new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime();
       });
-  }, [datasets, searchTerm, sortBy, uiMeta]);
+  }, [datasets, searchTerm, sortBy, uiMeta, typeFilter, showFavoritesOnly, showRecentOnly]);
 
   const copyDatasetName = async (name: string) => {
     await navigator.clipboard.writeText(name);
@@ -745,41 +752,72 @@ export default function DatasetsPage() {
 
   const isRecentlyUsed = (dataset: StoredDataset) => entries.some((entry) => entry.datasetName === dataset.fileName);
 
+  const lastQueriedMap = useMemo(() => {
+    const map: Record<string, Date> = {};
+    for (const e of entries) {
+      const d = new Date(e.date);
+      if (!map[e.datasetName] || d > map[e.datasetName]) map[e.datasetName] = d;
+    }
+    return map;
+  }, [entries]);
+
+  const queryCountMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const e of entries) {
+      map[e.datasetName] = (map[e.datasetName] || 0) + 1;
+    }
+    return map;
+  }, [entries]);
+
+  const totalRows = useMemo(() =>
+    datasets.reduce((s, ds) => s + getDatasetTotals(ds).rows, 0), [datasets]);
+
+  const totalSize = useMemo(() =>
+    datasets.reduce((s, ds) => s + (ds.fileSize || 0), 0), [datasets]);
+
+  const recentlyUsedCount = useMemo(() =>
+    datasets.filter(isRecentlyUsed).length, [datasets, entries]);
+
   return (
     <div className="page-shell space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Dataset studio</p>
-            <h1 className="page-title">Upload and manage your data files</h1>
-            <p className="page-copy">
-              Keep CSV and spreadsheet imports organized with flexible list and grid views that stay usable on mobile,
-              tablet, laptop, and wide desktop layouts.
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Datasets</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{datasets.length}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Recent use</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{datasets.filter(isRecentlyUsed).length}</p>
-            </div>
-            <div className="inline-stat col-span-2 sm:col-span-1">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Size limit</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{fileSizeLimitLabel}</p>
-            </div>
-          </div>
+      <PageHeader
+        title="Datasets"
+        titleIcon={FileSpreadsheet}
+        info="Upload CSV and Excel files, organize them with tags and notes, and manage them in list or grid view across all screen sizes."
+        stats={[
+          { label: "Datasets", value: datasets.length },
+          { label: "Recently used", value: datasets.filter(isRecentlyUsed).length },
+          { label: "Size limit", value: fileSizeLimitLabel },
+        ]}
+      />
+
+      {datasets.filter((ds) => !ds.archived).length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Total datasets", value: datasets.filter((ds) => !ds.archived).length.toLocaleString(), icon: Database },
+            { label: "Total rows", value: totalRows.toLocaleString(), icon: Rows3 },
+            { label: "Total size", value: formatBytes(totalSize), icon: Filter },
+            { label: "Recently used", value: recentlyUsedCount.toLocaleString(), icon: Clock },
+          ].map(({ label, value, icon: Icon }) => (
+            <Card key={label} className="flex items-center gap-3 p-3 bg-background-secondary border-border">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Icon size={14} className="text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-foreground">{value}</p>
+                <p className="text-xs text-muted-foreground">{label}</p>
+              </div>
+            </Card>
+          ))}
         </div>
-      </div>
+      )}
 
       <div
         {...getRootProps()}
         className={`cursor-pointer rounded-[28px] border-2 border-dashed p-6 text-center transition-colors sm:p-8 ${
           isDragActive
-            ? "border-primary bg-primary/10 shadow-[0_20px_48px_-34px_hsl(var(--primary)/0.95)]"
-            : "border-border/80 bg-card/70 hover:border-primary/30"
+            ? "border-primary bg-primary/8 shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.35)]"
+            : "border-border/70 bg-card/70 hover:border-primary/30"
         }`}
       >
         <input {...getInputProps()} />
@@ -904,6 +942,56 @@ export default function DatasetsPage() {
             </div>
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          {(["all", "csv", "xlsx", "xls"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTypeFilter(t)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                typeFilter === t
+                  ? "border-primary/30 bg-primary/15 text-primary"
+                  : "border-border text-muted-foreground hover:border-border/80 hover:text-foreground"
+              }`}
+            >
+              {t === "all" ? "All types" : t.toUpperCase()}
+            </button>
+          ))}
+          <div className="mx-1 h-4 w-px bg-border" />
+          <button
+            type="button"
+            onClick={() => setShowFavoritesOnly((p) => !p)}
+            className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              showFavoritesOnly
+                ? "border-warning/30 bg-warning/10 text-warning"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Star size={11} fill={showFavoritesOnly ? "currentColor" : "none"} />
+            Favorites
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowRecentOnly((p) => !p)}
+            className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              showRecentOnly
+                ? "border-success/30 bg-success/10 text-success"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Clock size={11} />
+            Recently used
+          </button>
+          {(typeFilter !== "all" || showFavoritesOnly || showRecentOnly) && (
+            <button
+              type="button"
+              onClick={() => { setTypeFilter("all"); setShowFavoritesOnly(false); setShowRecentOnly(false); }}
+              className="ml-auto flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <X size={10} /> Clear filters
+            </button>
+          )}
+        </div>
         </div>
       )}
 
@@ -947,16 +1035,27 @@ export default function DatasetsPage() {
           ))}
         </div>
       ) : datasets.length === 0 ? (
-        <div className="empty-panel">
-          <FileSpreadsheet size={48} className="mx-auto text-muted-foreground/30 mb-4" />
-          <p className="text-muted-foreground">No datasets uploaded yet</p>
-          <p className="text-xs text-muted-foreground mt-1">Upload a CSV or Excel file to get started</p>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">
+            <FileSpreadsheet size={26} className="text-primary/50" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No datasets yet</p>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">Upload a CSV or Excel file above to get started. Your data stays private and secure.</p>
         </div>
       ) : visibleDatasets.length === 0 ? (
-        <div className="empty-panel">
-          <Search size={48} className="mx-auto text-muted-foreground/30 mb-4" />
-          <p className="text-muted-foreground">No matching datasets</p>
-          <p className="text-xs text-muted-foreground mt-1">Try a different name, sheet, or file type.</p>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/30">
+            <Search size={22} className="text-muted-foreground/50" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No matching datasets</p>
+          <p className="mt-1 text-xs text-muted-foreground">Try a different search term or clear your active filters.</p>
+          <button
+            type="button"
+            onClick={() => { setSearchTerm(""); setTypeFilter("all"); setShowFavoritesOnly(false); setShowRecentOnly(false); }}
+            className="mt-3 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Clear all filters
+          </button>
         </div>
       ) : viewMode === "list" ? (
         <div className="page-table-wrap">
@@ -968,6 +1067,7 @@ export default function DatasetsPage() {
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Columns</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Size</th>
                 <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Uploaded</th>
+                <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden xl:table-cell">Last queried</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -996,13 +1096,22 @@ export default function DatasetsPage() {
                         {ds.displayName && ds.displayName !== ds.fileName && <span className="max-w-full truncate" title={ds.fileName}>File: {ds.fileName}</span>}
                         <span>{ds.sheetNames.length} sheet(s)</span>
                         <span>Owner: {ds.ownerEmail || ds.createdBy || "You"}</span>
-                        {(ds.tags || []).map((tag) => <Badge key={tag} variant="outline" className="border-border text-[10px]">{tag}</Badge>)}
+                        {(ds.tags || []).map((tag) => (
+                          <button key={tag} type="button" onClick={(e) => { e.stopPropagation(); setSearchTerm(tag); }}>
+                            <Badge variant="outline" className="border-border text-[10px] cursor-pointer hover:bg-primary/10 hover:text-primary transition-colors">{tag}</Badge>
+                          </button>
+                        ))}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{totals.rows.toLocaleString()}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{totals.columns.toLocaleString()}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{formatBytes(ds.fileSize)}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell">{new Date(ds.uploadDate).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground hidden xl:table-cell">
+                      {lastQueriedMap[ds.fileName]
+                        ? <span className="flex items-center gap-1"><Clock size={10} />{lastQueriedMap[ds.fileName].toLocaleDateString()}</span>
+                        : "—"}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button
@@ -1069,15 +1178,24 @@ export default function DatasetsPage() {
           </table>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <motion.div
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+          variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
+          initial="hidden"
+          animate="visible"
+        >
           {visibleDatasets.map((ds) => {
-            const { rows: totalRows, columns: totalCols } = getDatasetTotals(ds);
+            const { rows: dsRows, columns: dsCols } = getDatasetTotals(ds);
             const meta = uiMeta[ds.id] || {};
             const label = ds.displayName || ds.fileName;
             return (
-              <motion.div key={ds.id} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
+              <motion.div
+                key={ds.id}
+                variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } } }}
+                whileHover={{ y: -2, transition: { duration: 0.15 } }}
+              >
                 <Card
-                  className={`${density === "compact" ? "p-3" : "p-4"} bg-background-secondary border-border hover:border-primary/30 transition-colors cursor-pointer group`}
+                  className={`${density === "compact" ? "p-3" : "p-4"} bg-background-secondary border-border hover:border-primary/30 hover:shadow-[0_4px_20px_-8px_hsl(var(--primary)/0.2)] transition-all cursor-pointer group`}
                   onClick={() => setSelectedDataset(ds)}
                 >
                   <div className="flex items-start justify-between mb-3">
@@ -1147,8 +1265,8 @@ export default function DatasetsPage() {
                     </div>
                   </div>
                   <div className="flex gap-4 text-xs text-muted-foreground mb-3">
-                    <span>{totalRows.toLocaleString()} rows</span>
-                    <span>{totalCols} columns</span>
+                    <span>{dsRows.toLocaleString()} rows</span>
+                    <span>{dsCols} columns</span>
                     <span>{ds.sheetNames.length} sheet(s)</span>
                   </div>
                   {ds.displayName && ds.displayName !== ds.fileName && (
@@ -1158,14 +1276,28 @@ export default function DatasetsPage() {
                     {meta.pinned && <Badge className="border-0 bg-primary/10 text-primary text-xs">Pinned</Badge>}
                     {meta.favorite && <Badge className="border-0 bg-warning/10 text-warning text-xs">Favorite</Badge>}
                     {isRecentlyUsed(ds) && <Badge className="border-0 bg-success/10 text-success text-xs">Recently used</Badge>}
-                    {(ds.tags || []).map((tag) => <Badge key={tag} variant="outline" className="border-border text-[10px]">{tag}</Badge>)}
+                    {(ds.tags || []).map((tag) => (
+                      <button key={tag} type="button" onClick={(e) => { e.stopPropagation(); setSearchTerm(tag); }}>
+                        <Badge variant="outline" className="border-border text-[10px] cursor-pointer hover:bg-primary/10 hover:border-primary/30 hover:text-primary transition-colors">{tag}</Badge>
+                      </button>
+                    ))}
                     {ds.notes && <Badge variant="outline" className="border-border text-[10px]"><StickyNote size={8} className="mr-1" />Note</Badge>}
                   </div>
-                  <div className="text-xs text-muted-foreground mb-3">
-                    {formatBytes(ds.fileSize)}
+                  <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
+                    <span>{formatBytes(ds.fileSize)}</span>
+                    {queryCountMap[ds.fileName] > 0 && (
+                      <span className="text-primary font-medium">{queryCountMap[ds.fileName]}× queried</span>
+                    )}
                   </div>
                   <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-xs text-muted-foreground">{ds.ownerEmail || ds.createdBy || "You"} - {new Date(ds.uploadDate).toLocaleDateString()}</span>
+                    <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                      <span>{new Date(ds.uploadDate).toLocaleDateString()}</span>
+                      {lastQueriedMap[ds.fileName] && (
+                        <span className="flex items-center gap-1">
+                          <Clock size={10} /> {lastQueriedMap[ds.fileName].toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
                     <span className="flex items-center gap-1 text-xs text-primary transition-opacity md:opacity-0 md:group-hover:opacity-100">
                       View <ChevronRight size={12} />
                     </span>
@@ -1174,7 +1306,7 @@ export default function DatasetsPage() {
               </motion.div>
             );
           })}
-        </div>
+        </motion.div>
       )}
 
       <AnimatePresence>

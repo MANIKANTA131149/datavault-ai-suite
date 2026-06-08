@@ -21,6 +21,9 @@ import {
   LayoutTemplate, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
   Share2, Mic, Globe, Loader2, Layers, AlertTriangle,
+  GripVertical, Filter, Bell, BellOff, Pin, Columns, ChevronUp,
+  SlidersHorizontal, ListFilter, BarChart2, Crosshair, Flame, FunctionSquare, CheckSquare, Square,
+  FlipHorizontal, Sigma, Hash, Info,
 } from "lucide-react";
 import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
 import { ShareCard } from "@/components/ShareCard";
@@ -29,7 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
@@ -39,7 +42,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
-import { useConnectionStore, DB_TYPE_LABELS, DB_TYPE_ICONS } from "@/stores/connection-store";
+import { useConnectionStore, DB_TYPE_LABELS } from "@/stores/connection-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -47,6 +50,7 @@ import { useInsightsStore } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
+import { DbTypeIcon } from "@/components/DbTypeIcon";
 
 import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
 import { parseOptionsFromText, cleanPromptText } from "@/lib/clarification-options";
@@ -54,7 +58,7 @@ import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
 import { executeDatabaseQuery, fetchDatabaseSchema, type DatabaseSchema, type DatabaseTableData } from "@/lib/db-query-client";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { getApiBaseUrl } from "@/lib/api-base";
 import { api } from "@/lib/api-client";
 import { generatePDF } from "@/lib/pdf-report";
@@ -62,6 +66,7 @@ import html2canvas from "html2canvas";
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, CartesianGrid,
   XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend as RechartsLegend, LabelList,
+  ScatterChart, Scatter, ComposedChart, ReferenceLine,
 } from "recharts";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -84,8 +89,8 @@ const COMMAND_COLORS: Record<string, string> = {
 };
 
 const CHART_COLORS = [
-  "hsl(217, 91%, 60%)", "hsl(263, 70%, 58%)", "hsl(160, 84%, 39%)",
-  "hsl(38, 92%, 50%)", "hsl(0, 84%, 60%)",
+  "hsl(214, 65%, 54%)", "hsl(252, 52%, 57%)", "hsl(160, 60%, 42%)",
+  "hsl(38, 85%, 50%)", "hsl(0, 72%, 56%)",
 ];
 const DEFAULT_CHART_ROWS = 50;
 const CHART_RENDER_LIMIT = 1000;
@@ -103,7 +108,7 @@ const RESULT_TABLE_ROW_HEIGHT: Record<ResultDensity, number> = {
 // ─── Query Templates ──────────────────────────────────────────────────────────
 const QUERY_TEMPLATES = [
   {
-    category: "📊 Sales & Revenue",
+    category: "Sales & Revenue",
     templates: [
       "What is the total revenue?",
       "Show top 10 products by sales",
@@ -115,7 +120,7 @@ const QUERY_TEMPLATES = [
     ],
   },
   {
-    category: "👥 People & HR",
+    category: "People & HR",
     templates: [
       "How many employees are there by department?",
       "What is the average salary by role?",
@@ -125,7 +130,7 @@ const QUERY_TEMPLATES = [
     ],
   },
   {
-    category: "💰 Finance",
+    category: "Finance",
     templates: [
       "What is the total expense by category?",
       "Show budget vs actual comparison",
@@ -135,7 +140,7 @@ const QUERY_TEMPLATES = [
     ],
   },
   {
-    category: "⚙️ Operations",
+    category: "Operations",
     templates: [
       "What is the on-time delivery rate?",
       "Show defect rate by category",
@@ -145,7 +150,7 @@ const QUERY_TEMPLATES = [
     ],
   },
   {
-    category: "🔍 Exploration",
+    category: "Exploration",
     templates: [
       "What is this dataset about?",
       "What can I ask about this data?",
@@ -162,6 +167,63 @@ const QUERY_TEMPLATES = [
 const FAVORITE_PROMPTS_KEY = "datavault-favorite-prompts";
 type ResultDensity = "comfortable" | "compact";
 
+interface ColFormatRule {
+  id: string;
+  column: string;
+  op: ">" | "<" | "=" | "contains" | "!=";
+  value: string;
+  bgClass: string;
+}
+
+function getFormatBg(rule: ColFormatRule, cellValue: string): string {
+  const v = cellValue;
+  const rv = rule.value;
+  const num = parseFloat(v);
+  const rnum = parseFloat(rv);
+  switch (rule.op) {
+    case ">": return Number.isFinite(num) && Number.isFinite(rnum) && num > rnum ? rule.bgClass : "";
+    case "<": return Number.isFinite(num) && Number.isFinite(rnum) && num < rnum ? rule.bgClass : "";
+    case "=": return v === rv ? rule.bgClass : "";
+    case "!=": return v !== rv ? rule.bgClass : "";
+    case "contains": return v.toLowerCase().includes(rv.toLowerCase()) ? rule.bgClass : "";
+    default: return "";
+  }
+}
+
+function computeColStats(rows: Record<string, any>[], col: string) {
+  const vals = rows.map((r) => r[col]);
+  const nonNull = vals.filter((v) => v !== null && v !== undefined && v !== "");
+  const nums = nonNull.map((v) => parseFloat(String(v))).filter((n) => Number.isFinite(n));
+  const uniq = new Set(nonNull.map((v) => String(v))).size;
+  const nullPct = Math.round(((vals.length - nonNull.length) / Math.max(1, vals.length)) * 100);
+  if (nums.length > 0) {
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    const avg = nums.reduce((s, n) => s + n, 0) / nums.length;
+    return { nullPct, uniq, min, max, avg: Math.round(avg * 100) / 100, isNumeric: true };
+  }
+  return { nullPct, uniq, min: null, max: null, avg: null, isNumeric: false };
+}
+
+function linearRegression(data: Record<string, any>[], xKey: string, yKey: string) {
+  const pts = data
+    .map((d, i) => ({ x: parseFloat(String(d[xKey])) || i, y: parseFloat(String(d[yKey])) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (pts.length < 2) return null;
+  const n = pts.length;
+  const sumX = pts.reduce((s, p) => s + p.x, 0);
+  const sumY = pts.reduce((s, p) => s + p.y, 0);
+  const sumXY = pts.reduce((s, p) => s + p.x * p.y, 0);
+  const sumXX = pts.reduce((s, p) => s + p.x * p.x, 0);
+  const denom = n * sumXX - sumX * sumX;
+  if (!denom) return null;
+  const m = (n * sumXY - sumX * sumY) / denom;
+  const b = (sumY - m * sumX) / n;
+  const minX = Math.min(...pts.map((p) => p.x));
+  const maxX = Math.max(...pts.map((p) => p.x));
+  return { m, b, minX, maxX, y1: m * minX + b, y2: m * maxX + b };
+}
+
 function readStoredList(key: string): string[] {
   try {
     return JSON.parse(localStorage.getItem(key) || "[]");
@@ -173,7 +235,7 @@ function readStoredList(key: string): string[] {
 // Smart suggestion helper removed
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-type ChartType = "bar" | "pie" | "line" | "area";
+type ChartType = "bar" | "pie" | "line" | "area" | "scatter" | "dual";
 
 const CHART_VALUE_KEY_PATTERN = /(count|total|sum|amount|revenue|sales|price|cost|qty|quantity|volume|score|rate|ratio|percent|percentage|avg|average|mean|median|min|max|value|profit|loss|margin|duration|age|size|weight|distance|time|hours?|minutes?|seconds?|power|horsepower|hp|torque|displacement|cc)/i;
 const CHART_LABEL_KEY_PATTERN = /(name|title|label|category|type|group|bucket|segment|brand|manufacturer|company|country|city|state|region|department|team|player|actor|director|genre|cast|date|day|week|month|quarter|year|time|period|hour)/i;
@@ -554,6 +616,16 @@ interface VirtualizedResultTableProps {
   sortKey?: string;
   sortDir?: "asc" | "desc";
   onSort?: (key: string) => void;
+  selectedRows?: Set<number>;
+  onToggleRow?: (i: number) => void;
+  onToggleAll?: () => void;
+  onCellCopy?: (value: string) => void;
+  onRowClick?: (row: any, index: number) => void;
+  colWidths?: Record<string, number>;
+  onResizeStart?: (header: string, e: React.MouseEvent) => void;
+  frozenFirst?: boolean;
+  formatRules?: ColFormatRule[];
+  columnOrder?: string[];
 }
 
 interface ResultRowProps {
@@ -561,6 +633,12 @@ interface ResultRowProps {
   headers: string[];
   gridTemplateColumns: string;
   density: ResultDensity;
+  selectedRows?: Set<number>;
+  onToggleRow?: (i: number) => void;
+  onCellCopy?: (value: string) => void;
+  onRowClick?: (row: any, index: number) => void;
+  frozenFirst?: boolean;
+  formatRules?: ColFormatRule[];
 }
 
 function ResultTableRow({
@@ -571,21 +649,44 @@ function ResultTableRow({
   headers,
   gridTemplateColumns,
   density,
+  selectedRows,
+  onToggleRow,
+  onCellCopy,
+  onRowClick,
+  frozenFirst,
+  formatRules,
 }: RowComponentProps<ResultRowProps>) {
   const row = rows[index];
+  const isSelected = selectedRows?.has(index) ?? false;
   return (
     <div
       {...ariaAttributes}
       style={{ ...style, display: "grid", gridTemplateColumns }}
-      className={`border-t border-border/50 ${index % 2 === 0 ? "bg-background-secondary/30" : "bg-card"}`}
+      className={`border-t border-border/50 group/row ${isSelected ? "bg-primary/8" : index % 2 === 0 ? "bg-background-secondary/30" : "bg-card"} hover:bg-primary/5 transition-colors`}
     >
-      {headers.map((header) => {
+      {onToggleRow && (
+        <div className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} flex items-center justify-center`}
+          style={{ position: frozenFirst ? "sticky" : undefined, left: 0, zIndex: 1, background: "inherit" }}>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggleRow(index); }}
+            className="text-muted-foreground hover:text-primary transition-colors"
+          >
+            {isSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+          </button>
+        </div>
+      )}
+      {headers.map((header, hi) => {
         const value = String(row?.[header] ?? "");
+        const fmtBg = formatRules?.reduce((acc, r) => acc || (r.column === header ? getFormatBg(r, value) : ""), "") || "";
+        const isFirst = hi === 0 && frozenFirst;
         return (
           <div
             key={header}
             title={value}
-            className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} min-w-0 truncate text-xs text-foreground`}
+            onClick={() => onCellCopy?.(value)}
+            className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} min-w-0 truncate text-xs text-foreground cursor-pointer hover:bg-primary/10 transition-colors ${fmtBg}`}
+            style={isFirst ? { position: "sticky", left: onToggleRow ? 40 : 0, zIndex: 1, background: "inherit" } : undefined}
           >
             {value}
           </div>
@@ -603,12 +704,42 @@ const VirtualizedResultTable = memo(function VirtualizedResultTable({
   sortKey,
   sortDir = "asc",
   onSort,
+  selectedRows,
+  onToggleRow,
+  onToggleAll,
+  onCellCopy,
+  onRowClick,
+  colWidths,
+  onResizeStart,
+  frozenFirst,
+  formatRules,
+  columnOrder,
 }: VirtualizedResultTableProps) {
   const rowHeight = RESULT_TABLE_ROW_HEIGHT[density];
+  const effectiveHeaders = columnOrder ?? headers;
   const minColWidth = density === "compact" ? 116 : 140;
-  const minWidth = Math.max(420, headers.length * minColWidth);
-  const gridTemplateColumns = `repeat(${headers.length}, minmax(${minColWidth}px, 1fr))`;
+  const baseColWidth = (header: string) => colWidths?.[header] ?? minColWidth;
+  const colDefs = effectiveHeaders.map((h) => `${baseColWidth(h)}px`).join(" ");
+  const checkboxCol = onToggleRow ? "40px " : "";
+  const gridTemplateColumns = checkboxCol + colDefs;
+  const totalWidth = (onToggleRow ? 40 : 0) + effectiveHeaders.reduce((s, h) => s + baseColWidth(h), 0);
+  const minWidth = Math.max(420, totalWidth);
   const listHeight = Math.min(maxHeight, Math.max(rowHeight, rows.length * rowHeight));
+  const allSelected = selectedRows && selectedRows.size === rows.length && rows.length > 0;
+
+  // Aggregation footer
+  const aggFooter = useMemo(() => {
+    return effectiveHeaders.map((h) => {
+      const nums = rows.map((r) => parseFloat(String(r[h]))).filter((n) => Number.isFinite(n));
+      if (nums.length === 0) return null;
+      const sum = nums.reduce((a, b) => a + b, 0);
+      if (sum > 1000000) return { sum: `${(sum / 1000000).toFixed(1)}M`, count: nums.length };
+      if (sum > 1000) return { sum: `${(sum / 1000).toFixed(1)}k`, count: nums.length };
+      return { sum: sum.toFixed(2).replace(/\.?0+$/, ""), count: nums.length };
+    });
+  }, [rows, effectiveHeaders]);
+
+  const hasAggFooter = aggFooter.some(Boolean);
 
   if (rows.length === 0) {
     return (
@@ -621,23 +752,50 @@ const VirtualizedResultTable = memo(function VirtualizedResultTable({
   return (
     <div className="overflow-x-auto rounded-md border border-border bg-card">
       <div style={{ minWidth }}>
+        {/* Header */}
         <div
-          className="grid border-b border-border bg-background-secondary text-xs font-medium text-muted-foreground"
+          className="grid border-b border-border bg-background-secondary text-xs font-medium text-muted-foreground sticky top-0 z-10"
           style={{ gridTemplateColumns }}
         >
-          {headers.map((header) => (
-            <button
+          {onToggleAll && (
+            <div className={`${density === "compact" ? "px-2 py-2" : "px-3 py-2.5"} flex items-center justify-center`}>
+              <button type="button" onClick={onToggleAll} className="text-muted-foreground hover:text-primary transition-colors">
+                {allSelected ? <CheckSquare size={13} className="text-primary" /> : <Square size={13} />}
+              </button>
+            </div>
+          )}
+          {effectiveHeaders.map((header, hi) => (
+            <div
               key={header}
-              type="button"
-              disabled={!onSort}
-              onClick={() => onSort?.(header)}
-              className={`${density === "compact" ? "px-2 py-2" : "px-3 py-2.5"} min-w-0 truncate text-left hover:text-foreground disabled:hover:text-muted-foreground`}
-              title={header}
+              className="relative flex items-center group/hdr min-w-0"
+              draggable
+              onDragStart={() => {/* column reorder start - handled in ResultPanel */}}
             >
-              {header}{sortKey === header ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-            </button>
+              <button
+                type="button"
+                disabled={!onSort}
+                onClick={() => onSort?.(header)}
+                className={`${density === "compact" ? "px-2 py-2" : "px-3 py-2.5"} flex-1 min-w-0 text-left hover:text-foreground disabled:hover:text-muted-foreground flex items-center gap-1 truncate`}
+                title={header}
+              >
+                <span className="truncate">{header}</span>
+                {sortKey === header && (
+                  sortDir === "asc" ? <ChevronUp size={10} className="shrink-0 text-primary" /> : <ChevronDown size={10} className="shrink-0 text-primary" />
+                )}
+              </button>
+              {/* Column stats popover */}
+              <ColumnStatsPopover header={header} rows={rows} density={density} />
+              {/* Resize handle */}
+              {onResizeStart && (
+                <div
+                  className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 group-hover/hdr:opacity-100 hover:bg-primary/40 transition-opacity z-20"
+                  onMouseDown={(e) => { e.preventDefault(); onResizeStart(header, e); }}
+                />
+              )}
+            </div>
           ))}
         </div>
+        {/* Rows */}
         <List<ResultRowProps>
           className="scrollbar-thin"
           defaultHeight={listHeight}
@@ -645,9 +803,28 @@ const VirtualizedResultTable = memo(function VirtualizedResultTable({
           rowComponent={ResultTableRow}
           rowCount={rows.length}
           rowHeight={rowHeight}
-          rowProps={{ rows, headers, gridTemplateColumns, density }}
+          rowProps={{ rows, headers: effectiveHeaders, gridTemplateColumns, density, selectedRows, onToggleRow, onCellCopy, onRowClick, frozenFirst, formatRules }}
           style={{ height: listHeight, width: "100%" }}
         />
+        {/* Aggregation footer */}
+        {hasAggFooter && (
+          <div
+            className="grid border-t-2 border-border bg-background-secondary/80 text-xs font-medium text-muted-foreground"
+            style={{ gridTemplateColumns }}
+          >
+            {onToggleRow && <div className="px-2 py-1.5" />}
+            {effectiveHeaders.map((header, hi) => {
+              const agg = aggFooter[hi];
+              return (
+                <div key={header} className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} min-w-0 truncate`}>
+                  {agg ? (
+                    <span className="text-primary/80 font-mono" title={`Sum: ${agg.sum} · Count: ${agg.count}`}>Σ {agg.sum}</span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -784,6 +961,169 @@ function renderMarkdown(text: string) {
   }
 
   return <div className="space-y-1">{elements}</div>;
+}
+
+// ─── RowDetailPanel ───────────────────────────────────────────────────────────
+function RowDetailPanel({ row, headers, rowIndex, onClose }: { row: any; headers: string[]; rowIndex: number; onClose: () => void }) {
+  if (!row) return null;
+  return (
+    <Sheet open={!!row} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetContent side="right" className="w-[340px] sm:w-[420px] p-0 border-l border-border bg-background-secondary flex flex-col z-[90]">
+        <SheetHeader className="px-4 py-3 border-b border-border bg-background">
+          <SheetTitle className="text-sm flex items-center gap-2"><Table2 size={14} className="text-primary" /> Row {rowIndex + 1} Detail</SheetTitle>
+          <SheetDescription className="text-xs text-muted-foreground">{headers.length} fields</SheetDescription>
+        </SheetHeader>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {headers.map((h) => {
+            const val = String(row[h] ?? "");
+            return (
+              <div key={h} className="flex flex-col gap-0.5 p-2.5 rounded-md bg-card border border-border">
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{h}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm text-foreground font-mono break-all leading-relaxed">{val || <span className="text-muted-foreground italic">null</span>}</span>
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(val); toast.success("Copied"); }}
+                    className="shrink-0 p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                    title="Copy value"
+                  >
+                    <Copy size={11} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="shrink-0 border-t border-border p-3 flex gap-2">
+          <button
+            onClick={() => { navigator.clipboard.writeText(JSON.stringify(row, null, 2)); toast.success("Row JSON copied"); }}
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-md border border-border bg-card hover:bg-background hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all"
+          >
+            <Copy size={12} /> Copy JSON
+          </button>
+          <button onClick={onClose} className="flex items-center justify-center px-3 py-2 rounded-md border border-border bg-card text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ─── ColumnStatsPopover ───────────────────────────────────────────────────────
+function ColumnStatsPopover({ header, rows, density }: { header: string; rows: Record<string, any>[]; density: ResultDensity }) {
+  const stats = useMemo(() => computeColStats(rows, header), [rows, header]);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 ml-0.5 p-0.5 rounded opacity-0 group-hover/hdr:opacity-70 hover:!opacity-100 text-muted-foreground hover:text-primary transition-all"
+          title="Column statistics"
+        >
+          <Info size={10} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="start" className="w-52 p-3 text-xs bg-background-secondary border border-border shadow-xl">
+        <p className="font-semibold text-foreground mb-2 truncate">{header}</p>
+        <div className="space-y-1.5">
+          <div className="flex justify-between"><span className="text-muted-foreground">Null %</span><span className="font-mono text-foreground">{stats.nullPct}%</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Unique</span><span className="font-mono text-foreground">{stats.uniq.toLocaleString()}</span></div>
+          {stats.isNumeric && (
+            <>
+              <div className="flex justify-between"><span className="text-muted-foreground">Min</span><span className="font-mono text-foreground">{stats.min?.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Max</span><span className="font-mono text-foreground">{stats.max?.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Avg</span><span className="font-mono text-foreground">{stats.avg?.toLocaleString()}</span></div>
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── FollowUpChips ────────────────────────────────────────────────────────────
+function FollowUpChips({ query, result, onSelect }: { query: string; result: any; onSelect: (q: string) => void }) {
+  const suggestions = useMemo(() => {
+    const resultType = Array.isArray(result) ? "table" : typeof result === "object" && result?.narrative ? "narrative" : "value";
+    const base = [
+      `What is the trend for "${query.slice(0, 30)}"?`,
+      resultType === "table" ? "Show me the top 10 rows" : "Can you explain this in more detail?",
+      "Break this down by category",
+      "What are the outliers in this data?",
+    ];
+    // Tailor based on query content
+    if (/revenue|sales|profit/i.test(query)) return ["Compare this month vs last month", "Show me the top 5 by revenue", "What is the year-over-year growth?", "Break down by region"];
+    if (/employee|staff|headcount/i.test(query)) return ["Which department has the most?", "Show salary distribution", "What is the average tenure?", "Who are the top earners?"];
+    if (/customer|client|user/i.test(query)) return ["Who are the top customers?", "What is the churn rate?", "Show customer growth over time", "Which segment drives the most value?"];
+    return base;
+  }, [query, result]);
+
+  return (
+    <div className="ml-3 sm:ml-10 mt-2 mb-1 flex flex-wrap gap-1.5">
+      {suggestions.slice(0, 4).map((s) => (
+        <button
+          key={s}
+          type="button"
+          onClick={() => onSelect(s)}
+          className="text-xs px-3 py-1.5 rounded-full border border-border bg-card hover:bg-primary/10 hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all duration-150 truncate max-w-[240px]"
+          title={s}
+        >
+          {s}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── CostEstimatorBadge ───────────────────────────────────────────────────────
+function CostEstimatorBadge({ input, model, provider }: { input: string; model: string; provider: string }) {
+  const estimate = useMemo(() => {
+    const chars = input.length;
+    const tokens = Math.ceil(chars / 4) + 200; // add ~200 for system + context
+    // Very rough cost estimates per 1M tokens (input)
+    const COST_PER_M: Record<string, number> = {
+      "gpt-4o": 5, "gpt-4o-mini": 0.15, "claude-3-5-sonnet": 3, "claude-3-haiku": 0.25,
+      "gemini-1.5-flash": 0.075, "gemini-1.5-pro": 3.5, "llama3-70b-8192": 0.59,
+      "amazon.nova-pro-v1:0": 0.8,
+    };
+    const rate = COST_PER_M[model] ?? 1;
+    const cost = (tokens / 1_000_000) * rate;
+    return { tokens, cost: cost < 0.001 ? "<$0.001" : `~$${cost.toFixed(4)}` };
+  }, [input, model]);
+
+  if (!input.trim()) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70">
+      <Zap size={9} />
+      ~{estimate.tokens.toLocaleString()} tokens · {estimate.cost}
+    </span>
+  );
+}
+
+// ─── SmartRetryBar ────────────────────────────────────────────────────────────
+function SmartRetryBar({ query, onRetry }: { query: string; onRetry: (q: string) => void }) {
+  const variants = [
+    { label: "Simplify", q: `In simple terms: ${query}` },
+    { label: "More detail", q: `Give me detailed analysis with breakdown: ${query}` },
+    { label: "As table", q: `Show results as a table: ${query}` },
+  ];
+  return (
+    <div className="ml-3 sm:ml-10 mt-1 mb-2 flex flex-wrap gap-1.5 items-center">
+      <span className="text-[10px] text-muted-foreground">Retry:</span>
+      {variants.map((v) => (
+        <button
+          key={v.label}
+          type="button"
+          onClick={() => onRetry(v.q)}
+          className="text-xs px-2.5 py-1 rounded border border-border/60 bg-card hover:bg-background hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all"
+        >
+          {v.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 // ─── NarrativeResult Component ────────────────────────────────────────────────
@@ -1123,6 +1463,20 @@ const ResultPanel = memo(function ResultPanel({
   const [chartSort, setChartSort] = useState<"none" | "asc" | "desc">("none");
   const [topN, setTopN] = useState(DEFAULT_CHART_ROWS);
   const [chartNotes, setChartNotes] = useState("");
+  // Tier 1 — table power features
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const [frozenFirst, setFrozenFirst] = useState(false);
+  const [formatRules, setFormatRules] = useState<ColFormatRule[]>([]);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [showFormatPanel, setShowFormatPanel] = useState(false);
+  const [rowDetailData, setRowDetailData] = useState<{ row: any; index: number } | null>(null);
+  const [dragColFrom, setDragColFrom] = useState<string | null>(null);
+  const resizingColRef = useRef<{ header: string; startX: number; startW: number } | null>(null);
+  // Tier 3 — chart power features
+  const [showTrendLine, setShowTrendLine] = useState(false);
+  const [dualAxisKey, setDualAxisKey] = useState("");
+  const [showChartTable, setShowChartTable] = useState(false);
   const { checkExport } = usePlanStore();
   const isEmptyArray = isArray && rows.length === 0;
   const isEmptyObject = !isArray && !isSingleValue && !isPrimitiveValue && !isNarrative && result && typeof result === "object" && Object.keys(result).length === 0;
@@ -1152,6 +1506,70 @@ const ResultPanel = memo(function ResultPanel({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [fullscreen]);
+
+  // Initialize column order when rows change
+  useEffect(() => {
+    if (rows.length > 0) {
+      const hdrs = Object.keys(rows[0] || {});
+      setColumnOrder((prev) => {
+        if (prev.length === hdrs.length && prev.every((h, i) => h === hdrs[i])) return prev;
+        return hdrs;
+      });
+    }
+  }, [rows]);
+
+  // Column resize mouse handlers
+  const handleResizeStart = useCallback((header: string, e: React.MouseEvent) => {
+    const startW = colWidths[header] ?? 140;
+    resizingColRef.current = { header, startX: e.clientX, startW };
+    const onMove = (mv: MouseEvent) => {
+      if (!resizingColRef.current) return;
+      const delta = mv.clientX - resizingColRef.current.startX;
+      const newW = Math.max(60, resizingColRef.current.startW + delta);
+      setColWidths((prev) => ({ ...prev, [resizingColRef.current!.header]: newW }));
+    };
+    const onUp = () => {
+      resizingColRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [colWidths]);
+
+  // Multi-select helpers
+  const handleToggleRow = useCallback((i: number) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  }, []);
+  const handleToggleAll = useCallback(() => {
+    setSelectedRows((prev) => prev.size === rows.length ? new Set<number>() : new Set(rows.map((_, i) => i)));
+  }, [rows]);
+
+  // Cell copy
+  const handleCellCopy = useCallback((value: string) => {
+    navigator.clipboard.writeText(value);
+    toast.success("Cell copied", { duration: 1200 });
+  }, []);
+
+  // Column drag reorder
+  const handleColDragStart = (header: string) => setDragColFrom(header);
+  const handleColDrop = (header: string) => {
+    if (!dragColFrom || dragColFrom === header) { setDragColFrom(null); return; }
+    setColumnOrder((prev) => {
+      const arr = [...prev];
+      const fi = arr.indexOf(dragColFrom);
+      const ti = arr.indexOf(header);
+      if (fi === -1 || ti === -1) return arr;
+      arr.splice(fi, 1);
+      arr.splice(ti, 0, dragColFrom);
+      return arr;
+    });
+    setDragColFrom(null);
+  };
 
   const autoTopSort = chartSort === "none" && topN > 0 && (chartType === "bar" || chartType === "pie");
   const effectiveChartSort = autoTopSort ? "desc" : chartSort;
@@ -1359,11 +1777,19 @@ const ResultPanel = memo(function ResultPanel({
           <div>
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap gap-1">
-                {(["bar", "line", "area", "pie"] as const).map((t) => (
+                {(["bar", "line", "area", "pie", "scatter", "dual"] as const).map((t) => (
                   <button key={t} onClick={() => setChartType(t)} title={`${t} chart`} className={`text-xs px-2.5 py-1 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
                     {t}
                   </button>
                 ))}
+                <button onClick={() => setShowChartTable((p) => !p)} className={`text-xs px-2.5 py-1 rounded flex items-center gap-1 ${showChartTable ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`} title="Show raw data table">
+                  <Table2 size={11} /> {showChartTable ? "Data on" : "Data off"}
+                </button>
+                {chartType !== "pie" && chartType !== "scatter" && (
+                  <button onClick={() => setShowTrendLine((p) => !p)} className={`text-xs px-2.5 py-1 rounded flex items-center gap-1 ${showTrendLine ? "bg-warning/10 text-warning" : "text-muted-foreground hover:text-foreground"}`} title="Trend line">
+                    <TrendingUp size={11} /> Trend
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-1">
                 <Palette size={12} className="text-muted-foreground" />
@@ -1383,31 +1809,42 @@ const ResultPanel = memo(function ResultPanel({
               <Input value={chartTitle} onChange={(e) => setChartTitle(e.target.value)} placeholder="Chart title" className={`h-8 bg-card border-border text-xs ${fullscreen ? "col-span-2" : ""}`} />
               <Input value={xAxisLabel} onChange={(e) => setXAxisLabel(e.target.value)} placeholder="X axis" className="h-8 bg-card border-border text-xs" />
               <Input value={yAxisLabel} onChange={(e) => setYAxisLabel(e.target.value)} placeholder="Y axis" className="h-8 bg-card border-border text-xs" />
-              <Select value={chartSort} onValueChange={(v) => setChartSort(v as "none" | "asc" | "desc")}>
-                <SelectTrigger className="h-8 bg-card border-border text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  <SelectItem value="none">Original order</SelectItem>
-                  <SelectItem value="asc">Sort ascending</SelectItem>
-                  <SelectItem value="desc">Sort descending</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={String(topN)} onValueChange={(v) => setTopN(Number(v))}>
-                <SelectTrigger className="h-8 bg-card border-border text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-popover border-border">
+              <div className="relative">
+                <select
+                  value={chartSort}
+                  onChange={(e) => setChartSort(e.target.value as "none" | "asc" | "desc")}
+                  className="w-full h-8 appearance-none rounded-xl border border-border bg-card px-3 py-1 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                >
+                  <option value="none" className="bg-popover text-foreground py-1">Original order</option>
+                  <option value="asc" className="bg-popover text-foreground py-1">Sort ascending</option>
+                  <option value="desc" className="bg-popover text-foreground py-1">Sort descending</option>
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+              </div>
+              <div className="relative">
+                <select
+                  value={String(topN)}
+                  onChange={(e) => setTopN(Number(e.target.value))}
+                  className="w-full h-8 appearance-none rounded-xl border border-border bg-card px-3 py-1 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                >
                   {chartTopNOptions.map((n) => (
-                    <SelectItem key={n} value={String(n)}>
+                    <option key={n} value={String(n)} className="bg-popover text-foreground py-1">
                       {chartType === "line" || chartType === "area" ? `First ${n} rows` : `Top ${n} values`}
-                    </SelectItem>
+                    </option>
                   ))}
-                  <SelectItem value="0">All rows</SelectItem>
-                </SelectContent>
-              </Select>
+                  <option value="0" className="bg-popover text-foreground py-1">All rows</option>
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+              </div>
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLegend((prev) => !prev)}>
                 {showLegend ? "Legend on" : "Legend off"}
               </Button>
               <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setShowLabels((prev) => !prev)}>
                 {showLabels ? "Labels on" : "Labels off"}
               </Button>
+              {chartType === "dual" && (
+                <Input value={dualAxisKey} onChange={(e) => setDualAxisKey(e.target.value)} placeholder="Right Y-axis column" className="h-8 bg-card border-border text-xs" />
+              )}
               <Textarea value={chartNotes} onChange={(e) => setChartNotes(e.target.value)} placeholder="Chart notes..." className={`min-h-[56px] bg-card border-border text-xs ${fullscreen ? "col-span-2" : ""}`} />
               <Button variant="outline" size="sm" className={`${fullscreen ? "col-span-2 " : ""}h-8 border-border text-xs`} onClick={onBookmark}>
                 <BookmarkPlus size={12} className="mr-1" /> Save chart as insight
@@ -1518,41 +1955,72 @@ const ResultPanel = memo(function ResultPanel({
                       <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
                       <Area type="monotone" dataKey={valueKey} stroke={chartColor} fill={`url(#${areaGradientId})`} strokeWidth={2.5} dot={visibleChartRows.length <= 20 ? { r: 2, strokeWidth: 0, fill: chartColor } : false} />
                     </AreaChart>
-                  ) : (
-                    <BarChart data={visibleChartRows} margin={chartMargin}>
-                      <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-                      <XAxis
-                        dataKey={labelKey}
-                        label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                        tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)}
-                        tickLine={false}
-                        axisLine={false}
-                        angle={rotateXAxisTicks ? -35 : 0}
-                        textAnchor={rotateXAxisTicks ? "end" : "middle"}
-                        height={rotateXAxisTicks ? 72 : 32}
-                        tickMargin={10}
-                        interval={xAxisInterval}
-                      />
-                      <YAxis
-                        label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
-                        tickFormatter={(value) => formatChartValue(value)}
-                        tickLine={false}
-                        axisLine={false}
-                        width={60}
-                      />
+                  ) : chartType === "scatter" ? (
+                    <ScatterChart margin={chartMargin}>
+                      <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                      <XAxis dataKey={labelKey} name={labelKey} type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickFormatter={(v) => formatChartValue(v)} tickLine={false} axisLine={false} width={60} />
+                      <YAxis dataKey={valueKey} name={valueKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickFormatter={(v) => formatChartValue(v)} tickLine={false} axisLine={false} width={60} />
                       {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
-                      <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                      <Bar dataKey={valueKey} fill={chartColor} radius={[6, 6, 0, 0]} maxBarSize={36}>
-                        {canShowValueLabels && <LabelList dataKey={valueKey} position="top" formatter={(value: any) => formatChartValue(value)} fill="hsl(var(--muted-foreground))" fontSize={10} />}
-                      </Bar>
-                    </BarChart>
-                  )}
+                      <RechartsTooltip formatter={(v: any) => formatChartValue(v)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} cursor={{ strokeDasharray: "3 3" }} />
+                      <Scatter data={visibleChartRows} fill={chartColor} opacity={0.8} />
+                    </ScatterChart>
+                  ) : chartType === "dual" ? (() => {
+                    const secKey = dualAxisKey || (Object.keys(visibleChartRows[0] || {}).find((k) => k !== labelKey && k !== valueKey) ?? valueKey);
+                    return (
+                      <ComposedChart data={visibleChartRows} margin={chartMargin}>
+                        <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey={labelKey} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickLine={false} axisLine={false} angle={rotateXAxisTicks ? -35 : 0} textAnchor={rotateXAxisTicks ? "end" : "middle"} height={rotateXAxisTicks ? 72 : 32} tickMargin={10} interval={xAxisInterval} tickFormatter={(v) => truncateChartLabel(v, 14)} />
+                        <YAxis yAxisId="left" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickFormatter={(v) => formatChartValue(v)} tickLine={false} axisLine={false} width={60} />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickFormatter={(v) => formatChartValue(v)} tickLine={false} axisLine={false} width={60} />
+                        {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                        <RechartsTooltip formatter={(v: any) => formatChartValue(v)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                        <Bar yAxisId="left" dataKey={valueKey} fill={chartColor} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                        <Line yAxisId="right" type="monotone" dataKey={secKey} stroke="hsl(38, 92%, 50%)" strokeWidth={2.5} dot={false} />
+                      </ComposedChart>
+                    );
+                  })() : (() => {
+                    const trendRows = showTrendLine ? (() => {
+                      const reg = linearRegression(visibleChartRows, labelKey, valueKey);
+                      if (!reg) return null;
+                      return visibleChartRows.map((row, i) => ({ ...row, __trend: Math.round((reg.m * i + reg.b) * 100) / 100 }));
+                    })() : null;
+                    const BarWrapper = trendRows ? ComposedChart : BarChart;
+                    return (
+                      <BarWrapper data={trendRows ?? visibleChartRows} margin={chartMargin}>
+                        <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey={labelKey} label={{ value: xAxisLabel, position: "insideBottom", offset: rotateXAxisTicks ? -8 : -2, fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickFormatter={(value) => truncateChartLabel(value, rotateXAxisTicks ? 12 : 18)} tickLine={false} axisLine={false} angle={rotateXAxisTicks ? -35 : 0} textAnchor={rotateXAxisTicks ? "end" : "middle"} height={rotateXAxisTicks ? 72 : 32} tickMargin={10} interval={xAxisInterval} />
+                        <YAxis label={{ value: yAxisLabel, angle: -90, position: "insideLeft", fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} tickFormatter={(value) => formatChartValue(value)} tickLine={false} axisLine={false} width={60} />
+                        {showLegend && <RechartsLegend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 11 }} />}
+                        <RechartsTooltip formatter={(value: any) => formatChartValue(value)} contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                        <Bar dataKey={valueKey} fill={chartColor} radius={[6, 6, 0, 0]} maxBarSize={36}>
+                          {canShowValueLabels && <LabelList dataKey={valueKey} position="top" formatter={(value: any) => formatChartValue(value)} fill="hsl(var(--muted-foreground))" fontSize={10} />}
+                        </Bar>
+                        {trendRows && <Line type="linear" dataKey="__trend" stroke="hsl(38, 92%, 50%)" strokeDasharray="5 3" strokeWidth={2} dot={false} name="Trend" />}
+                      </BarWrapper>
+                    );
+                  })()}
                 </ResponsiveContainer>
               </div>
             </div>
             {chartNotes && <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">{chartNotes}</p>}
+            {showChartTable && rows.length > 0 && (
+              <div className="mt-3 max-h-48 overflow-auto rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-background-secondary sticky top-0">
+                    <tr>{Object.keys(rows[0] || {}).map((k) => <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{k}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {visibleChartRows.map((row: any, i: number) => (
+                      <tr key={i} className="border-t border-border/50">
+                        {Object.keys(rows[0] || {}).map((h) => (
+                          <td key={h} className="px-3 py-1.5 text-foreground max-w-[120px] truncate">{String(row[h] ?? "")}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -1613,57 +2081,107 @@ const ResultPanel = memo(function ResultPanel({
 
         {rows.length > 0 && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
+            {/* Table toolbar */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="relative flex-1 min-w-[120px]">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="Search result rows..." className="h-8 bg-card border-border pl-8 text-xs" />
+                <Input value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="Search rows..." className="h-8 bg-card border-border pl-8 text-xs" />
               </div>
-              <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => setDensity((prev) => prev === "compact" ? "comfortable" : "compact")}>
-                <Rows3 size={12} className="mr-1" /> {density === "compact" ? "Compact" : "Roomy"}
+              <Button variant="outline" size="sm" className="h-8 border-border text-xs px-2" onClick={() => setDensity((prev) => prev === "compact" ? "comfortable" : "compact")} title="Toggle density">
+                <Rows3 size={12} />
               </Button>
+              <Button variant="outline" size="sm" className={`h-8 border-border text-xs px-2 ${frozenFirst ? "bg-primary/10 text-primary border-primary/30" : ""}`} onClick={() => setFrozenFirst((p) => !p)} title="Freeze first column">
+                <Pin size={12} />
+              </Button>
+              <Button variant="outline" size="sm" className={`h-8 border-border text-xs px-2 ${showFormatPanel ? "bg-primary/10 text-primary border-primary/30" : ""}`} onClick={() => setShowFormatPanel((p) => !p)} title="Conditional formatting">
+                <Flame size={12} />
+              </Button>
+              {selectedRows.size > 0 && (
+                <Button variant="outline" size="sm" className="h-8 border-border text-xs" onClick={() => { const sel = displayedRows.filter((_, i) => selectedRows.has(i)); copyRows(sel); }}>
+                  <Copy size={11} className="mr-1" /> Copy {selectedRows.size}
+                </Button>
+              )}
             </div>
-            {displayedRows.length > 200 && (
-              <VirtualizedResultTable
-                rows={displayedRows}
-                headers={Object.keys(rows[0] || {})}
-                density={density}
-                maxHeight={fullscreen ? 560 : 360}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={handleSort}
-              />
+
+            {/* Conditional formatting panel */}
+            {showFormatPanel && (
+              <div className="rounded-md border border-border bg-card/60 p-3 space-y-2">
+                <p className="text-xs font-medium text-foreground flex items-center gap-1.5"><Flame size={11} className="text-warning" /> Conditional Formatting</p>
+                {formatRules.map((rule) => (
+                  <div key={rule.id} className="flex items-center gap-1.5 flex-wrap">
+                    <select value={rule.column} onChange={(e) => setFormatRules((r) => r.map((x) => x.id === rule.id ? { ...x, column: e.target.value } : x))} className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground">
+                      {(columnOrder.length ? columnOrder : Object.keys(rows[0] || {})).map((h) => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <select value={rule.op} onChange={(e) => setFormatRules((r) => r.map((x) => x.id === rule.id ? { ...x, op: e.target.value as any } : x))} className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground w-24">
+                      {([">", "<", "=", "!=", "contains"] as const).map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <Input value={rule.value} onChange={(e) => setFormatRules((r) => r.map((x) => x.id === rule.id ? { ...x, value: e.target.value } : x))} className="h-7 w-24 bg-background border-border text-xs" placeholder="value" />
+                    <select value={rule.bgClass} onChange={(e) => setFormatRules((r) => r.map((x) => x.id === rule.id ? { ...x, bgClass: e.target.value } : x))} className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground">
+                      <option value="bg-red-500/20">Red</option>
+                      <option value="bg-green-500/20">Green</option>
+                      <option value="bg-yellow-500/20">Yellow</option>
+                      <option value="bg-blue-500/20">Blue</option>
+                      <option value="bg-orange-500/20">Orange</option>
+                    </select>
+                    <button onClick={() => setFormatRules((r) => r.filter((x) => x.id !== rule.id))} className="h-7 w-7 flex items-center justify-center rounded border border-border text-muted-foreground hover:text-destructive transition-colors"><X size={12} /></button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setFormatRules((r) => [...r, { id: Math.random().toString(36).slice(2), column: Object.keys(rows[0] || {})[0] || "", op: ">", value: "0", bgClass: "bg-green-500/20" }])}
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  + Add rule
+                </button>
+              </div>
             )}
-            <div className={displayedRows.length > 200 ? "hidden" : "max-h-[50vh] overflow-auto rounded-md border border-border"}>
-              <table className="w-full text-xs">
-                <thead className="bg-card">
-                  <tr>
-                    {Object.keys(rows[0] || {}).map((k) => (
-                      <th key={k} className="text-left px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">
-                        <button type="button" onClick={() => handleSort(k)} className="hover:text-foreground">
-                          {k}{sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(displayedRows.length > 200 ? [] : displayedRows).map((row: any, i: number) => {
-                    const headers = Object.keys(rows[0] || {});
-                    return (
-                      <tr key={i} className="border-t border-border/50">
-                        {headers.map((h, j) => (
-                          <td key={j} className={`${density === "compact" ? "px-2 py-1" : "px-3 py-1.5"} text-foreground max-w-[160px] truncate`}>
-                            {String(row[h] ?? "")}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {displayedRows.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching rows</p>}
+
+            {/* Table */}
+            <VirtualizedResultTable
+              rows={displayedRows}
+              headers={Object.keys(rows[0] || {})}
+              density={density}
+              maxHeight={fullscreen ? 560 : 400}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+              selectedRows={selectedRows}
+              onToggleRow={handleToggleRow}
+              onToggleAll={handleToggleAll}
+              onCellCopy={handleCellCopy}
+              onRowClick={(row, index) => setRowDetailData({ row, index })}
+              colWidths={colWidths}
+              onResizeStart={handleResizeStart}
+              frozenFirst={frozenFirst}
+              formatRules={formatRules}
+              columnOrder={columnOrder.length ? columnOrder : undefined}
+            />
+
+            {/* Status bar */}
+            <div className="flex items-center gap-3 px-1 text-[10px] text-muted-foreground border-t border-border/40 pt-1">
+              <span className="flex items-center gap-1"><Hash size={9} /> {displayedRows.length.toLocaleString()} rows{resultSearch ? ` (filtered from ${rows.length.toLocaleString()})` : ""}</span>
+              {selectedRows.size > 0 && <span className="flex items-center gap-1 text-primary"><CheckSquare size={9} /> {selectedRows.size} selected</span>}
+              {(() => {
+                const numericCols = (columnOrder.length ? columnOrder : Object.keys(rows[0] || {})).filter((h) => {
+                  const sample = rows.slice(0, 5).map((r) => parseFloat(String(r[h]))).filter((n) => Number.isFinite(n));
+                  return sample.length > 0;
+                });
+                if (!numericCols.length) return null;
+                const col = numericCols[0];
+                const sum = displayedRows.reduce((s, r) => s + (parseFloat(String(r[col])) || 0), 0);
+                return <span className="flex items-center gap-1"><Sigma size={9} /> {col}: {sum > 1e6 ? `${(sum / 1e6).toFixed(1)}M` : sum > 1e3 ? `${(sum / 1e3).toFixed(1)}k` : sum.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>;
+              })()}
             </div>
           </div>
+        )}
+
+        {/* Row detail slide-in panel */}
+        {rowDetailData && (
+          <RowDetailPanel
+            row={rowDetailData.row}
+            headers={columnOrder.length ? columnOrder : Object.keys(rows[0] || {})}
+            rowIndex={rowDetailData.index}
+            onClose={() => setRowDetailData(null)}
+          />
         )}
 
         {isEmptyArray && (
@@ -1725,7 +2243,7 @@ const ResultPanel = memo(function ResultPanel({
         onClick={() => setFullscreen(false)}
       />
       <div className="relative z-10 h-full overflow-y-auto p-2 sm:p-4 lg:p-6">
-        <div className="mx-auto flex min-h-[calc(100dvh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden rounded-[24px] border border-border bg-background-secondary shadow-2xl sm:min-h-[calc(100dvh-2rem)] lg:min-h-[calc(100dvh-3rem)]">
+        <div className="mx-auto flex min-h-[calc(100dvh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden rounded-[24px] border border-border/55 bg-background-secondary shadow-[0_32px_64px_-24px_hsl(var(--foreground)/0.22)] sm:min-h-[calc(100dvh-2rem)] lg:min-h-[calc(100dvh-3rem)]">
           {panelContent}
         </div>
       </div>
@@ -2135,6 +2653,82 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
   );
 }
 
+// ─── SchemaExplorer ───────────────────────────────────────────────────────────
+function SchemaExplorer({ schema, sheetData, isDbMode }: {
+  schema: DatabaseSchema | null;
+  sheetData?: { columns: any[]; rows: any[] } | null;
+  isDbMode: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [expandedTable, setExpandedTable] = useState<string | null>(null);
+  const q = search.toLowerCase();
+
+  if (isDbMode) {
+    const tables = (schema?.tables ?? []).filter((t) => !q || t.name.toLowerCase().includes(q) || t.columns.some((c) => c.name.toLowerCase().includes(q)));
+    return (
+      <div className="flex flex-col h-full">
+        <div className="relative mb-2">
+          <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tables & columns..." className="w-full h-7 rounded-md border border-border bg-card pl-7 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-0.5 scrollbar-thin">
+          {tables.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">No tables found</p>}
+          {tables.map((table) => (
+            <div key={table.name}>
+              <button
+                type="button"
+                onClick={() => setExpandedTable((p) => p === table.name ? null : table.name)}
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-card text-left transition-colors"
+              >
+                <Database size={11} className="text-primary shrink-0" />
+                <span className="text-xs font-medium text-foreground truncate flex-1">{table.name.split(".").pop()}</span>
+                {table.rowCount != null && <span className="text-[10px] text-muted-foreground shrink-0">{table.rowCount.toLocaleString()}r</span>}
+                {expandedTable === table.name ? <ChevronDown size={11} className="text-muted-foreground shrink-0" /> : <ChevronRight size={11} className="text-muted-foreground shrink-0" />}
+              </button>
+              {expandedTable === table.name && table.columns.length > 0 && (
+                <div className="ml-4 space-y-px pb-1">
+                  {table.columns.filter((c) => !q || c.name.toLowerCase().includes(q)).map((col) => (
+                    <div key={col.name} className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-card/60 cursor-pointer" onClick={() => navigator.clipboard.writeText(col.name).then(() => toast.success(`Copied "${col.name}"`))}>
+                      <span className={`text-[10px] px-1 py-0.5 rounded font-mono shrink-0 ${col.dtype === "number" ? "bg-blue-500/10 text-blue-400" : col.dtype === "date" ? "bg-purple-500/10 text-purple-400" : "bg-muted/50 text-muted-foreground"}`}>{col.dtype?.slice(0, 4) ?? "str"}</span>
+                      <span className="text-xs text-foreground truncate">{col.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!sheetData) return <p className="text-xs text-muted-foreground text-center py-4">No dataset loaded</p>;
+  const cols = sheetData.columns.filter((c: any) => !q || c.name.toLowerCase().includes(q));
+  return (
+    <div className="flex flex-col h-full">
+      <div className="relative mb-2">
+        <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search columns..." className="w-full h-7 rounded-md border border-border bg-card pl-7 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40" />
+      </div>
+      <p className="text-[10px] text-muted-foreground mb-2">{sheetData.rows.length.toLocaleString()} rows · {sheetData.columns.length} columns</p>
+      <div className="flex-1 overflow-y-auto space-y-px scrollbar-thin">
+        {cols.map((col: any) => {
+          const sample = sheetData.rows.slice(0, 3).map((r: any) => String(r[col.name] ?? "")).filter(Boolean).join(", ");
+          return (
+            <div key={col.name} className="px-2 py-1.5 rounded hover:bg-card cursor-pointer transition-colors" onClick={() => navigator.clipboard.writeText(col.name).then(() => toast.success(`Copied "${col.name}"`))}>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] px-1 py-0.5 rounded font-mono shrink-0 ${col.dtype === "number" ? "bg-blue-500/10 text-blue-400" : col.dtype === "date" ? "bg-purple-500/10 text-purple-400" : col.dtype === "boolean" ? "bg-amber-500/10 text-amber-400" : "bg-muted/50 text-muted-foreground"}`}>{col.dtype}</span>
+                <span className="text-xs font-medium text-foreground truncate">{col.name}</span>
+              </div>
+              {sample && <p className="text-[10px] text-muted-foreground truncate mt-0.5 ml-5">{sample}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Save Insight Dialog ──────────────────────────────────────────────────────
 function getDatabaseTableNameParts(tableName: string) {
   const parts = tableName.split(".").filter(Boolean);
@@ -2200,105 +2794,44 @@ function DatabaseTablePicker({
   triggerClassName?: string;
   contentClassName?: string;
 }) {
-  const [open, setOpen] = useState(false);
-
-  const selectedTable = useMemo(
-    () => tables.find((table) => table.name === value) ?? tables[0] ?? null,
-    [tables, value]
-  );
   const groupedTables = useMemo(() => buildDatabaseTableGroups(tables), [tables]);
 
-  const selectedParts = selectedTable ? getDatabaseTableNameParts(selectedTable.name) : null;
-  const pickerSubtitle = selectedTable
-    ? [
-      selectedParts?.namespace || "",
-      selectedTable.kind?.toUpperCase() || "",
-      formatDatabaseTableStat(selectedTable),
-    ].filter(Boolean).join(" | ")
-    : `${tables.length.toLocaleString()} tables available`;
-  const selectedSubtitle = selectedTable
-    ? [
-      selectedParts?.namespace || "",
-      selectedTable.kind?.toUpperCase() || "",
-      formatDatabaseTableStat(selectedTable),
-    ].filter(Boolean).join(" • ")
-    : `${tables.length.toLocaleString()} tables available`;
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={tables.length === 0}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-left transition-colors hover:border-primary/30 hover:bg-card/80 disabled:cursor-not-allowed disabled:opacity-60",
-            triggerClassName,
-          )}
-        >
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium leading-5 text-foreground">
-              {selectedParts?.shortName || placeholder}
-            </p>
-            <p className="truncate text-[10px] leading-4 text-muted-foreground">
-              {pickerSubtitle}
-            </p>
-          </div>
-          <ChevronsUpDown size={13} className="shrink-0 text-muted-foreground" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className={cn("w-[min(30rem,calc(100vw-1.5rem))] p-0", contentClassName)}
+    <div className="relative w-full">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={tables.length === 0}
+        className={cn(
+          "w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60",
+          triggerClassName
+        )}
       >
-        <Command>
-          <CommandInput placeholder="Search tables or schemas..." className="h-10 text-xs" />
-          <CommandList className="max-h-[20rem]">
-            <CommandEmpty>No matching tables found.</CommandEmpty>
-            {groupedTables.map((group) => (
-              <CommandGroup key={group.key} heading={`${group.label} (${group.tables.length})`}>
-                {group.tables.map((table) => {
-                  const parts = getDatabaseTableNameParts(table.name);
-                  const isSelected = table.name === selectedTable?.name;
-
-                  return (
-                    <CommandItem
-                      key={table.name}
-                      value={`${table.name} ${parts.shortName} ${parts.namespace} ${table.kind || ""}`}
-                      onSelect={() => {
-                        onChange(table.name);
-                        setOpen(false);
-                      }}
-                      className="gap-2 px-2.5 py-1.5"
-                    >
-                      <Check
-                        size={12}
-                        className={cn("mt-0.5 shrink-0", isSelected ? "text-primary opacity-100" : "opacity-0")}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-medium leading-5 text-foreground" title={table.name}>
-                          {parts.shortName}
-                        </p>
-                        <p className="truncate text-[10px] leading-4 text-muted-foreground" title={table.name}>
-                          {parts.namespace || table.name}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground">
-                          {table.kind}
-                        </p>
-                        <p className="text-[10px] leading-4 text-muted-foreground">
-                          {formatDatabaseTableStat(table)}
-                        </p>
-                      </div>
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+        <option value="" disabled className="bg-popover text-muted-foreground">
+          {placeholder}
+        </option>
+        {groupedTables.map((group) => (
+          <optgroup key={group.key} label={`${group.label} (${group.tables.length})`} className="bg-popover text-foreground font-semibold">
+            {group.tables.map((table) => {
+              const parts = getDatabaseTableNameParts(table.name);
+              const stats = table.rowCount != null 
+                ? `${table.rowCount.toLocaleString()} rows` 
+                : table.columns.length > 0 
+                  ? `${table.columns.length} cols` 
+                  : "";
+              const suffix = [table.kind?.toUpperCase(), stats].filter(Boolean).join(" - ");
+              const label = suffix ? `${parts.shortName} (${suffix})` : parts.shortName;
+              return (
+                <option key={table.name} value={table.name} className="bg-popover text-foreground py-1">
+                  {label}
+                </option>
+              );
+            })}
+          </optgroup>
+        ))}
+      </select>
+      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+    </div>
   );
 }
 
@@ -3051,6 +3584,31 @@ export default function QueryPage() {
     localStorage.setItem(FAVORITE_PROMPTS_KEY, JSON.stringify(favoritePrompts));
   }, [favoritePrompts]);
 
+  // New enterprise state
+  const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const prevRunningRef = useRef(false);
+
+  // Browser notification when query completes
+  useEffect(() => {
+    if (prevRunningRef.current && !isRunning && finalResult !== null) {
+      if (notifEnabled && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("DataVault — Query Complete", {
+          body: lastQuery.slice(0, 80),
+          icon: "/favicon.ico",
+        });
+      }
+    }
+    prevRunningRef.current = isRunning;
+  }, [isRunning, finalResult, notifEnabled, lastQuery]);
+
+  const handleEnableNotifications = async () => {
+    if (typeof Notification === "undefined") { toast.error("Notifications not supported"); return; }
+    const perm = await Notification.requestPermission();
+    if (perm === "granted") { setNotifEnabled(true); toast.success("Notifications enabled"); }
+    else toast.error("Notification permission denied");
+  };
+
 
 
   const handleSpeech = () => {
@@ -3171,7 +3729,7 @@ export default function QueryPage() {
       }
       : {};
 
-    if (!apiKey && activeProvider !== "ollama" && !isFreeNovaModelLocal) {
+    if (!apiKey && activeProvider !== "ollama" && activeProvider !== "querify" && !isFreeNovaModelLocal) {
       const message = activeProvider === "bedrock"
         ? "AWS Bedrock access key is missing. Add it in Settings or paste it in the left provider fields."
         : `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
@@ -3228,7 +3786,7 @@ export default function QueryPage() {
         command: "Answer",
         args: {},
         result: {
-          narrative: `🔗 **Connected to ${selectedConnection.name}** (${DB_TYPE_LABELS[selectedConnection.dbType]})\n\nYour question: "${question}"\n\nThe database connection is configured and ready. In the next release, this will execute real SQL queries against your ${DB_TYPE_LABELS[selectedConnection.dbType]} database.\n\n**Connection Details:**\n- Type: ${DB_TYPE_LABELS[selectedConnection.dbType]}\n- Host: ${selectedConnection.config.host || selectedConnection.config.url || selectedConnection.config.account || "configured"}\n- Database: ${selectedConnection.config.database || selectedConnection.config.projectId || "configured"}\n- Status: ✅ ${selectedConnection.status}`,
+          narrative: `**Connected to ${selectedConnection.name}** (${DB_TYPE_LABELS[selectedConnection.dbType]})\n\nYour question: "${question}"\n\nThe database connection is configured and ready. In the next release, this will execute real SQL queries against your ${DB_TYPE_LABELS[selectedConnection.dbType]} database.\n\n**Connection Details:**\n- Type: ${DB_TYPE_LABELS[selectedConnection.dbType]}\n- Host: ${selectedConnection.config.host || selectedConnection.config.url || selectedConnection.config.account || "configured"}\n- Database: ${selectedConnection.config.database || selectedConnection.config.projectId || "configured"}\n- Status: ${selectedConnection.status}`,
           highlights: [
             { label: "Database", value: DB_TYPE_LABELS[selectedConnection.dbType] },
             { label: "Connection", value: selectedConnection.name },
@@ -3375,7 +3933,7 @@ export default function QueryPage() {
       }
       : {};
 
-    if (!apiKey && activeProvider !== "ollama" && !isFreeNovaModelLocal) {
+    if (!apiKey && activeProvider !== "ollama" && activeProvider !== "querify" && !isFreeNovaModelLocal) {
       const message = activeProvider === "bedrock"
         ? "AWS Bedrock access key is missing. Add it in Settings or paste it in the left provider fields."
         : `${PROVIDER_LABELS[activeProvider]} API key is missing. Add it in Settings or paste it in the left API key field.`;
@@ -3783,31 +4341,64 @@ export default function QueryPage() {
               className="flex-1 flex min-h-0 min-w-0 overflow-hidden relative xl:flex-row flex-col w-full h-full"
             >
             {/* Left: Context Panel */}
-            <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-auto border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
-              <div className="p-4 space-y-4">
+            <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-hidden border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
+              {/* Sidebar Tab Switcher */}
+              <div className="shrink-0 flex items-center border-b border-border/60 bg-background-secondary px-3 py-2 gap-1">
+                <button
+                  onClick={() => setShowSchemaExplorer(false)}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs rounded-md transition-colors ${!showSchemaExplorer ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <Settings2 size={11} /> Configure
+                </button>
+                <button
+                  onClick={() => setShowSchemaExplorer(true)}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs rounded-md transition-colors ${showSchemaExplorer ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <Database size={11} /> Schema
+                </button>
+              </div>
+
+              {/* Schema Explorer Tab */}
+              {showSchemaExplorer ? (
+                <div className="flex-1 overflow-hidden p-3">
+                  <SchemaExplorer
+                    schema={dbSchema}
+                    sheetData={selectedDataset?.data?.sheets[selectedSheet] ?? null}
+                    isDbMode={isDbConnection}
+                  />
+                </div>
+              ) : (
+              <div className="flex-1 overflow-auto p-4 space-y-4">
                 <div>
                   <Label className="text-xs text-muted-foreground">Data Source</Label>
-                  <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
-                    <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue placeholder="Select data source" /></SelectTrigger>
-                    <SelectContent className="bg-popover border-border max-h-72">
+                  <div className="relative mt-1.5">
+                    <select
+                      value={selectedDatasetId}
+                      onChange={(e) => handleSourceChange(e.target.value)}
+                      className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                    >
+                      <option value="" disabled className="bg-popover text-muted-foreground">Select data source</option>
                       {datasets.length > 0 && (
-                        <>
-                          <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Uploaded Files</div>
-                          {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.fileName}</SelectItem>)}
-                        </>
+                        <optgroup label="Uploaded Files" className="bg-popover text-foreground font-semibold">
+                          {datasets.map((d) => (
+                            <option key={d.id} value={d.id} className="bg-popover text-foreground py-1">
+                              {d.fileName}
+                            </option>
+                          ))}
+                        </optgroup>
                       )}
                       {connectedDbs.length > 0 && (
-                        <>
-                          <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Database Connections</div>
+                        <optgroup label="Database Connections" className="bg-popover text-foreground font-semibold">
                           {connectedDbs.map((c) => (
-                            <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
-                              <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
-                            </SelectItem>
+                            <option key={`conn:${c._id}`} value={`conn:${c._id}`} className="bg-popover text-foreground py-1">
+                              {c.name} ({c.dbType.toUpperCase()})
+                            </option>
                           ))}
-                        </>
+                        </optgroup>
                       )}
-                    </SelectContent>
-                  </Select>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+                  </div>
                 </div>
 
                 {selectedDataset && selectedDataset.sheetNames.length > 1 && (
@@ -3838,7 +4429,7 @@ export default function QueryPage() {
                 {selectedConnection && (
                   <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 space-y-1.5">
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">{DB_TYPE_ICONS[selectedConnection.dbType]}</span>
+                      <DbTypeIcon dbType={selectedConnection.dbType} size={16} className="text-primary/80 shrink-0" />
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-foreground truncate">{selectedConnection.name}</p>
                         <p className="text-[10px] text-muted-foreground">{DB_TYPE_LABELS[selectedConnection.dbType]}</p>
@@ -3892,19 +4483,20 @@ export default function QueryPage() {
 
                 <div>
                   <Label className="text-xs text-muted-foreground">LLM Provider</Label>
-                  <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
-                    <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border-border">
+                  <div className="relative mt-1.5">
+                    <select
+                      value={activeProvider}
+                      onChange={(e) => setActiveProvider(e.target.value as Provider)}
+                      className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                    >
                       {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-                        <SelectItem key={p} value={p}>
-                          <span className="flex items-center gap-2">
-                            <ProviderLogo provider={p} size="sm" />
-                            {PROVIDER_LABELS[p]}
-                          </span>
-                        </SelectItem>
+                        <option key={p} value={p} className="bg-popover text-foreground py-1">
+                          {PROVIDER_LABELS[p]}
+                        </option>
                       ))}
-                    </SelectContent>
-                  </Select>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+                  </div>
                 </div>
 
                 {activeProvider === "bedrock" ? (
@@ -3959,20 +4551,20 @@ export default function QueryPage() {
                       className="mt-1.5 bg-card border-border text-xs font-mono"
                     />
                   ) : (
-                    <Select value={activeModel} onValueChange={setActiveModel}>
-                      <SelectTrigger className="mt-1.5 bg-card border-border min-w-0 [&>span]:truncate">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
+                    <div className="relative mt-1.5">
+                      <select
+                        value={activeModel}
+                        onChange={(e) => setActiveModel(e.target.value)}
+                        className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                      >
                         {PROVIDER_MODELS[activeProvider]?.map((m) => (
-                          <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
-                            <span className="min-w-0 whitespace-normal break-words leading-snug">
-                              {getModelDisplayName(m)}
-                            </span>
-                          </SelectItem>
+                          <option key={m} value={m} className="bg-popover text-foreground py-1">
+                            {getModelDisplayName(m)}
+                          </option>
                         ))}
-                      </SelectContent>
-                    </Select>
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+                    </div>
                   )}
                 </div>
 
@@ -3986,12 +4578,20 @@ export default function QueryPage() {
 
                 <div>
                   <Label className="text-xs text-muted-foreground">Max Tokens</Label>
-                  <Select value={String(maxTokens)} onValueChange={(v) => setMaxTokens(Number(v))}>
-                    <SelectTrigger className="mt-1.5 bg-card border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border-border">
-                      {[256, 512, 1024, 2048, 4096].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative mt-1.5">
+                    <select
+                      value={String(maxTokens)}
+                      onChange={(e) => setMaxTokens(Number(e.target.value))}
+                      className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                    >
+                      {[256, 512, 1024, 2048, 4096].map((t) => (
+                        <option key={t} value={String(t)} className="bg-popover text-foreground py-1">
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+                  </div>
                 </div>
 
                 <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
@@ -4005,12 +4605,21 @@ export default function QueryPage() {
                 </Collapsible>
 
                 {/* Quick tools */}
-                <div>
+                <div className="space-y-1.5">
                   <button onClick={() => setShowTemplates(true)} className="w-full flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
                     <LayoutTemplate size={11} /> Templates
                   </button>
+                  <button
+                    onClick={notifEnabled ? () => setNotifEnabled(false) : handleEnableNotifications}
+                    className={`w-full flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border transition-all ${notifEnabled ? "border-primary/30 bg-primary/5 text-primary" : "border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground"}`}
+                    title="Get notified when a long-running query finishes in a background tab"
+                  >
+                    {notifEnabled ? <Bell size={11} /> : <BellOff size={11} />}
+                    {notifEnabled ? "Notifications on" : "Notify on complete"}
+                  </button>
                 </div>
               </div>
+              )} {/* end schema toggle */}
             </div>
 
             {/* Center: Chat */}
@@ -4069,6 +4678,7 @@ export default function QueryPage() {
 
                 {messages.map((msg, i) => {
                   const finalStep = getFinalStep(msg.steps);
+                  const isLast = i === messages.length - 1;
                   return (
                     <div key={i}>
                       {msg.role === "user" ? (
@@ -4091,30 +4701,41 @@ export default function QueryPage() {
                             </div>
                           )}
                           {msg.steps && msg.steps.length > 0 && (
-                            <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground pl-3 sm:pl-10">
-                              <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
-                              <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
-                              {finalStep && (
-                                <>
-                                  <button
-                                    onClick={() => {
-                                      setFinalResult(finalStep.result);
-                                      setLastQuery(msg.query || "");
-                                      setShowSaveInsight(true);
-                                    }}
-                                    className="flex items-center gap-1 text-primary hover:underline"
-                                  >
-                                    <BookmarkPlus size={10} /> Save insight
-                                  </button>
-                                  <button
-                                    onClick={() => handlePdfReport(msg.query || "", finalStep.result)}
-                                    className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
-                                  >
-                                    <FileDown size={10} /> PDF report
-                                  </button>
-                                </>
-                              )}
-                            </div>
+                            <>
+                              <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground pl-3 sm:pl-10">
+                                <span className="flex items-center gap-1"><Clock size={10} /> {msg.steps.reduce((s, st) => s + st.durationMs, 0).toLocaleString()}ms</span>
+                                <span className="flex items-center gap-1"><Zap size={10} /> {msg.steps.reduce((s, st) => s + st.tokens.input + st.tokens.output, 0).toLocaleString()} tokens</span>
+                                {finalStep && (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setFinalResult(finalStep.result);
+                                        setLastQuery(msg.query || "");
+                                        setShowSaveInsight(true);
+                                      }}
+                                      className="flex items-center gap-1 text-primary hover:underline"
+                                    >
+                                      <BookmarkPlus size={10} /> Save insight
+                                    </button>
+                                    <button
+                                      onClick={() => handlePdfReport(msg.query || "", finalStep.result)}
+                                      className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
+                                    >
+                                      <FileDown size={10} /> PDF report
+                                    </button>
+                                    {msg.query && (
+                                      <button
+                                        onClick={() => setInput(msg.query || "")}
+                                        className="flex items-center gap-1 text-muted-foreground hover:text-primary hover:underline"
+                                        title="Refine this query"
+                                      >
+                                        <RefreshCw size={10} /> Refine
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </>
                           )}
                           {finalStep && (
                             <InlineFinalResult
@@ -4124,6 +4745,18 @@ export default function QueryPage() {
                               }}
                               onOpenDetails={() => setShowResult(true)}
                             />
+                          )}
+                          {/* Follow-up chips (last agent message only) */}
+                          {isLast && finalStep && msg.query && (
+                            <FollowUpChips
+                              query={msg.query}
+                              result={finalStep.result}
+                              onSelect={(q) => handleSend(q)}
+                            />
+                          )}
+                          {/* Smart retry (for failed queries only) */}
+                          {isLast && msg.steps?.some((s) => s.command === "Error") && msg.query && (
+                            <SmartRetryBar query={msg.query} onRetry={(q) => handleSend(q)} />
                           )}
                         </div>
                       )}
@@ -4195,8 +4828,8 @@ export default function QueryPage() {
                   }`}>
                     <span>
                       {dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
-                        ? `🚨 Your daily free Bedrock limit (${dailyTokens.tokensUsed >= dailyTokens.limit ? `${dailyTokens.limit.toLocaleString()} tokens` : `${dailyTokens.queryLimit} queries`}) has been exhausted. Please upgrade your plan to continue chatting.`
-                        : `⚠️ Warning: You have consumed ${dailyTokens.tokensUsed.toLocaleString()} / ${dailyTokens.limit.toLocaleString()} tokens & ${dailyTokens.queriesUsed} / ${dailyTokens.queryLimit} queries (${dailyTokens.percentage}%) of your daily free Bedrock allowance.`
+                        ? `Daily free Bedrock limit (${dailyTokens.tokensUsed >= dailyTokens.limit ? `${dailyTokens.limit.toLocaleString()} tokens` : `${dailyTokens.queryLimit} queries`}) has been exhausted. Please upgrade your plan to continue chatting.`
+                        : `Notice: You have consumed ${dailyTokens.tokensUsed.toLocaleString()} / ${dailyTokens.limit.toLocaleString()} tokens & ${dailyTokens.queriesUsed} / ${dailyTokens.queryLimit} queries (${dailyTokens.percentage}%) of your daily free Bedrock allowance.`
                       }
                     </span>
                     <Button
@@ -4227,7 +4860,7 @@ export default function QueryPage() {
                     </Button>
                   </div>
                 )}
-                <div className="mx-auto flex max-w-3xl items-end gap-1.5 sm:gap-2 rounded-[20px] sm:rounded-[28px] border border-border/70 bg-card/80 p-1.5 sm:p-2 shadow-[0_20px_44px_-34px_hsl(var(--foreground)/0.82)] backdrop-blur-sm query-input-glow">
+                <div className="mx-auto flex max-w-3xl items-end gap-1.5 sm:gap-2 rounded-[20px] sm:rounded-[24px] border border-border/55 bg-card/80 p-1.5 sm:p-2 shadow-[0_4px_20px_-8px_hsl(var(--foreground)/0.12)] backdrop-blur-sm query-input-glow">
                   <div className="relative min-w-0 flex-1">
                     {/* Ghost text backdrop overlay */}
                     {activeSuggestion && !isRunning && !isListening && (
@@ -4323,8 +4956,9 @@ export default function QueryPage() {
                   </div>
                 </div>
                 {input.length > 0 && (
-                  <p className="text-[10px] sm:text-xs text-muted-foreground text-center mt-1">
-                    ~{Math.ceil(input.length / 4)} tokens · {input.length.toLocaleString()} chars · Ctrl+Enter to send
+                  <p className="text-[10px] sm:text-xs text-muted-foreground text-center mt-1 flex items-center justify-center gap-2 flex-wrap">
+                    <span>~{Math.ceil(input.length / 4)} tokens · {input.length.toLocaleString()} chars · Ctrl+Enter to send</span>
+                    <CostEstimatorBadge input={input} model={activeModel} provider={activeProvider} />
                   </p>
                 )}
               </div>
@@ -4516,21 +5150,34 @@ export default function QueryPage() {
           <div className="mt-6 space-y-4">
             <div>
               <Label className="text-xs text-muted-foreground">Data Source</Label>
-              <Select value={selectedDatasetId} onValueChange={handleSourceChange}>
-                <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
-                  <SelectValue placeholder="Select data source" />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border max-h-72">
-                  {datasets.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">📄 Files</div>}
-                  {datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.displayName || d.fileName}</SelectItem>)}
-                  {connectedDbs.length > 0 && <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground mt-1">🔗 Databases</div>}
-                  {connectedDbs.map((c) => (
-                    <SelectItem key={`conn:${c._id}`} value={`conn:${c._id}`}>
-                      <span className="flex items-center gap-2">{DB_TYPE_ICONS[c.dbType]} {c.name}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="relative mt-1.5">
+                <select
+                  value={selectedDatasetId}
+                  onChange={(e) => handleSourceChange(e.target.value)}
+                  className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                >
+                  <option value="" disabled className="bg-popover text-muted-foreground">Select data source</option>
+                  {datasets.length > 0 && (
+                    <optgroup label="Uploaded Files" className="bg-popover text-foreground font-semibold">
+                      {datasets.map((d) => (
+                        <option key={d.id} value={d.id} className="bg-popover text-foreground py-1">
+                          {d.displayName || d.fileName}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {connectedDbs.length > 0 && (
+                    <optgroup label="Database Connections" className="bg-popover text-foreground font-semibold">
+                      {connectedDbs.map((c) => (
+                        <option key={`conn:${c._id}`} value={`conn:${c._id}`} className="bg-popover text-foreground py-1">
+                          {c.name} ({c.dbType.toUpperCase()})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+              </div>
             </div>
 
             {selectedDataset && selectedDataset.sheetNames.length > 1 && (
@@ -4567,21 +5214,20 @@ export default function QueryPage() {
 
             <div>
               <Label className="text-xs text-muted-foreground">LLM Provider</Label>
-              <Select value={activeProvider} onValueChange={(v) => setActiveProvider(v as Provider)}>
-                <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
+              <div className="relative mt-1.5">
+                <select
+                  value={activeProvider}
+                  onChange={(e) => setActiveProvider(e.target.value as Provider)}
+                  className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                >
                   {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
-                    <SelectItem key={p} value={p}>
-                      <span className="flex items-center gap-2">
-                        <ProviderLogo provider={p} size="sm" />
-                        {PROVIDER_LABELS[p]}
-                      </span>
-                    </SelectItem>
+                    <option key={p} value={p} className="bg-popover text-foreground py-1">
+                      {PROVIDER_LABELS[p]}
+                    </option>
                   ))}
-                </SelectContent>
-              </Select>
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+              </div>
             </div>
 
             {activeProvider === "bedrock" ? (
@@ -4642,20 +5288,20 @@ export default function QueryPage() {
                   className="mt-1.5 bg-card border-border text-xs font-mono"
                 />
               ) : (
-                <Select value={activeModel} onValueChange={setActiveModel}>
-                  <SelectTrigger className="mt-1.5 bg-card border-border min-w-0 text-xs [&>span]:truncate">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover border-border w-[min(28rem,calc(100vw-2rem))] max-h-72">
+                <div className="relative mt-1.5">
+                  <select
+                    value={activeModel}
+                    onChange={(e) => setActiveModel(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                  >
                     {PROVIDER_MODELS[activeProvider]?.map((m) => (
-                      <SelectItem key={m} value={m} className="items-start py-2 pl-7 pr-3 text-sm">
-                        <span className="min-w-0 whitespace-normal break-words leading-snug">
-                          {getModelDisplayName(m)}
-                        </span>
-                      </SelectItem>
+                      <option key={m} value={m} className="bg-popover text-foreground py-1">
+                        {getModelDisplayName(m)}
+                      </option>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+                </div>
               )}
             </div>
 
@@ -4669,14 +5315,20 @@ export default function QueryPage() {
 
             <div>
               <Label className="text-xs text-muted-foreground">Max Tokens</Label>
-              <Select value={String(maxTokens)} onValueChange={(v) => setMaxTokens(Number(v))}>
-                <SelectTrigger className="mt-1.5 bg-card border-border text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border">
-                  {[256, 512, 1024, 2048, 4096].map((t) => <SelectItem key={t} value={String(t)}>{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <div className="relative mt-1.5">
+                <select
+                  value={String(maxTokens)}
+                  onChange={(e) => setMaxTokens(Number(e.target.value))}
+                  className="w-full appearance-none rounded-xl border border-border/80 bg-card px-3 py-2 pr-9 text-xs text-foreground focus:border-primary/45 focus:outline-none focus:ring-1 focus:ring-primary/40 transition-all duration-200"
+                >
+                  {[256, 512, 1024, 2048, 4096].map((t) => (
+                    <option key={t} value={String(t)} className="bg-popover text-foreground py-1">
+                      {t}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none opacity-60" />
+              </div>
             </div>
 
             <Collapsible open={showMobileAdvanced} onOpenChange={setShowMobileAdvanced}>
@@ -4777,7 +5429,7 @@ export default function QueryPage() {
                 <p className="font-semibold text-foreground">Snapshotted Configurations:</p>
                 <p>Data Source: <span className="text-foreground">{sourceName}</span></p>
                 <p>Model Configs: <span className="text-foreground font-mono">{activeProvider}/{activeModel}</span></p>
-                <p>Security Level: <span className="text-emerald-400 font-medium">✅ Fully Encrypted Proxy</span></p>
+                <p>Security Level: <span className="text-emerald-400 font-medium">Fully Encrypted Proxy</span></p>
               </div>
 
               <div className="flex gap-2 justify-end pt-2">
@@ -4832,7 +5484,7 @@ export default function QueryPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-warning leading-normal">
-            ⚡ This updates the deployed chatbot instantly without changing its unique URL. Any active database table definitions or prompt parameters are updated in the snapshot.
+            This updates the deployed chatbot instantly without changing its unique URL. Any active database table definitions or prompt parameters are updated in the snapshot.
           </div>
           <DialogFooter className="gap-2 sm:gap-0 mt-2">
             <Button variant="outline" onClick={() => setDeploymentToRedeploy(null)} className="border-border text-xs h-9">Cancel</Button>
