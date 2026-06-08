@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuthStore } from "@/stores/auth-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 const FEATURES = [
   { label: "Multi-LLM Support",         icon: Brain },
@@ -222,7 +222,7 @@ export default function AuthPage() {
   // Show loading spinner while Auth0 processes the callback or syncs with backend
   if (auth0Loading || auth0Syncing) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+      <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.07),_transparent_32%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -236,7 +236,7 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="relative min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.18),_transparent_34%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
+    <div className="relative min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.07),_transparent_32%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
       {/* Theme toggle — top right */}
       <Button
         type="button"
@@ -310,7 +310,7 @@ export default function AuthPage() {
 
         <section className="flex w-full flex-1 items-center justify-center px-4 py-6 sm:px-6 lg:px-10">
           <motion.div
-            className="w-full max-w-md rounded-[28px] border border-border/80 bg-background/95 p-5 shadow-2xl shadow-black/20 backdrop-blur sm:p-8"
+            className="w-full max-w-md rounded-2xl border border-border/55 bg-background/95 p-5 shadow-[0_24px_48px_-20px_hsl(var(--foreground)/0.18)] backdrop-blur-xl sm:p-8"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.1 }}

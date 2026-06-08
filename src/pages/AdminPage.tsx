@@ -12,13 +12,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/separator";
+import { PageHeader } from "@/components/PageHeader";
 import { api } from "@/lib/api-client";
 import { getApiBaseUrl } from "@/lib/api-base";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { PLAN_DEFINITIONS, PLAN_TIERS, canAccessAdmin, formatPlanLimit, type PlanTier } from "@/lib/plans";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 
 interface UserRecord {
@@ -266,43 +266,21 @@ export default function AdminPage() {
   if (loading) {
     return (
       <div className="page-shell space-y-6">
-        <div className="page-hero">
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl space-y-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-primary/80">
-                <Shield size={12} />
-                Syncing admin workspace
+        <section className="relative overflow-hidden border-b border-border/60 pb-5 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-primary/30 before:to-transparent">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <Skeleton className="h-8 w-48" />
               </div>
-              <Skeleton className="h-10 w-full max-w-md rounded-xl" />
-              <Skeleton className="h-4 w-full max-w-2xl" />
-              <Skeleton className="h-4 w-5/6 max-w-xl" />
+              <div className="flex gap-2">
+                <Skeleton className="h-[30px] w-28 rounded-lg" />
+                <Skeleton className="h-[30px] w-24 rounded-lg" />
+              </div>
             </div>
-
-            <Card className="w-full max-w-sm rounded-[24px] border-border/70 bg-background/45 p-4 shadow-none backdrop-blur-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Loading admin panel
-                  </p>
-                  <p className="text-sm text-foreground">
-                    Pulling users, plans, roles, and audit activity into the console.
-                  </p>
-                </div>
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-                  <div className="h-6 w-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                <Skeleton className="h-2 w-full rounded-full" />
-                <div className="flex gap-2">
-                  <Skeleton className="h-9 flex-1 rounded-xl" />
-                  <Skeleton className="h-9 w-24 rounded-xl" />
-                </div>
-              </div>
-            </Card>
+            <Skeleton className="h-9 w-32 rounded-xl" />
           </div>
-        </div>
+        </section>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => (
@@ -362,38 +340,27 @@ export default function AdminPage() {
 
   return (
     <div className="page-shell space-y-6">
-      <div className="page-hero">
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Admin console</p>
-            <h1 className="page-title flex items-center gap-3">
-              <Shield size={24} className="text-primary" /> Admin Panel
-            </h1>
-            <p className="page-copy">
-              {fullAdminAccess
-                ? "Manage users, roles, plans, and workspace-wide activity from a cleaner responsive admin surface."
-                : "Review plan assignments and workspace access from a simplified administrative view."}
-            </p>
-          </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Access</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{fullAdminAccess ? "Full" : "Limited"}</p>
-            </div>
-            <div className="inline-stat">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Plan</p>
-              <p className="mt-1 text-sm font-medium text-foreground">{currentPlan.name}</p>
-            </div>
-            <Button
-              onClick={() => fullAdminAccess ? setShowInvite(true) : toast.info("Invites require Standard, Professional, or Enterprise")}
-              disabled={!fullAdminAccess}
-              className="col-span-2 sm:col-span-1"
-            >
-              <UserPlus size={14} className="mr-2" /> Invite User
-            </Button>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Admin Panel"
+        titleIcon={Shield}
+        info={fullAdminAccess
+          ? "Manage users, roles, plans, and workspace-wide activity from a responsive admin surface."
+          : "Review plan assignments and workspace access from a simplified administrative view."}
+        stats={[
+          { label: "Access", value: fullAdminAccess ? "Full" : "Limited" },
+          { label: "Plan", value: currentPlan.name },
+        ]}
+        actions={
+          <Button
+            onClick={() => fullAdminAccess ? setShowInvite(true) : toast.info("Invites require Standard, Professional, or Enterprise")}
+            disabled={!fullAdminAccess}
+            size="sm"
+            className="h-9 w-full gap-1.5 sm:w-auto"
+          >
+            <UserPlus size={14} /> Invite User
+          </Button>
+        }
+      />
 
       {!fullAdminAccess && (
         <Card className="p-4">
@@ -413,20 +380,20 @@ export default function AdminPage() {
       {stats && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[
-            { label: "Total Users", value: stats.userCount, icon: Users, color: "text-primary", bg: "bg-primary/10" },
-            { label: "Datasets", value: stats.datasetCount, icon: Database, color: "text-blue-400", bg: "bg-blue-500/10" },
-            { label: "Queries", value: stats.queryCount, icon: MessageSquare, color: "text-purple-400", bg: "bg-purple-500/10" },
-            { label: "Insights", value: stats.insightCount, icon: Activity, color: "text-green-400", bg: "bg-green-500/10" },
-          ].map((s) => (
-            <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <Card className="metric-card">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground uppercase tracking-wide">{s.label}</span>
-                  <div className={`w-8 h-8 rounded-lg ${s.bg} flex items-center justify-center`}>
+            { label: "Total Users",  value: stats.userCount,    icon: Users,         color: "text-primary",    bg: "bg-primary/10",    glow: "card-glow-blue"   },
+            { label: "Datasets",     value: stats.datasetCount, icon: Database,      color: "text-blue-400",   bg: "bg-blue-500/10",   glow: "card-glow-blue"   },
+            { label: "Queries",      value: stats.queryCount,   icon: MessageSquare, color: "text-purple-400", bg: "bg-purple-500/10", glow: "card-glow-purple" },
+            { label: "Insights",     value: stats.insightCount, icon: Activity,      color: "text-green-400",  bg: "bg-green-500/10",  glow: "card-glow-green"  },
+          ].map((s, index) => (
+            <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
+              <Card className={`metric-card ${s.glow}`}>
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{s.label}</span>
+                  <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${s.bg}`}>
                     <s.icon size={14} className={s.color} />
                   </div>
                 </div>
-                <p className="text-2xl font-bold text-foreground">{s.value.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-foreground tabular-nums">{s.value.toLocaleString()}</p>
               </Card>
             </motion.div>
           ))}
@@ -522,16 +489,16 @@ export default function AdminPage() {
           {/* Users Table */}
           <div className="page-table-wrap">
             <table className="min-w-[980px] w-full text-sm">
-              <thead className="bg-background-secondary">
-                <tr>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">User</th>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Role</th>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium">Workspace Plan</th>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Status</th>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Datasets</th>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden lg:table-cell">Queries</th>
-                  <th className="text-left px-4 py-3 text-xs text-muted-foreground font-medium hidden md:table-cell">Joined</th>
-                  <th className="px-4 py-3" />
+              <thead>
+                <tr className="border-b border-border/60">
+                  <th className="data-table-header rounded-tl-[20px] text-left">User</th>
+                  <th className="data-table-header text-left">Role</th>
+                  <th className="data-table-header text-left">Workspace Plan</th>
+                  <th className="data-table-header hidden text-left md:table-cell">Status</th>
+                  <th className="data-table-header hidden text-left lg:table-cell">Datasets</th>
+                  <th className="data-table-header hidden text-left lg:table-cell">Queries</th>
+                  <th className="data-table-header hidden text-left md:table-cell">Joined</th>
+                  <th className="data-table-header rounded-tr-[20px]" />
                 </tr>
               </thead>
               <tbody>
@@ -539,7 +506,7 @@ export default function AdminPage() {
                   const isSelf = u.email === currentUser?.email;
                   const RoleIcon = ROLE_ICONS[u.role] || Eye;
                   return (
-                    <tr key={u.id} className="border-t border-border hover:bg-card/50">
+                    <tr key={u.id} className="data-table-row">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-semibold shrink-0">
@@ -668,21 +635,21 @@ export default function AdminPage() {
           ) : (
             <div className="page-table-wrap">
               <table className="min-w-[820px] w-full text-xs">
-                <thead className="bg-background-secondary">
-                  <tr>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium">Timestamp</th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium">User</th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium">Action</th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium">Severity</th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium">Details</th>
+                <thead>
+                  <tr className="border-b border-border/60">
+                    <th className="data-table-header rounded-tl-[20px] text-left">Timestamp</th>
+                    <th className="data-table-header text-left">User</th>
+                    <th className="data-table-header text-left">Action</th>
+                    <th className="data-table-header text-left">Severity</th>
+                    <th className="data-table-header rounded-tr-[20px] text-left">Details</th>
                   </tr>
                 </thead>
                 <tbody>
                   {auditLogs.length === 0 ? (
-                    <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">No audit events yet</td></tr>
+                    <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">No audit events yet</td></tr>
                   ) : (
                     auditLogs.map((log) => (
-                      <tr key={log._id} className="border-t border-border/50 hover:bg-card/30">
+                      <tr key={log._id} className="data-table-row">
                         <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
                           {new Date(log.ts).toLocaleString()}
                         </td>

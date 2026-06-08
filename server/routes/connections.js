@@ -46,7 +46,7 @@ const DB_TYPES = {
   },
   mongodb: {
     label: "MongoDB Atlas",
-    fields: ["connectionUri"],
+    fields: ["connectionUri", "database"],
     defaults: {},
     connectionType: "uri",
   },

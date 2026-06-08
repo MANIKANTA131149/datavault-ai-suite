@@ -130,47 +130,66 @@ router.post("/signin", async (req, res) => {
 
 // ─── Auth0 Social Login ───────────────────────────────────────────────────────
 router.post("/auth0-login", async (req, res) => {
+  // Verify the token FIRST in its own scope. Keeping verification separate from
+  // the database/plan logic below ensures a downstream error is never reported
+  // to the user as a "token verification failed" message.
+  let auth0User;
   try {
     const { idToken } = req.body;
     if (!idToken)
       return res.status(400).json({ error: "idToken is required" });
 
-    const auth0Domain = process.env.AUTH0_DOMAIN;
+    let auth0Domain = process.env.AUTH0_DOMAIN;
     if (!auth0Domain)
       return res.status(500).json({ error: "Auth0 is not configured on the server" });
 
-    // Decode the token header to get the key id (kid)
-    const tokenHeader = JSON.parse(
-      Buffer.from(idToken.split(".")[0], "base64url").toString()
-    );
+    // Normalize: accept the domain with or without scheme / trailing slash so a
+    // misconfigured env var (e.g. "https://tenant.auth0.com/") still works.
+    auth0Domain = auth0Domain.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
 
-    // Fetch the JWKS keys directly from Auth0 using native Node 20 fetch
-    const jwksRes = await fetch(`https://${auth0Domain}/.well-known/jwks.json`);
-    if (!jwksRes.ok) throw new Error("Failed to fetch Auth0 JWKS public keys");
-    const jwks = await jwksRes.json();
+    let decoded;
+    try {
+      // Decode the token header to get the key id (kid)
+      const segments = idToken.split(".");
+      if (segments.length !== 3) throw new Error("Malformed JWT (expected 3 segments)");
+      const tokenHeader = JSON.parse(Buffer.from(segments[0], "base64url").toString());
 
-    // Find the key matching the kid from the token header
-    const jwk = jwks.keys.find(key => key.kid === tokenHeader.kid);
-    if (!jwk) throw new Error(`No public key found for kid: ${tokenHeader.kid}`);
+      // Fetch the JWKS keys directly from Auth0 using native Node 20 fetch
+      const jwksRes = await fetch(`https://${auth0Domain}/.well-known/jwks.json`);
+      if (!jwksRes.ok) throw new Error(`JWKS fetch failed (HTTP ${jwksRes.status})`);
+      const jwks = await jwksRes.json();
 
-    // Import the JWK directly into a native Node.js public key
-    const crypto = require("crypto");
-    const publicKey = crypto.createPublicKey({
-      format: "jwk",
-      key: jwk
-    }).export({
-      type: "spki",
-      format: "pem"
-    });
+      // Find the key matching the kid from the token header
+      const jwk = (jwks.keys || []).find((key) => key.kid === tokenHeader.kid);
+      if (!jwk) throw new Error(`No JWKS key matches token kid: ${tokenHeader.kid}`);
 
-    // Verify the ID token signature and claims
-    const decoded = jwt.verify(idToken, publicKey, {
-      algorithms: ["RS256"],
-      issuer: `https://${auth0Domain}/`,
-    });
+      // Import the JWK directly into a native Node.js public key
+      const crypto = require("crypto");
+      const publicKey = crypto.createPublicKey({ format: "jwk", key: jwk }).export({
+        type: "spki",
+        format: "pem",
+      });
+
+      // Verify the ID token signature and claims. clockTolerance absorbs minor
+      // skew between the Auth0 issuer clock and this server.
+      decoded = jwt.verify(idToken, publicKey, {
+        algorithms: ["RS256"],
+        issuer: `https://${auth0Domain}/`,
+        clockTolerance: 30,
+      });
+    } catch (verifyErr) {
+      // Log the real reason (name + message) so failures are diagnosable.
+      console.error(`auth0 token verification failed [${verifyErr.name || "Error"}]:`, verifyErr.message);
+      const expired = verifyErr.name === "TokenExpiredError";
+      return res.status(401).json({
+        error: expired
+          ? "Your social login session expired. Please sign in again."
+          : "Auth0 token verification failed",
+      });
+    }
 
     // Extract user info from the verified token
-    const auth0User = {
+    auth0User = {
       sub: decoded.sub,
       email: decoded.email,
       name: decoded.name || decoded.nickname || decoded.email?.split("@")[0],
@@ -251,8 +270,10 @@ router.post("/auth0-login", async (req, res) => {
     });
     logAudit(user._id.toString(), user.email, "auth.login", { method: "auth0", provider: auth0User.sub?.split("|")[0] }, "info");
   } catch (err) {
-    console.error("auth0 login error:", err);
-    res.status(500).json({ error: "Auth0 token verification failed" });
+    // The token already verified above; anything here is a server-side
+    // (DB / plan / signing) failure and must NOT be reported as a token error.
+    console.error("auth0 login (post-verification) error:", err);
+    res.status(500).json({ error: "Login failed. Please try again." });
   }
 });
 

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Activity,
   Bot,
   CalendarDays,
+  CheckCircle2,
   CheckSquare,
   ChevronDown,
   ChevronLeft,
@@ -21,10 +23,13 @@ import {
   Square,
   Star,
   TerminalSquare,
+  TrendingUp,
+  X,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -35,6 +40,16 @@ import { usePlanStore } from "@/stores/plan-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { PROVIDER_LABELS } from "@/stores/llm-store";
 import { PageHeader } from "@/components/PageHeader";
+import { cn } from "@/lib/utils";
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 10 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } },
+};
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.06, delayChildren: 0.03 } },
+};
 
 function stringifyResult(value: unknown) {
   if (value === null || value === undefined) return "";
@@ -284,6 +299,7 @@ function HistoryEntryCard({
   onCopyQuestion,
   onCopyEntry,
   onReplay,
+  onDatasetClick,
 }: {
   entry: HistoryEntry;
   expanded: boolean;
@@ -295,6 +311,7 @@ function HistoryEntryCard({
   onCopyQuestion: () => void;
   onCopyEntry: () => void;
   onReplay: () => void;
+  onDatasetClick: () => void;
 }) {
   const statusClass = entry.status === "success"
     ? "bg-success/10 text-success"
@@ -303,12 +320,16 @@ function HistoryEntryCard({
   const hasSavedTrace = entry.steps.length > 0;
 
   return (
-    <Card className="overflow-hidden rounded-[28px] border-border/70 bg-card/80 p-4 shadow-[0_24px_48px_-34px_hsl(var(--foreground)/0.78)] backdrop-blur-sm sm:p-5">
+    <motion.div variants={fadeUp} whileHover={{ y: -1 }} transition={{ duration: 0.15 }}>
+    <Card className="overflow-hidden rounded-[22px] border-border/55 bg-card/80 p-4 shadow-[0_2px_10px_-4px_hsl(var(--foreground)/0.06)] backdrop-blur-sm transition-shadow hover:shadow-[0_4px_20px_-8px_hsl(var(--primary)/0.18)] sm:p-5">
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className={`border-0 text-xs ${statusClass}`}>{entry.status}</Badge>
+              <Badge className={`border-0 text-xs ${statusClass}`}>
+                {entry.status === "success" ? <CheckCircle2 size={10} className="mr-1" /> : <XCircle size={10} className="mr-1" />}
+                {entry.status}
+              </Badge>
               <Badge variant="outline" className="border-border text-xs">
                 {hasSavedTrace ? "Trace saved" : "Replay to save trace"}
               </Badge>
@@ -320,9 +341,13 @@ function HistoryEntryCard({
             </h3>
 
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/55 px-3 py-1 text-muted-foreground">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDatasetClick(); }}
+                className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/55 px-3 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+              >
                 <Database size={12} /> {entry.datasetName || "Unknown dataset"}
-              </span>
+              </button>
               <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/55 px-3 py-1 text-muted-foreground">
                 <Bot size={12} /> {PROVIDER_LABELS[entry.provider]} - {entry.model}
               </span>
@@ -408,6 +433,7 @@ function HistoryEntryCard({
         </AnimatePresence>
       </div>
     </Card>
+    </motion.div>
   );
 }
 
@@ -441,6 +467,21 @@ export default function HistoryPage() {
     return Array.from(new Set(entries.map((entry) => entry.datasetName).filter(Boolean))).sort();
   }, [entries]);
 
+  const stats = useMemo(() => {
+    const successCount = entries.filter((e) => e.status === "success").length;
+    const totalMs = entries.reduce((s, e) => s + (e.durationMs || 0), 0);
+    const totalTokensAll = entries.reduce((s, e) => s + (e.totalTokens || 0), 0);
+    const avgMs = entries.length > 0 ? Math.round(totalMs / entries.length) : 0;
+    return {
+      total: entries.length,
+      successRate: entries.length ? Math.round((successCount / entries.length) * 100) : 0,
+      avgDuration: entries.length > 0 ? formatDuration(avgMs) : "—",
+      totalTokens: totalTokensAll,
+      successCount,
+      errorCount: entries.length - successCount,
+    };
+  }, [entries]);
+
   const filtered = useMemo(() => {
     return entries.filter((entry) => {
       const q = search.toLowerCase();
@@ -472,6 +513,17 @@ export default function HistoryPage() {
       return acc;
     }, {});
   }, [pageEntries]);
+
+  const hasActiveFilters = search || statusFilter !== "all" || providerFilter !== "all" || datasetFilter !== "all" || dateFilter !== "all" || favoritesOnly;
+
+  const clearAllFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setProviderFilter("all");
+    setDatasetFilter("all");
+    setDateFilter("all");
+    setFavoritesOnly(false);
+  };
 
   const toggleFavorite = (id: string) => {
     setFavoriteIds((prev) => {
@@ -560,11 +612,11 @@ export default function HistoryPage() {
           { label: "Favorites", value: favoriteIds.length, tone: "warning" },
         ]}
         actions={
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="h-9 w-full gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:w-auto" 
-            onClick={exportCSV} 
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 w-full gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:w-auto"
+            onClick={exportCSV}
             disabled={entries.length === 0}
           >
             <Download size={14} /> Export CSV
@@ -572,7 +624,74 @@ export default function HistoryPage() {
         }
       />
 
-      <div className="toolbar-panel">
+      {entries.length > 0 && (
+        <motion.div
+          variants={stagger}
+          initial="hidden"
+          animate="visible"
+          className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-4"
+        >
+          {[
+            {
+              label: "Total Queries",
+              value: stats.total.toLocaleString(),
+              icon: Activity,
+              onClick: undefined,
+              active: false,
+            },
+            {
+              label: "Success Rate",
+              value: `${stats.successRate}%`,
+              icon: TrendingUp,
+              sub: `${stats.successCount} passed`,
+              onClick: () => setStatusFilter(statusFilter === "success" ? "all" : "success"),
+              active: statusFilter === "success",
+            },
+            {
+              label: "Avg Duration",
+              value: stats.avgDuration,
+              icon: Clock3,
+              onClick: undefined,
+              active: false,
+            },
+            {
+              label: "Total Tokens",
+              value: stats.totalTokens >= 1_000_000
+                ? `${(stats.totalTokens / 1_000_000).toFixed(1)}M`
+                : stats.totalTokens >= 1000
+                ? `${(stats.totalTokens / 1000).toFixed(1)}K`
+                : stats.totalTokens.toLocaleString(),
+              icon: Zap,
+              sub: `${stats.errorCount} error${stats.errorCount === 1 ? "" : "s"}`,
+              onClick: () => setStatusFilter(statusFilter === "error" ? "all" : "error"),
+              active: statusFilter === "error",
+            },
+          ].map((kpi) => {
+            const Icon = kpi.icon;
+            return (
+              <motion.div key={kpi.label} variants={fadeUp} className="h-full">
+                <Card
+                  className={cn(
+                    "flex h-full flex-col rounded-[18px] border-border/55 bg-card/80 p-4 backdrop-blur-sm transition-all",
+                    kpi.onClick && "cursor-pointer hover:border-primary/30 hover:shadow-[0_4px_16px_-6px_hsl(var(--primary)/0.2)]",
+                    kpi.active && "border-primary/40 bg-primary/5 shadow-[0_4px_16px_-6px_hsl(var(--primary)/0.25)]",
+                  )}
+                  onClick={kpi.onClick}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{kpi.label}</p>
+                    <Icon size={14} className={cn("mt-0.5 shrink-0", kpi.active ? "text-primary" : "text-muted-foreground/50")} />
+                  </div>
+                  <p className={cn("mt-2 text-2xl font-bold tracking-tight", kpi.active ? "text-primary" : "text-foreground")}>{kpi.value}</p>
+                  <p className="mt-0.5 min-h-[1rem] text-xs text-muted-foreground">{kpi.sub ?? ""}</p>
+                </Card>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+      )}
+
+      <div className="toolbar-panel space-y-3">
         <div className="flex flex-wrap gap-3">
           <div className="relative min-w-[220px] flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -597,29 +716,6 @@ export default function HistoryPage() {
             </SelectContent>
           </Select>
 
-          <Select value={dateFilter} onValueChange={setDateFilter}>
-            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-border bg-popover">
-              <SelectItem value="all">All dates</SelectItem>
-              <SelectItem value="today">Today</SelectItem>
-              <SelectItem value="week">Last 7 days</SelectItem>
-              <SelectItem value="month">Last 30 days</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[140px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-border bg-popover">
-              <SelectItem value="all">All status</SelectItem>
-              <SelectItem value="success">Success</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-            </SelectContent>
-          </Select>
-
           <Select value={providerFilter} onValueChange={setProviderFilter}>
             <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[170px]">
               <SelectValue />
@@ -631,16 +727,71 @@ export default function HistoryPage() {
               ))}
             </SelectContent>
           </Select>
+        </div>
 
-          <Button
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Status</span>
+          {(["all", "success", "error"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFilter(s)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs transition-colors",
+                statusFilter === s
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground",
+              )}
+            >
+              {s === "all" ? "All" : s === "success" ? `Success${entries.length > 0 ? ` · ${stats.successCount}` : ""}` : `Error${entries.length > 0 ? ` · ${stats.errorCount}` : ""}`}
+            </button>
+          ))}
+
+          <span className="ml-3 mr-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Date</span>
+          {([
+            { value: "all", label: "All time" },
+            { value: "today", label: "Today" },
+            { value: "week", label: "Last 7d" },
+            { value: "month", label: "Last 30d" },
+          ] as const).map((d) => (
+            <button
+              key={d.value}
+              type="button"
+              onClick={() => setDateFilter(d.value)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs transition-colors",
+                dateFilter === d.value
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground",
+              )}
+            >
+              {d.label}
+            </button>
+          ))}
+
+          <button
             type="button"
-            variant={favoritesOnly ? "default" : "outline"}
-            className="w-full sm:w-auto"
-            onClick={() => setFavoritesOnly((current) => !current)}
+            onClick={() => setFavoritesOnly((c) => !c)}
+            className={cn(
+              "ml-3 rounded-full border px-3 py-1 text-xs transition-colors",
+              favoritesOnly
+                ? "border-warning/40 bg-warning/10 text-warning"
+                : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground",
+            )}
           >
-            <Star size={14} className="mr-2" />
-            {favoritesOnly ? "Favorites only" : "Show favorites"}
-          </Button>
+            <Star size={10} className="mr-1 inline-block" />
+            Favorites
+          </button>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="ml-auto flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+            >
+              <X size={10} /> Clear filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -692,17 +843,37 @@ export default function HistoryPage() {
       <ComparePanel entries={entries} compareIds={compareIds} />
 
       {filtered.length === 0 ? (
-        <div className="empty-panel">
-          <MessageSquare size={48} className="mx-auto mb-4 text-muted-foreground/30" />
-          <p className="text-muted-foreground">{entries.length === 0 ? "No queries yet" : "No matching queries"}</p>
-          {entries.length === 0 && (
-            <Button variant="link" className="mt-1 text-primary" onClick={() => navigate("/app/query")}>
-              Go to Query to get started
-            </Button>
-          )}
+        <div className="flex flex-col items-center justify-center rounded-[22px] border border-dashed border-border/60 bg-card/40 px-6 py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-border/60 bg-background/60">
+            <MessageSquare size={24} className="text-muted-foreground/50" />
+          </div>
+          <p className="text-base font-semibold text-foreground">
+            {entries.length === 0 ? "No queries yet" : "No matching queries"}
+          </p>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            {entries.length === 0
+              ? "Run your first natural language query and it will appear here with the full agent trace."
+              : "Try adjusting your filters or search term to find what you're looking for."}
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {entries.length === 0 ? (
+              <Button size="sm" onClick={() => navigate("/app/query")}>
+                Go to Query
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={clearAllFilters}>
+                <X size={12} className="mr-1" /> Clear all filters
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <motion.div
+          variants={stagger}
+          initial="hidden"
+          animate="visible"
+          className="space-y-6"
+        >
           {Object.entries(grouped).map(([group, groupEntries]) => (
             <section key={group} className="space-y-3">
               <div className="flex items-center justify-between">
@@ -731,12 +902,13 @@ export default function HistoryPage() {
                     onCopyQuestion={() => copyQuestion(entry.query)}
                     onCopyEntry={() => copyEntry(entry)}
                     onReplay={() => replayQuery(entry)}
+                    onDatasetClick={() => setDatasetFilter(entry.datasetName || "all")}
                   />
                 ))}
               </div>
             </section>
           ))}
-        </div>
+        </motion.div>
       )}
     </div>
   );

@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Download, Copy, Check, Sparkles } from "lucide-react";
 import html2canvas from "html2canvas";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 interface ShareCardProps {
   open: boolean;

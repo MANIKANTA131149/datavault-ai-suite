@@ -1,417 +1,948 @@
-import { Component, ErrorInfo, ReactNode } from "react";
 import {
-  Compass,
-  Database,
-  Key,
-  MessageSquare,
-  Shield,
-  ArrowRight,
-  Terminal,
-  Cpu,
-  Layers,
-  Network,
-  Bookmark,
-  FileCode,
-  LineChart,
+  Component, ErrorInfo, ReactNode,
+  useState, useEffect, useRef, useCallback, useMemo,
+} from "react";
+import {
+  motion, AnimatePresence, useInView,
+} from "framer-motion";
+import {
+  Compass, Database, Key, MessageSquare, Shield, ArrowRight, Terminal, Cpu, Layers,
+  Network, Bookmark, FileCode, LineChart, CheckCircle2, Zap, Lock, BarChart3,
+  Sparkles, Globe, Server, GitBranch, Activity, ChevronRight, FileText, Table2,
+  Braces, CloudLightning, FlaskConical, Star, Award, Check, TrendingUp,
+  PlayCircle, Users, ShoppingCart, Building2, HeartPulse, Banknote, ChevronDown,
+  Code2, LayoutGrid, Rocket, Eye, Settings, Gauge,
 } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
+import { cn } from "@/lib/utils";
 
-const ARCHITECTURE_STEPS = [
-  {
-    id: "user-query",
-    title: "1. Natural Language Input",
-    desc: "The client interface accepts plain English questions from the analyst. It performs local query validation and binds the query context to the active dataset schema coordinates.",
-    metric: "Accepts: CSV, Excel, DB structures",
-    icon: MessageSquare,
-  },
-  {
-    id: "llm-agent",
-    title: "2. Agent Reasoning & Parsing",
-    desc: "The system securely translates raw English into target SQL code using the chosen LLM context. It loads metadata descriptions, indexes, and context structures to maximize translation accuracy and prevent hallucination.",
-    metric: "Context Size: ~8k to 32k tokens",
-    icon: Cpu,
-  },
-  {
-    id: "sql-sandbox",
-    title: "3. Secure Execution Sandbox",
-    desc: "Querify executes generated queries inside a strictly sandboxed read-only database transaction loop. Write operations are caught and terminated by database transaction locks.",
-    metric: "Write Lock: Strictly Enforced",
-    icon: Shield,
-  },
-  {
-    id: "visual-report",
-    title: "4. Interactive Reports & Charts",
-    desc: "Data vectors returned from the database sandbox are parsed dynamically, rendering into responsive dashboard tables, KPI metrics grids, and clean visual graphs.",
-    metric: "Render Latency: ~15ms",
-    icon: LineChart,
-  },
+// ─── Animation Variants ───────────────────────────────────────────────────────
+const fadeUp = {
+  hidden: { opacity: 0, y: 32 },
+  visible: (i = 0) => ({
+    opacity: 1, y: 0,
+    transition: { duration: 0.55, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] },
+  }),
+};
+const fadeIn = {
+  hidden: { opacity: 0 },
+  visible: (i = 0) => ({ opacity: 1, transition: { duration: 0.5, delay: i * 0.06 } }),
+};
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08, delayChildren: 0.04 } },
+};
+const staggerFast = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.05, delayChildren: 0.02 } },
+};
+const slideLeft = {
+  hidden: { opacity: 0, x: -28 },
+  visible: { opacity: 1, x: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] } },
+};
+const slideRight = {
+  hidden: { opacity: 0, x: 28 },
+  visible: { opacity: 1, x: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] } },
+};
+
+// ─── Animated Counter ─────────────────────────────────────────────────────────
+function AnimatedCounter({ to, duration = 1400, suffix = "", prefix = "" }: { to: number; duration?: number; suffix?: string; prefix?: string }) {
+  const [count, setCount] = useState(0);
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true });
+  useEffect(() => {
+    if (!inView) return;
+    let start = 0;
+    const step = to / (duration / 16);
+    const timer = setInterval(() => {
+      start += step;
+      if (start >= to) { setCount(to); clearInterval(timer); }
+      else setCount(Math.floor(start));
+    }, 16);
+    return () => clearInterval(timer);
+  }, [inView, to, duration]);
+  return <span ref={ref}>{prefix}{count.toLocaleString()}{suffix}</span>;
+}
+
+// ─── Animated Progress Bar ────────────────────────────────────────────────────
+function AnimBar({ pct, color = "bg-primary", delay = 0 }: { pct: number; color?: string; delay?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true });
+  return (
+    <div ref={ref} className="h-1.5 w-full rounded-full bg-border/40 overflow-hidden">
+      <motion.div
+        className={`h-full rounded-full ${color}`}
+        initial={{ width: 0 }}
+        animate={inView ? { width: `${pct}%` } : { width: 0 }}
+        transition={{ duration: 1.1, delay: 0.15 + delay, ease: "easeOut" }}
+      />
+    </div>
+  );
+}
+
+// ─── Typewriter ───────────────────────────────────────────────────────────────
+const EXAMPLE_QUERIES = [
+  "Show me top 10 customers by revenue last quarter",
+  "What is the monthly sales trend for 2024?",
+  "Which products had the highest return rate?",
+  "Compare performance across all regions",
+  "List employees with more than 5 years tenure",
 ];
-
-interface ErrorBoundaryProps {
-  children: ReactNode;
+function Typewriter() {
+  const [qi, setQi] = useState(0);
+  const [text, setText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    const target = EXAMPLE_QUERIES[qi];
+    if (paused) {
+      const t = setTimeout(() => { setDeleting(true); setPaused(false); }, 1800);
+      return () => clearTimeout(t);
+    }
+    if (!deleting && text.length < target.length) {
+      const t = setTimeout(() => setText(target.slice(0, text.length + 1)), 42);
+      return () => clearTimeout(t);
+    }
+    if (!deleting && text.length === target.length) {
+      setPaused(true);
+      return;
+    }
+    if (deleting && text.length > 0) {
+      const t = setTimeout(() => setText(text.slice(0, -1)), 22);
+      return () => clearTimeout(t);
+    }
+    if (deleting && text.length === 0) {
+      setDeleting(false);
+      setQi((p) => (p + 1) % EXAMPLE_QUERIES.length);
+    }
+  }, [text, deleting, paused, qi]);
+  return (
+    <span className="text-primary font-mono">
+      {text}
+      <motion.span animate={{ opacity: [1, 0, 1] }} transition={{ duration: 0.9, repeat: Infinity }} className="inline-block w-0.5 h-4 bg-primary ml-0.5 align-middle" />
+    </span>
+  );
 }
 
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
-}
+// ─── Terminal Demo ────────────────────────────────────────────────────────────
+const DEMO_LINES = [
+  { type: "comment", text: "-- Generated by DataVault AI Agent" },
+  { type: "keyword", text: "SELECT" },
+  { type: "normal", text: "  c.name, SUM(o.total) AS revenue," },
+  { type: "normal", text: "  COUNT(o.id) AS orders" },
+  { type: "keyword", text: "FROM" },
+  { type: "normal", text: "  customers c" },
+  { type: "keyword", text: "JOIN" },
+  { type: "normal", text: "  orders o ON c.id = o.customer_id" },
+  { type: "keyword", text: "WHERE" },
+  { type: "normal", text: "  o.date >= DATE_TRUNC('quarter', NOW())" },
+  { type: "keyword", text: "GROUP BY" },
+  { type: "normal", text: "  c.name" },
+  { type: "keyword", text: "ORDER BY" },
+  { type: "normal", text: "  revenue DESC LIMIT 10;" },
+];
+const DEMO_RESULTS = [
+  { name: "Acme Corp", revenue: "$284,760", orders: "142" },
+  { name: "TechFlow Inc", revenue: "$198,340", orders: "98" },
+  { name: "Nexus Labs", revenue: "$167,820", orders: "83" },
+];
+function TerminalDemo() {
+  const [phase, setPhase] = useState<"idle" | "typing" | "results">("idle");
+  const [lineIdx, setLineIdx] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, amount: 0.4 });
 
-class GetStartedErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = {
-    hasError: false,
-    error: null,
+  useEffect(() => {
+    if (!inView || phase !== "idle") return;
+    const t = setTimeout(() => setPhase("typing"), 600);
+    return () => clearTimeout(t);
+  }, [inView, phase]);
+
+  useEffect(() => {
+    if (phase !== "typing") return;
+    if (lineIdx < DEMO_LINES.length) {
+      const t = setTimeout(() => setLineIdx((p) => p + 1), 90);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setPhase("results"), 700);
+    return () => clearTimeout(t);
+  }, [phase, lineIdx]);
+
+  const colorMap: Record<string, string> = {
+    comment: "text-muted-foreground/60 italic",
+    keyword: "text-primary font-semibold",
+    normal: "text-foreground/85",
   };
 
-  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
-
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("GetStartedPage uncaught error:", error, errorInfo);
-  }
-
-  public render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center space-y-4 bg-background-secondary border border-destructive/20 rounded-2xl">
-          <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center text-destructive border border-destructive/20">
-            <Shield size={24} />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-sm font-bold text-foreground">Onboarding Playground Exception</h3>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              A rendering exception occurred within the onboarding playground. The workspace sandbox has successfully isolated the fault.
-            </p>
-            {this.state.error && (
-              <pre className="text-[10px] text-destructive bg-destructive/5 border border-destructive/10 p-3 rounded-lg font-mono text-left max-w-lg overflow-x-auto whitespace-pre-wrap">
-                {this.state.error.toString()}
-              </pre>
-            )}
-          </div>
-          <Button
-            onClick={() => window.location.reload()}
-            variant="outline"
-            className="text-xs border-border hover:bg-muted"
-          >
-            Reload Interface
-          </Button>
+  return (
+    <div ref={ref} className="rounded-2xl border border-border/70 overflow-hidden bg-background-secondary/60 backdrop-blur-sm shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)]">
+      {/* Terminal chrome */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/60 bg-background-secondary/80">
+        <div className="flex gap-1.5">
+          <div className="w-3 h-3 rounded-full bg-red-500/70" />
+          <div className="w-3 h-3 rounded-full bg-amber-500/70" />
+          <div className="w-3 h-3 rounded-full bg-emerald-500/70" />
         </div>
-      );
-    }
+        <span className="text-[11px] text-muted-foreground font-mono ml-2">datavault — query terminal</span>
+        {phase === "typing" && (
+          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="ml-auto flex items-center gap-1.5 text-[10px] text-amber-400 font-mono">
+            <motion.span animate={{ opacity: [1, 0, 1] }} transition={{ duration: 0.8, repeat: Infinity }} className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+            generating sql…
+          </motion.span>
+        )}
+        {phase === "results" && (
+          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="ml-auto flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+            3 rows · 12ms
+          </motion.span>
+        )}
+      </div>
 
+      {/* Query input area */}
+      <div className="px-4 py-3 border-b border-border/40 bg-background/40">
+        <p className="text-[11px] text-muted-foreground font-mono mb-1">// user query</p>
+        <p className="text-[12px] text-foreground font-mono">"Show me top 10 customers by revenue last quarter"</p>
+      </div>
+
+      {/* SQL output */}
+      <div className="px-4 py-3 font-mono text-[11px] min-h-[140px]">
+        {DEMO_LINES.slice(0, lineIdx).map((line, i) => (
+          <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.15 }} className={`leading-5 ${colorMap[line.type] ?? "text-foreground/85"}`}>
+            {line.text}
+          </motion.div>
+        ))}
+        {phase === "typing" && lineIdx < DEMO_LINES.length && (
+          <motion.span animate={{ opacity: [1, 0, 1] }} transition={{ duration: 0.6, repeat: Infinity }} className="inline-block w-1 h-3 bg-primary align-middle" />
+        )}
+      </div>
+
+      {/* Results */}
+      <AnimatePresence>
+        {phase === "results" && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} transition={{ duration: 0.45, ease: "easeOut" }} className="border-t border-border/60">
+            <div className="px-4 py-2 bg-emerald-500/5 border-b border-emerald-500/10">
+              <span className="text-[10px] text-emerald-400 font-mono font-semibold uppercase tracking-wider">Query Results</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] font-mono">
+                <thead>
+                  <tr className="border-b border-border/40">
+                    {["name", "revenue", "orders"].map((h) => (
+                      <th key={h} className="text-left px-4 py-2 text-muted-foreground font-semibold uppercase text-[10px] tracking-wider">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {DEMO_RESULTS.map((row, i) => (
+                    <motion.tr key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.12, duration: 0.3 }} className="border-b border-border/20 hover:bg-primary/5 transition-colors">
+                      <td className="px-4 py-2 text-foreground">{row.name}</td>
+                      <td className="px-4 py-2 text-emerald-400 font-semibold">{row.revenue}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{row.orders}</td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Section Header ───────────────────────────────────────────────────────────
+function SectionHeader({ icon: Icon, title, subtitle, badge, accent = false }: { icon: React.ElementType; title: string; subtitle: string; badge: string; accent?: boolean }) {
+  return (
+    <motion.div variants={fadeUp} className="border-b border-border/70 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div className="flex items-center gap-3">
+        <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", accent ? "bg-primary/15 border-primary/30 text-primary" : "bg-primary/10 border-primary/20 text-primary")}>
+          <Icon size={15} />
+        </div>
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
+          <p className="text-[11px] text-muted-foreground mt-px">{subtitle}</p>
+        </div>
+      </div>
+      <span className="self-start sm:self-auto text-[10px] font-mono bg-background-secondary border border-border text-muted-foreground px-2.5 py-1 rounded-md">{badge}</span>
+    </motion.div>
+  );
+}
+
+// ─── Platform Status Strip ────────────────────────────────────────────────────
+const STATUS_ITEMS = [
+  { label: "Platform Online",          icon: Activity, live: true },
+  { label: "AES-256 Encrypted",       icon: Lock,     live: false },
+  { label: "Read-Only Sandbox",        icon: Shield,   live: false },
+  { label: "12+ AI Providers",         icon: Cpu,      live: false },
+  { label: "~15 ms Query Speed",       icon: Zap,      live: false },
+];
+
+function PlatformStatusStrip() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-xl border border-border/60 bg-background-secondary/50 px-2 py-2"
+    >
+      <div className="flex flex-wrap gap-1">
+        {STATUS_ITEMS.map((item, i) => {
+          const Icon = item.icon;
+          return (
+            <motion.div
+              key={item.label}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.05 + i * 0.06, duration: 0.3 }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-border/30 transition-colors cursor-default group"
+            >
+              {item.live ? (
+                <span className="relative flex h-1.5 w-1.5 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                </span>
+              ) : (
+                <Icon size={11} className="text-muted-foreground/50 shrink-0 group-hover:text-muted-foreground transition-colors" />
+              )}
+              <span className={cn(
+                "text-[12px] font-medium",
+                item.live ? "text-emerald-400" : "text-muted-foreground group-hover:text-foreground transition-colors"
+              )}>
+                {item.label}
+              </span>
+            </motion.div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Floating Badge ───────────────────────────────────────────────────────────
+function FloatingBadge({ children, delay = 0, className = "" }: { children: React.ReactNode; delay?: number; className?: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.8, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ delay, duration: 0.45, type: "spring", stiffness: 260, damping: 20 }}
+      className={cn("absolute hidden sm:flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 rounded-xl border bg-background-secondary/90 backdrop-blur-md shadow-lg", className)}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+// ─── Data ─────────────────────────────────────────────────────────────────────
+const HOW_IT_WORKS = [
+  { step: "01", title: "Connect Your Data", desc: "Upload a CSV or Excel file, or connect a live PostgreSQL / MySQL / SQLite database in seconds.", icon: Database, color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20" },
+  { step: "02", title: "Choose Your AI Model", desc: "Pick from 12+ providers — OpenAI, Anthropic, Gemini, Groq, Mistral, or run fully offline with Ollama.", icon: Cpu, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+  { step: "03", title: "Ask in Plain English", desc: "Type any data question naturally. DataVault generates SQL, executes it safely, and renders beautiful results.", icon: MessageSquare, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+];
+
+const CHECKLIST = [
+  { id: "provider", label: "Configure an AI provider", sub: "Add your API key in Settings → Providers", route: "/app/settings", icon: Key },
+  { id: "datasource", label: "Connect a data source", sub: "Upload CSV/Excel or connect a live database", route: "/app/connections", icon: Database },
+  { id: "query", label: "Run your first query", sub: "Open the Query workspace and ask anything", route: "/app/query", icon: MessageSquare },
+  { id: "insight", label: "Save an insight", sub: "Bookmark a result to your Insights catalog", route: "/app/insights", icon: Bookmark },
+];
+
+const ARCH_STEPS = [
+  { id: "input", title: "Natural Language Input", desc: "Accepts plain-English questions with local validation against active schema coordinates.", metric: "CSV · Excel · Database", icon: MessageSquare, color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20" },
+  { id: "agent", title: "Agent Reasoning & Parsing", desc: "The LLM loads metadata, indexes context, and compiles accurate SQL while preventing hallucination.", metric: "8k – 128k token window", icon: Cpu, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+  { id: "sandbox", title: "Secure Execution Sandbox", desc: "Queries execute inside a read-only transaction. All mutations are caught and terminated at the boundary.", metric: "Write Lock: Enforced", icon: Shield, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  { id: "report", title: "Interactive Reports & Charts", desc: "Data vectors are parsed dynamically into responsive tables, KPI grids, and clean visual charts.", metric: "Render latency: ~15 ms", icon: LineChart, color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20" },
+];
+
+const CONNECTORS = [
+  { title: "Excel (.xlsx)", detail: "Converts tabular sheets into virtual DB tables instantly.", icon: Table2, pct: 95, color: "bg-emerald-500" },
+  { title: "CSV Files (.csv)", detail: "Maps raw headers through in-browser compilation.", icon: FileText, pct: 98, color: "bg-blue-500" },
+  { title: "PostgreSQL · MySQL · SQLite", detail: "Schema indexing via read-only transaction ports.", icon: Server, pct: 92, color: "bg-purple-500" },
+  { title: "REST APIs (coming soon)", detail: "Connect live JSON endpoints as virtual tables.", icon: Globe, pct: 55, color: "bg-amber-500" },
+];
+
+const PROVIDERS = [
+  { name: "OpenAI", models: "GPT-4o · GPT-4 · o1", badge: "Popular", color: "text-emerald-400" },
+  { name: "Anthropic", models: "Claude 3.5 Sonnet · Opus", badge: "Best SQL", color: "text-amber-400" },
+  { name: "Google", models: "Gemini 1.5 Pro · Flash", badge: "Large Context", color: "text-blue-400" },
+  { name: "Groq", models: "Llama 3.1 · Mixtral", badge: "Fastest", color: "text-purple-400" },
+  { name: "Mistral", models: "Mistral Large · Nemo", badge: "", color: "text-pink-400" },
+  { name: "Cohere", models: "Command R+", badge: "", color: "text-cyan-400" },
+  { name: "Bedrock", models: "Claude · Titan via AWS", badge: "Enterprise", color: "text-orange-400" },
+  { name: "Ollama", models: "Local Models", badge: "Offline", color: "text-teal-400" },
+];
+
+const CAPABILITIES = [
+  { icon: BarChart3, title: "Rich Visualizations", desc: "Bar, line, area, pie, scatter, dual-axis charts with trend-line overlays.", color: "text-blue-400", bg: "bg-blue-500/8 border-blue-500/15" },
+  { icon: GitBranch, title: "Multi-Source Joins", desc: "Cross-reference multiple datasets in a single natural-language query.", color: "text-purple-400", bg: "bg-purple-500/8 border-purple-500/15" },
+  { icon: Lock, title: "AES-256 Key Vault", desc: "Provider keys encrypted client-side. Zero server-side credential logging.", color: "text-emerald-400", bg: "bg-emerald-500/8 border-emerald-500/15" },
+  { icon: Activity, title: "Self-Healing Agent", desc: "LLM auto-retries on bad SQL or column errors — zero manual intervention.", color: "text-amber-400", bg: "bg-amber-500/8 border-amber-500/15" },
+  { icon: Braces, title: "SQL Transparency", desc: "Every generated SQL statement is displayed inline for full auditability.", color: "text-pink-400", bg: "bg-pink-500/8 border-pink-500/15" },
+  { icon: CloudLightning, title: "Sub-second Queries", desc: "In-memory execution with adaptive streaming for large datasets.", color: "text-cyan-400", bg: "bg-cyan-500/8 border-cyan-500/15" },
+  { icon: FlaskConical, title: "12+ AI Providers", desc: "OpenAI, Anthropic, Gemini, Groq, Mistral, Cohere, Bedrock, Ollama & more.", color: "text-violet-400", bg: "bg-violet-500/8 border-violet-500/15" },
+  { icon: Star, title: "Insights Catalog", desc: "Bookmark and share analytical queries and reports across your team.", color: "text-orange-400", bg: "bg-orange-500/8 border-orange-500/15" },
+  { icon: Eye, title: "Row Detail Panel", desc: "Slide-in key-value panel for deep inspection of any result row.", color: "text-rose-400", bg: "bg-rose-500/8 border-rose-500/15" },
+  { icon: LayoutGrid, title: "Column Stats", desc: "Per-column null%, unique count, min, max, and avg on hover.", color: "text-indigo-400", bg: "bg-indigo-500/8 border-indigo-500/15" },
+  { icon: Settings, title: "Conditional Formatting", desc: "Color-code cells by value with rule-based formatting presets.", color: "text-teal-400", bg: "bg-teal-500/8 border-teal-500/15" },
+  { icon: Gauge, title: "Cost Estimator", desc: "Real-time token count and API cost estimate before every send.", color: "text-sky-400", bg: "bg-sky-500/8 border-sky-500/15" },
+];
+
+const USE_CASES = [
+  { icon: Banknote, title: "Finance & Revenue", queries: ["Total MRR by segment this quarter", "Churn cohort analysis by plan tier", "ARR waterfall from Jan to Dec"], color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  { icon: ShoppingCart, title: "E-Commerce & Sales", queries: ["Top 10 SKUs by margin last 30 days", "Cart abandonment rate by traffic source", "Revenue by region and category"], color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20" },
+  { icon: Users, title: "HR & People Ops", queries: ["Headcount growth by department YoY", "Average tenure by team and level", "Open roles vs filled roles per quarter"], color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+  { icon: Activity, title: "Operations & Logistics", queries: ["Average fulfillment time by warehouse", "SLA breach rate by carrier last month", "Inventory turnover by product family"], color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20" },
+];
+
+const SECURITY_ITEMS = [
+  { label: "AES-256 Encryption", desc: "All provider credentials encrypted client-side before storage", icon: Lock, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  { label: "Read-Only Sandboxing", desc: "Write operations terminated at every execution boundary", icon: Shield, color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20" },
+  { label: "Zero Credential Logging", desc: "API keys never transit or rest on our server infrastructure", icon: Eye, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+  { label: "Session Isolation", desc: "Each query session scoped strictly to the authenticated user", icon: GitBranch, color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20" },
+];
+
+const FAQ = [
+  { q: "Do my API keys ever leave my browser?", a: "No. Provider API keys are AES-256 encrypted in your browser's local storage and only decrypted at the moment of an API call. They never touch our servers." },
+  { q: "Can DataVault modify or delete my data?", a: "Never. Every query runs inside a strictly read-only database transaction. INSERT, UPDATE, DELETE, and DROP statements are caught and rejected at the connector boundary." },
+  { q: "Which file formats are supported?", a: "CSV and Excel (.xlsx) files are supported out-of-the-box. PostgreSQL, MySQL, and SQLite databases can be connected via the Connections page." },
+  { q: "How accurate is the SQL generation?", a: "The AI agent maps your schema, column names, and data types into context. For ambiguous queries it asks a clarifying question before generating SQL. Self-healing retries fix most errors automatically." },
+];
+
+// ─── FAQ Item ─────────────────────────────────────────────────────────────────
+function FaqItem({ q, a, i }: { q: string; a: string; i: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <motion.div variants={fadeUp} custom={i}>
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="w-full text-left p-4 rounded-xl border border-border/70 bg-background-secondary/40 hover:border-primary/25 hover:bg-background-secondary/70 transition-all duration-200 group"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[13px] font-semibold text-foreground group-hover:text-primary transition-colors">{q}</span>
+          <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.25 }} className="shrink-0 text-muted-foreground group-hover:text-primary">
+            <ChevronDown size={15} />
+          </motion.div>
+        </div>
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.28, ease: "easeOut" }} className="overflow-hidden">
+              <p className="mt-3 text-[12px] text-muted-foreground leading-relaxed border-t border-border/50 pt-3">{a}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </button>
+    </motion.div>
+  );
+}
+
+// ─── Error Boundary ───────────────────────────────────────────────────────────
+class GetStartedErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+  state = { hasError: false, error: null };
+  static getDerivedStateFromError(e: Error) { return { hasError: true, error: e }; }
+  componentDidCatch(e: Error, info: ErrorInfo) { console.error("GetStartedPage error:", e, info); }
+  render() {
+    if (this.state.hasError) return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center space-y-4 bg-background-secondary border border-destructive/20 rounded-2xl">
+        <Shield size={28} className="text-destructive" />
+        <p className="text-sm text-muted-foreground">A rendering exception occurred. The workspace has isolated the fault.</p>
+        <Button onClick={() => window.location.reload()} variant="outline" className="text-xs">Reload</Button>
+      </div>
+    );
     return this.props.children;
   }
 }
 
+// ─── Page Export ──────────────────────────────────────────────────────────────
 export default function GetStartedPage() {
-  return (
-    <GetStartedErrorBoundary>
-      <GetStartedPageContent />
-    </GetStartedErrorBoundary>
-  );
+  return <GetStartedErrorBoundary><GetStartedPageContent /></GetStartedErrorBoundary>;
 }
 
+// ─── Page Content ─────────────────────────────────────────────────────────────
 function GetStartedPageContent() {
   const navigate = useNavigate();
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const allDone = checked.size === CHECKLIST.length;
+  const toggleCheck = useCallback((id: string) => {
+    setChecked((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }, []);
 
   return (
-    <div className="page-shell-narrow space-y-12 pb-16 text-left">
-      {/* Premium Page Header */}
+    <div className="page-shell-narrow space-y-10 pb-12 text-left">
+
+      {/* ── Page Header ─────────────────────────────────────────────────────── */}
       <PageHeader
         title="Get Started"
         titleIcon={Compass}
         info="Welcome to the onboarding suite. Review the architectural blueprints and operational parameters that power the natural language database interface."
-        stats={[
-          { label: "Platform Status", value: "Fully Operational", tone: "success", live: true },
-          { label: "Provider Keys", value: "AES-256 Encrypted", tone: "accent" },
-          { label: "Execution Security", value: "Strict Sandbox", tone: "info" }
-        ]}
       />
 
-      {/* ─── SECTION 1: SYSTEM ARCHITECTURE ─────────────────────────────────── */}
-      <section className="space-y-6">
-        <div className="border-b border-border pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
-              <Layers size={16} />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold tracking-tight text-foreground font-mono uppercase">1. System Architecture</h2>
-              <p className="text-[12px] text-muted-foreground mt-0.5">End-to-end data flow from raw prompt input to dynamic reporting.</p>
-            </div>
-          </div>
-          <span className="text-[10px] font-mono bg-background-secondary border border-border text-muted-foreground px-2 py-0.5 rounded">
-            Pipeline Scope
-          </span>
+      {/* ── Platform Status Strip ────────────────────────────────────────────── */}
+      <PlatformStatusStrip />
+
+      {/* ── HERO BANNER ─────────────────────────────────────────────────────── */}
+      <motion.section initial="hidden" animate="visible" variants={stagger} className="relative">
+        {/* Background gradient orbs */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl -z-10">
+          <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.12, 0.22, 0.12] }} transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }} className="absolute -top-16 -left-16 w-80 h-80 rounded-full bg-primary/20 blur-3xl" />
+          <motion.div animate={{ scale: [1, 1.3, 1], opacity: [0.08, 0.16, 0.08] }} transition={{ duration: 9, repeat: Infinity, ease: "easeInOut", delay: 2 }} className="absolute -bottom-16 -right-16 w-96 h-96 rounded-full bg-purple-500/15 blur-3xl" />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {ARCHITECTURE_STEPS.map((step) => {
-            const Icon = step.icon;
-            return (
-              <Card key={step.id} className="p-5 flex flex-col justify-between min-h-[220px] transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20 shrink-0">
-                      <Icon size={14} />
+        <Card className="p-5 sm:p-7 border-primary/20 bg-gradient-to-br from-primary/5 via-background-secondary to-background-secondary relative overflow-hidden">
+          {/* Grid pattern overlay */}
+          <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: "linear-gradient(hsl(var(--primary)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--primary)) 1px, transparent 1px)", backgroundSize: "32px 32px" }} />
+
+          <div className="relative grid gap-6 lg:grid-cols-2 lg:gap-8 items-center">
+            {/* Left: text */}
+            <div className="space-y-4">
+              <motion.div variants={fadeUp} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/25 bg-primary/8 text-[11px] font-semibold text-primary">
+                <motion.span animate={{ scale: [1, 1.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
+                Enterprise NL2SQL Platform · v2.0
+              </motion.div>
+
+              <motion.div variants={fadeUp} custom={1} className="space-y-3">
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-foreground leading-tight">
+                  Query your data in<br />
+                  <span className="text-primary">plain English.</span>
+                </h1>
+                <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed max-w-md">
+                  Connect any data source, ask natural-language questions, and get instant SQL-backed results with charts, tables, and insights — powered by 12+ AI providers.
+                </p>
+              </motion.div>
+
+              {/* Typewriter */}
+              <motion.div variants={fadeUp} custom={2} className="p-3 rounded-xl border border-border/60 bg-background/60 backdrop-blur-sm font-mono text-[12px]">
+                <span className="text-muted-foreground mr-2">›</span><Typewriter />
+              </motion.div>
+
+              {/* CTA Buttons */}
+              <motion.div variants={fadeUp} custom={3} className="flex flex-wrap gap-2.5">
+                <Button onClick={() => navigate("/app/query")} className="gap-2 shadow-[0_4px_14px_-4px_hsl(var(--primary)/0.5)] hover:shadow-[0_6px_20px_-4px_hsl(var(--primary)/0.65)] transition-shadow text-sm">
+                  <Zap size={14} /> Launch Workspace <ArrowRight size={13} />
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/app/connections")} className="gap-2 border-border text-sm">
+                  <Database size={14} /> Connect Data
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/app/settings")} className="gap-2 border-border text-sm">
+                  <Key size={14} /> Add API Key
+                </Button>
+              </motion.div>
+            </div>
+
+            {/* Right: terminal demo */}
+            <motion.div variants={slideRight} className="w-full">
+              <TerminalDemo />
+            </motion.div>
+          </div>
+
+        </Card>
+      </motion.section>
+
+      {/* ── HERO STATS STRIP ────────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }} className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: "Queries Executed", value: 284700, suffix: "+", icon: Terminal, color: "text-primary", bg: "bg-primary/10 border-primary/20" },
+          { label: "AI Providers", value: 12, suffix: "+", icon: Cpu, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+          { label: "Data Source Types", value: 4, suffix: "", icon: Database, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+          { label: "Avg Query Latency", value: 15, suffix: " ms", icon: Zap, color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20" },
+        ].map((s, i) => {
+          const Icon = s.icon;
+          return (
+            <motion.div key={s.label} variants={fadeUp} custom={i}>
+              <motion.div whileHover={{ y: -5, scale: 1.03 }} transition={{ type: "spring", stiffness: 300, damping: 22 }}>
+                <Card className="p-4 sm:p-5 flex flex-col gap-2.5 hover:border-primary/30 transition-all duration-300 hover:shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.25)] group">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground font-medium leading-tight">{s.label}</span>
+                    <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center border group-hover:scale-110 transition-transform", s.bg, s.color)}>
+                      <Icon size={12} />
                     </div>
-                    <span className="text-[13px] font-bold font-mono text-foreground">{step.title}</span>
                   </div>
-                  <p className="text-[13px] text-muted-foreground leading-relaxed">{step.desc}</p>
-                </div>
-                <div className="mt-4 pt-3 border-t border-border/70 flex">
-                  <span className="text-[11px] font-mono text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded">{step.metric}</span>
-                </div>
-              </Card>
+                  <p className={cn("text-2xl sm:text-3xl font-bold font-mono tracking-tight", s.color)}>
+                    <AnimatedCounter to={s.value} suffix={s.suffix} />
+                  </p>
+                </Card>
+              </motion.div>
+            </motion.div>
+          );
+        })}
+      </motion.section>
+
+      {/* ── HOW IT WORKS ────────────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.12 }} className="space-y-4">
+        <SectionHeader icon={PlayCircle} title="How It Works" subtitle="Three steps from raw data to actionable insight." badge="Quick Flow" />
+
+        <motion.div variants={stagger} className="grid gap-4 sm:grid-cols-3 relative">
+          {/* Connector line desktop */}
+          <div className="hidden sm:block absolute top-[44px] left-[calc(33%+12px)] right-[calc(33%+12px)] h-px">
+            <motion.div initial={{ scaleX: 0 }} whileInView={{ scaleX: 1 }} viewport={{ once: true }} transition={{ duration: 0.8, delay: 0.4, ease: "easeOut" }} className="h-full bg-gradient-to-r from-blue-500/40 via-purple-500/40 to-emerald-500/40 origin-left" />
+          </div>
+
+          {HOW_IT_WORKS.map((s, i) => {
+            const Icon = s.icon;
+            return (
+              <motion.div key={s.step} variants={fadeUp} custom={i}>
+                <motion.div whileHover={{ y: -6, scale: 1.02 }} transition={{ type: "spring", stiffness: 280, damping: 20 }}>
+                  <Card className="p-5 flex flex-col items-center text-center gap-4 hover:border-primary/25 hover:shadow-[0_10px_30px_-12px_hsl(var(--primary)/0.22)] transition-all duration-300 group relative overflow-hidden">
+                    <div className={cn("absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none", "bg-gradient-to-b", s.bg.split(" ")[0], "to-transparent")} style={{ opacity: 0 }} />
+                    <motion.div
+                      whileHover={{ rotate: [0, -8, 8, 0], scale: 1.1 }}
+                      transition={{ duration: 0.5 }}
+                      className={cn("w-12 h-12 rounded-2xl flex items-center justify-center border relative z-10", s.bg)}
+                    >
+                      <Icon size={20} className={s.color} />
+                    </motion.div>
+                    <div className="relative z-10">
+                      <span className={cn("text-[10px] font-bold font-mono", s.color)}>Step {s.step}</span>
+                      <h3 className="text-[14px] font-bold text-foreground mt-1">{s.title}</h3>
+                      <p className="text-[12px] text-muted-foreground mt-1.5 leading-relaxed">{s.desc}</p>
+                    </div>
+                  </Card>
+                </motion.div>
+              </motion.div>
             );
           })}
-        </div>
-      </section>
+        </motion.div>
+      </motion.section>
 
-      {/* ─── SECTION 2: DATASET INTEGRATION ─────────────────────────────────── */}
-      <section className="space-y-6">
-        <div className="border-b border-border pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
-              <Database size={16} />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold tracking-tight text-foreground font-mono uppercase">2. Dataset Integration</h2>
-              <p className="text-[12px] text-muted-foreground mt-0.5">Attach relational repositories and tabular flat files safely.</p>
-            </div>
-          </div>
-          <span className="text-[10px] font-mono bg-background-secondary border border-border text-muted-foreground px-2 py-0.5 rounded">
-            Schema Catalog
-          </span>
-        </div>
+      {/* ── QUICK START CHECKLIST ────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.15 }} className="space-y-4">
+        <SectionHeader icon={CheckCircle2} title="Quick Start Checklist" subtitle="Complete these four steps to activate your full DataVault workspace." badge="Onboarding" />
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card className="p-6 flex flex-col justify-between transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-            <div className="space-y-4 text-left">
-              <h3 className="text-[14px] font-bold text-foreground">Metadata Cataloging Engine</h3>
-              <p className="text-[13px] text-muted-foreground leading-relaxed">
-                The indexing engine scans dataset headers and maps the relational schemas locally in volatile memory. No permanent storage or dynamic caching of raw records occurs, ensuring maximum data isolation and absolute integrity.
-              </p>
-              <div className="space-y-2 pt-2">
-                <span className="text-[11px] font-mono uppercase tracking-wider text-foreground font-bold block text-left">Technical Parameters</span>
-                <ul className="space-y-1.5 font-mono text-[12px] text-muted-foreground text-left">
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Automated type detection for metrics and dimensions</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Zero host database caching for private files</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Read-only credentials forced at connector boundary</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-6 flex flex-col justify-between transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-            <div className="space-y-4">
-              <h3 className="text-[14px] font-bold text-foreground">Supported Connector Layouts</h3>
-              <div className="space-y-3">
-                {[
-                  { title: "Excel Worksheets (.xlsx)", detail: "Converts tabular sheets into virtual database tables instantly.", icon: Layers },
-                  { title: "Flat CSV Files (.csv)", detail: "Maps raw headers and types through in-browser compilation.", icon: FileCode },
-                  { title: "Relational Channels (PostgreSQL / MySQL / SQLite)", detail: "Secures schema indexing via read-only transaction ports.", icon: Network }
-                ].map((item, idx) => {
-                  const ItemIcon = item.icon;
-                  return (
-                    <div key={idx} className="p-3 bg-background-secondary/50 border border-border/60 rounded-xl flex items-start gap-3 text-left">
-                      <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0 mt-0.5">
-                        <ItemIcon size={13} />
-                      </div>
-                      <div>
-                        <h4 className="text-[13px] font-bold text-foreground">{item.title}</h4>
-                        <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">{item.detail}</p>
-                      </div>
+        <motion.div variants={stagger} className="grid gap-3 sm:grid-cols-2">
+          {CHECKLIST.map((item, i) => {
+            const Icon = item.icon;
+            const done = checked.has(item.id);
+            return (
+              <motion.div key={item.id} variants={fadeUp} custom={i}>
+                <motion.div whileHover={!done ? { scale: 1.01 } : {}} transition={{ type: "spring", stiffness: 300, damping: 22 }}>
+                  <Card
+                    onClick={() => toggleCheck(item.id)}
+                    className={cn(
+                      "p-4 flex items-center gap-4 cursor-pointer transition-all duration-300 select-none group",
+                      done ? "border-primary/40 bg-primary/5 shadow-[0_4px_16px_-8px_hsl(var(--primary)/0.3)]" : "hover:border-primary/25 hover:-translate-y-0.5 hover:shadow-[0_6px_20px_-10px_hsl(var(--primary)/0.18)]"
+                    )}
+                  >
+                    <motion.div
+                      animate={done ? { scale: [1, 1.25, 1] } : { scale: 1 }}
+                      transition={{ duration: 0.35 }}
+                      className={cn(
+                        "w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 transition-all duration-300",
+                        done ? "bg-primary text-primary-foreground border-primary shadow-[0_0_12px_hsl(var(--primary)/0.4)]" : "bg-background-secondary border-border text-muted-foreground group-hover:border-primary/30 group-hover:text-primary"
+                      )}
+                    >
+                      <AnimatePresence mode="wait">
+                        {done
+                          ? <motion.div key="check" initial={{ scale: 0, rotate: -90 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 400, damping: 20 }}><Check size={15} strokeWidth={2.5} /></motion.div>
+                          : <motion.div key="icon" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Icon size={14} /></motion.div>
+                        }
+                      </AnimatePresence>
+                    </motion.div>
+                    <div className="flex-1 min-w-0">
+                      <p className={cn("text-[13px] font-semibold transition-colors leading-snug", done ? "text-primary line-through decoration-primary/40" : "text-foreground")}>{item.label}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{item.sub}</p>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-            <Button
-              onClick={() => navigate("/app/connections")}
-              className="mt-6 w-full flex items-center justify-center gap-2 text-[13px] py-5 bg-gradient-to-r from-primary to-accent text-primary-foreground font-extrabold hover:opacity-95"
+                    <motion.div animate={done ? { x: 0, opacity: 0.4 } : { x: 0, opacity: 0.3 }} whileHover={{ x: 3, opacity: 0.9 }}>
+                      <ChevronRight size={14} className={done ? "text-primary/40" : "text-muted-foreground/50 group-hover:text-primary"} />
+                    </motion.div>
+                  </Card>
+                </motion.div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+
+        {/* Progress */}
+        <motion.div variants={fadeUp} className="space-y-2">
+          <div className="flex justify-between items-center text-[11px] text-muted-foreground">
+            <span>Setup Progress</span>
+            <motion.span
+              key={checked.size}
+              initial={{ scale: 1.3, color: "hsl(var(--primary))" }}
+              animate={{ scale: 1, color: "hsl(var(--primary))" }}
+              className="font-mono font-semibold"
             >
-              Configure Data Connectors
-              <ArrowRight size={13} />
-            </Button>
-          </Card>
-        </div>
-      </section>
-
-      {/* ─── SECTION 3: LLM CONFIGURATION ──────────────────────────────────── */}
-      <section className="space-y-6">
-        <div className="border-b border-border pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
-              <Key size={16} />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold tracking-tight text-foreground font-mono uppercase">3. LLM Configuration</h2>
-              <p className="text-[12px] text-muted-foreground mt-0.5">Calibrate models context length, credentials storage, and reasoning models.</p>
-            </div>
+              {checked.size} / {CHECKLIST.length} complete
+            </motion.span>
           </div>
-          <span className="text-[10px] font-mono bg-background-secondary border border-border text-muted-foreground px-2 py-0.5 rounded">
-            Orchestration Security
-          </span>
-        </div>
+          <AnimBar pct={(checked.size / CHECKLIST.length) * 100} />
+          <AnimatePresence>
+            {allDone && (
+              <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-2 pt-1">
+                <motion.div animate={{ rotate: [0, 15, -15, 0] }} transition={{ duration: 0.6 }}>
+                  <Sparkles size={12} className="text-emerald-400" />
+                </motion.div>
+                <p className="text-[12px] text-emerald-400 font-semibold">All steps complete — your workspace is fully activated!</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </motion.section>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card className="p-6 flex flex-col justify-between transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-            <div className="space-y-4 text-left">
-              <h3 className="text-[14px] font-bold text-foreground">API Vault & Encryption</h3>
-              <p className="text-[13px] text-muted-foreground leading-relaxed">
-                Your artificial intelligence provider keys are secured using local client-side storage variables. These variables are encapsulated locally within your browser context using AES-256 standard encryption and never transit to or get logged in our hosting networks.
-              </p>
-              <div className="space-y-2 pt-2">
-                <span className="text-[11px] font-mono uppercase tracking-wider text-foreground font-bold block text-left">Security Guidelines</span>
-                <ul className="space-y-1.5 font-mono text-[12px] text-muted-foreground text-left">
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Encrypted variables decrypted only during direct API queries</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Zero central logs retaining private client credentials</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Model parameters (temperature, max tokens) controlled by client</span>
-                  </li>
+      {/* ── SYSTEM ARCHITECTURE ─────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} className="space-y-4">
+        <SectionHeader icon={Layers} title="1. System Architecture" subtitle="End-to-end data flow from raw prompt input to dynamic reporting." badge="Pipeline Scope" />
+
+        <motion.div variants={stagger} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {ARCH_STEPS.map((step, i) => {
+            const Icon = step.icon;
+            return (
+              <motion.div key={step.id} variants={fadeUp} custom={i}>
+                <motion.div whileHover={{ y: -6, scale: 1.015 }} transition={{ type: "spring", stiffness: 280, damping: 22 }}>
+                  <Card className="p-5 flex flex-col min-h-[200px] transition-all duration-300 hover:shadow-[0_12px_32px_-12px_hsl(var(--primary)/0.22)] group relative overflow-hidden">
+                    <div className="absolute -top-8 -right-8 w-24 h-24 rounded-full blur-2xl opacity-0 group-hover:opacity-20 transition-opacity duration-500" style={{ background: `var(--step-glow-${i})` }} />
+                    <div className="flex items-start justify-between mb-4">
+                      <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center border", step.bg)}>
+                        <Icon size={16} className={step.color} />
+                      </div>
+                      <span className={cn("text-[11px] font-bold font-mono px-2 py-0.5 rounded-lg", step.bg, step.color)}>{`0${i + 1}`}</span>
+                    </div>
+                    <h3 className="text-[13px] font-bold text-foreground mb-2">{step.title}</h3>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed flex-1">{step.desc}</p>
+                    <div className="mt-3 pt-3 border-t border-border/50">
+                      <span className={cn("text-[10px] font-mono px-2 py-0.5 rounded", step.bg, step.color)}>{step.metric}</span>
+                    </div>
+                  </Card>
+                </motion.div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+
+        <motion.div initial={{ scaleX: 0 }} whileInView={{ scaleX: 1 }} viewport={{ once: true }} transition={{ duration: 1, ease: "easeOut" }} className="hidden lg:block h-px bg-gradient-to-r from-blue-500/30 via-purple-500/30 via-emerald-500/30 to-amber-500/30 origin-left" />
+      </motion.section>
+
+      {/* ── DATASET INTEGRATION ─────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} className="space-y-4">
+        <SectionHeader icon={Database} title="2. Dataset Integration" subtitle="Attach relational repositories and tabular flat files safely." badge="Schema Catalog" />
+
+        <motion.div variants={stagger} className="grid gap-6 md:grid-cols-2">
+          <motion.div variants={slideLeft}>
+            <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 280, damping: 22 }}>
+              <Card className="p-6 flex flex-col gap-5 h-full hover:border-primary/25 hover:shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.22)] transition-all duration-300">
+                <div>
+                  <h3 className="text-[14px] font-bold text-foreground">Metadata Cataloging Engine</h3>
+                  <p className="text-[12px] text-muted-foreground leading-relaxed mt-2">The indexing engine scans dataset headers and maps relational schemas locally in volatile memory. No permanent storage of raw records occurs, ensuring maximum data isolation.</p>
+                </div>
+                <ul className="space-y-2">
+                  {["Automated type detection for metrics and dimensions", "Zero host database caching for private files", "Read-only credentials forced at connector boundary"].map((li, i) => (
+                    <motion.li key={i} variants={fadeUp} custom={i} className="flex items-start gap-2.5 text-[12px] text-muted-foreground font-mono">
+                      <span className="text-primary font-bold mt-px shrink-0">&gt;</span>{li}
+                    </motion.li>
+                  ))}
                 </ul>
-              </div>
-            </div>
-          </Card>
+              </Card>
+            </motion.div>
+          </motion.div>
 
-          <Card className="p-6 flex flex-col justify-between transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-            <div className="space-y-4">
-              <h3 className="text-[14px] font-bold text-foreground">Supported Reasoners</h3>
-              <div className="space-y-3">
-                {[
-                  { name: "Anthropic Claude 3.5 Sonnet", detail: "Optimized for structured SQL generation and logical parsing.", icon: Cpu },
-                  { name: "OpenAI GPT-4o / GPT-4", detail: "Rapid prompt synthesis and robust context window mapping.", icon: Layers },
-                  { name: "Google Gemini 1.5 Pro / Flash", detail: "Excellent large-scale dataset schemas cross-referencing.", icon: Network }
-                ].map((model, idx) => {
-                  const ModelIcon = model.icon;
-                  return (
-                    <div key={idx} className="p-3 bg-background-secondary/50 border border-border/60 rounded-xl flex items-center justify-between font-mono text-xs text-left">
-                      <div className="flex items-center gap-3">
-                        <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
-                          <ModelIcon size={13} />
+          <motion.div variants={slideRight}>
+            <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 280, damping: 22 }}>
+              <Card className="p-6 flex flex-col gap-4 h-full hover:border-primary/25 hover:shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.22)] transition-all duration-300">
+                <h3 className="text-[14px] font-bold text-foreground">Supported Connector Layouts</h3>
+                <div className="space-y-3 flex-1">
+                  {CONNECTORS.map((c, i) => {
+                    const CIcon = c.icon;
+                    return (
+                      <motion.div key={i} variants={fadeUp} custom={i} className="p-3 bg-background-secondary/50 border border-border/60 rounded-xl space-y-2.5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0"><CIcon size={12} /></div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-bold text-foreground truncate">{c.title}</p>
+                            <p className="text-[11px] text-muted-foreground">{c.detail}</p>
+                          </div>
+                          <span className="text-[10px] font-mono text-muted-foreground shrink-0">{c.pct}%</span>
                         </div>
-                        <div className="text-left">
-                          <p className="font-bold text-foreground text-[13px]">{model.name}</p>
-                          <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">{model.detail}</p>
-                        </div>
+                        <AnimBar pct={c.pct} color={c.color} delay={i * 0.1} />
+                      </motion.div>
+                    );
+                  })}
+                </div>
+                <Button onClick={() => navigate("/app/connections")} className="w-full gap-2 mt-1">Configure Data Connectors <ArrowRight size={13} /></Button>
+              </Card>
+            </motion.div>
+          </motion.div>
+        </motion.div>
+      </motion.section>
+
+      {/* ── LLM CONFIGURATION ───────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} className="space-y-4">
+        <SectionHeader icon={Key} title="3. LLM Configuration" subtitle="Calibrate model context length, credentials storage, and reasoning chains." badge="Orchestration Security" />
+
+        <motion.div variants={stagger} className="grid gap-6 md:grid-cols-2">
+          <motion.div variants={slideLeft}>
+            <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 280, damping: 22 }}>
+              <Card className="p-6 flex flex-col gap-5 h-full hover:border-primary/25 hover:shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.22)] transition-all duration-300">
+                <div>
+                  <h3 className="text-[14px] font-bold text-foreground">API Vault & Encryption</h3>
+                  <p className="text-[12px] text-muted-foreground leading-relaxed mt-2">Provider keys are AES-256 encrypted in browser storage and only decrypted at API call time. They never transit our servers.</p>
+                </div>
+                <ul className="space-y-2">
+                  {["Encrypted variables decrypted only during direct API queries", "Zero central logs retaining private client credentials", "Model parameters (temperature, max tokens) controlled by client"].map((li, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-[12px] text-muted-foreground font-mono">
+                      <span className="text-primary font-bold mt-px shrink-0">&gt;</span>{li}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </motion.div>
+          </motion.div>
+
+          <motion.div variants={slideRight}>
+            <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 280, damping: 22 }}>
+              <Card className="p-6 flex flex-col gap-4 h-full hover:border-primary/25 hover:shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.22)] transition-all duration-300">
+                <h3 className="text-[14px] font-bold text-foreground">Supported AI Providers</h3>
+                <div className="grid grid-cols-2 gap-2 flex-1">
+                  {PROVIDERS.map((p, i) => (
+                    <motion.div key={p.name} variants={fadeUp} custom={i} whileHover={{ scale: 1.04, y: -2 }} transition={{ type: "spring", stiffness: 320, damping: 22 }}
+                      className="p-3 bg-background-secondary/50 border border-border/60 rounded-xl flex flex-col gap-1 cursor-default hover:border-primary/25 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <span className="text-[12px] font-bold text-foreground">{p.name}</span>
+                        {p.badge && <span className="text-[9px] font-semibold bg-primary/10 border border-primary/20 text-primary px-1.5 py-px rounded shrink-0">{p.badge}</span>}
                       </div>
-                      <span className="text-[9px] bg-primary/10 border border-primary/20 text-primary px-2 py-0.5 rounded font-semibold uppercase shrink-0">
-                        Enabled
-                      </span>
+                      <span className={cn("text-[10px] font-mono leading-snug", p.color)}>{p.models}</span>
+                    </motion.div>
+                  ))}
+                </div>
+                <Button onClick={() => navigate("/app/settings")} className="w-full gap-2 mt-1">Configure AI Providers <ArrowRight size={13} /></Button>
+              </Card>
+            </motion.div>
+          </motion.div>
+        </motion.div>
+      </motion.section>
+
+      {/* ── CAPABILITIES GRID ────────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.08 }} className="space-y-4">
+        <SectionHeader icon={Sparkles} title="4. Platform Capabilities" subtitle="Full-stack feature set purpose-built for enterprise data analytics." badge="Feature Matrix" />
+
+        <motion.div variants={stagger} className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
+          {CAPABILITIES.map((cap, i) => {
+            const CIcon = cap.icon;
+            return (
+              <motion.div key={cap.title} variants={fadeUp} custom={i}>
+                <motion.div whileHover={{ y: -6, scale: 1.03 }} transition={{ type: "spring", stiffness: 300, damping: 20 }}>
+                  <Card className={cn("p-4 flex flex-col gap-3 border transition-all duration-300 hover:shadow-[0_10px_28px_-10px_hsl(var(--primary)/0.22)] group relative overflow-hidden")}>
+                    <div className={cn("absolute inset-0 rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none", cap.bg)} />
+                    <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center border relative z-10 transition-all duration-300 group-hover:scale-110", cap.bg)}>
+                      <CIcon size={15} className={cap.color} />
                     </div>
-                  );
-                })}
+                    <div className="relative z-10">
+                      <h3 className="text-[12px] font-bold text-foreground">{cap.title}</h3>
+                      <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{cap.desc}</p>
+                    </div>
+                  </Card>
+                </motion.div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+      </motion.section>
+
+      {/* ── INDUSTRY USE CASES ───────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} className="space-y-4">
+        <SectionHeader icon={Building2} title="5. Industry Use Cases" subtitle="See what teams are querying with DataVault every day." badge="Examples" />
+
+        <motion.div variants={stagger} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {USE_CASES.map((uc, i) => {
+            const Icon = uc.icon;
+            return (
+              <motion.div key={uc.title} variants={fadeUp} custom={i}>
+                <motion.div whileHover={{ y: -6, scale: 1.015 }} transition={{ type: "spring", stiffness: 280, damping: 20 }}>
+                  <Card className="p-5 flex flex-col gap-4 h-full hover:border-primary/25 hover:shadow-[0_10px_30px_-12px_hsl(var(--primary)/0.2)] transition-all duration-300 group">
+                    <div className={cn("w-10 h-10 rounded-2xl flex items-center justify-center border self-start group-hover:scale-110 transition-transform duration-300", uc.bg)}>
+                      <Icon size={16} className={uc.color} />
+                    </div>
+                    <h3 className="text-[13px] font-bold text-foreground">{uc.title}</h3>
+                    <ul className="space-y-1.5 flex-1">
+                      {uc.queries.map((q, qi) => (
+                        <li key={qi} className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                          <ChevronRight size={11} className={cn("mt-0.5 shrink-0", uc.color)} />
+                          <span className="leading-snug">{q}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </Card>
+                </motion.div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+      </motion.section>
+
+      {/* ── SECURITY & COMPLIANCE ────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} className="space-y-4">
+        <SectionHeader icon={Shield} title="6. Security & Compliance" subtitle="Enterprise-grade security guarantees built into every layer of the stack." badge="Trust Center" />
+
+        <motion.div variants={stagger} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {SECURITY_ITEMS.map((s, i) => {
+            const Icon = s.icon;
+            return (
+              <motion.div key={s.label} variants={fadeUp} custom={i}>
+                <motion.div whileHover={{ y: -4, scale: 1.015 }} transition={{ type: "spring", stiffness: 300, damping: 22 }}>
+                  <Card className={cn("p-4 flex items-start gap-3 border transition-all duration-300 hover:shadow-[0_8px_24px_-10px_hsl(var(--primary)/0.18)]", s.bg)}>
+                    <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border shrink-0 mt-0.5", s.bg)}>
+                      <Icon size={14} className={s.color} />
+                    </div>
+                    <div>
+                      <p className="text-[12px] font-bold text-foreground">{s.label}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{s.desc}</p>
+                    </div>
+                  </Card>
+                </motion.div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+      </motion.section>
+
+      {/* ── FAQ ──────────────────────────────────────────────────────────────── */}
+      <motion.section variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} className="space-y-4">
+        <SectionHeader icon={MessageSquare} title="7. Frequently Asked Questions" subtitle="Common questions from new users and enterprise evaluators." badge="FAQ" />
+
+        <motion.div variants={stagger} className="grid gap-2.5 sm:grid-cols-2">
+          {FAQ.map((item, i) => <FaqItem key={i} q={item.q} a={item.a} i={i} />)}
+        </motion.div>
+      </motion.section>
+
+      {/* ── CTA FOOTER ───────────────────────────────────────────────────────── */}
+      <motion.section initial={{ opacity: 0, y: 36 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}>
+        <Card className="p-5 sm:p-7 relative overflow-hidden border-primary/20 bg-gradient-to-br from-primary/6 via-background-secondary to-background-secondary">
+          <motion.div animate={{ scale: [1, 1.18, 1], opacity: [0.15, 0.28, 0.15] }} transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }} className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-primary/25 blur-3xl pointer-events-none" />
+          <motion.div animate={{ scale: [1, 1.12, 1], opacity: [0.08, 0.18, 0.08] }} transition={{ duration: 8, repeat: Infinity, ease: "easeInOut", delay: 3 }} className="absolute -bottom-12 -left-12 w-48 h-48 rounded-full bg-purple-500/20 blur-3xl pointer-events-none" />
+
+          <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+            <div className="space-y-3 max-w-xl">
+              <div className="flex items-center gap-2.5">
+                <motion.div animate={{ rotate: [0, 15, -10, 0] }} transition={{ duration: 3, repeat: Infinity, repeatDelay: 2 }}>
+                  <Rocket size={18} className="text-primary" />
+                </motion.div>
+                <h2 className="text-lg sm:text-xl font-bold text-foreground">Ready to start analyzing?</h2>
+              </div>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">
+                Connect a data source, pick an AI provider, and ask your first natural-language question — setup takes under two minutes. No SQL knowledge required.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {["No SQL required", "AES-256 security", "12+ AI providers", "Free to start"].map((tag) => (
+                  <span key={tag} className="text-[11px] px-2.5 py-1 rounded-full border border-border/70 bg-background-secondary/60 text-muted-foreground">{tag}</span>
+                ))}
               </div>
             </div>
-            <Button
-              onClick={() => navigate("/app/settings")}
-              className="mt-6 w-full flex items-center justify-center gap-2 text-[13px] py-5 bg-gradient-to-r from-primary to-accent text-primary-foreground font-extrabold hover:opacity-95"
-            >
-              Configure AI Providers
-              <ArrowRight size={13} />
-            </Button>
-          </Card>
-        </div>
-      </section>
 
-      {/* ─── SECTION 4: NATURAL LANGUAGE QUERIES ─────────────────────────────── */}
-      <section className="space-y-6">
-        <div className="border-b border-border pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
-              <MessageSquare size={16} />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold tracking-tight text-foreground font-mono uppercase">4. Natural Language Queries</h2>
-              <p className="text-[12px] text-muted-foreground mt-0.5">Parse dynamic plain-English questions into target relational outputs.</p>
+            <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row gap-2.5 shrink-0">
+              <Button variant="outline" onClick={() => navigate("/app/connections")} className="gap-2 border-border">
+                <Database size={14} /> Connect Data
+              </Button>
+              <Button variant="outline" onClick={() => navigate("/app/settings")} className="gap-2 border-border">
+                <Key size={14} /> Add API Key
+              </Button>
+              <Button onClick={() => navigate("/app/query")} className="gap-2 shadow-[0_4px_16px_-4px_hsl(var(--primary)/0.55)] hover:shadow-[0_6px_22px_-4px_hsl(var(--primary)/0.7)] transition-shadow">
+                <Zap size={14} /> Launch Workspace <ArrowRight size={13} />
+              </Button>
             </div>
           </div>
-          <span className="text-[10px] font-mono bg-background-secondary border border-border text-muted-foreground px-2 py-0.5 rounded">
-            Interactive Compiler
-          </span>
-        </div>
+        </Card>
+      </motion.section>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card className="p-6 flex flex-col justify-between transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-            <div className="space-y-4 text-left">
-              <h3 className="text-[14px] font-bold text-foreground">Secure Translation Sandbox</h3>
-              <p className="text-[13px] text-muted-foreground leading-relaxed">
-                The SQL translation loop compiles plain-text queries through the schema mapping indexes. Compiled statements execute inside read-only isolated database transaction loops. Mutation statements (such as INSERT, DELETE, DROP, UPDATE) are caught and automatically terminated by transaction locks.
-              </p>
-              <div className="space-y-2 pt-2">
-                <span className="text-[11px] font-mono uppercase tracking-wider text-foreground font-bold block text-left">Execution Boundaries</span>
-                <ul className="space-y-1.5 font-mono text-[12px] text-muted-foreground text-left">
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Write protection locks prevent data modifications</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Query row capping and resource timeout limits enforced</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <span className="text-primary font-bold">&gt;</span>
-                    <span>Strict metadata-level indexing ensures data isolation</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-6 flex flex-col justify-between transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_42px_-28px_hsl(var(--primary)/0.75)]">
-            <div className="space-y-4">
-              <h3 className="text-[14px] font-bold text-foreground">Analytics Workspace Modules</h3>
-              <div className="space-y-3">
-                {[
-                  { title: "Query Terminal Console", detail: "Type direct questions, inspect compiled SQL, and run execution plans.", icon: Terminal },
-                  { title: "Dynamic Visualizations", detail: "Render outputs into responsive custom grids, charts, and tables.", icon: LineChart },
-                  { title: "Shareable Insights Catalog", detail: "Bookmark essential analytical queries and reports for teams.", icon: Bookmark }
-                ].map((feat, idx) => {
-                  const FeatIcon = feat.icon;
-                  return (
-                    <div key={idx} className="p-3 bg-background-secondary/50 border border-border/60 rounded-xl flex items-start gap-3 text-left">
-                      <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0 mt-0.5">
-                        <FeatIcon size={13} />
-                      </div>
-                      <div>
-                        <h4 className="text-[13px] font-bold text-foreground">{feat.title}</h4>
-                        <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">{feat.detail}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <Button
-              onClick={() => navigate("/app/query")}
-              className="mt-6 w-full flex items-center justify-center gap-2 text-[13px] py-5 bg-gradient-to-r from-primary to-accent text-primary-foreground font-extrabold hover:opacity-95"
-            >
-              Launch Query Workspace
-              <ArrowRight size={13} />
-            </Button>
-          </Card>
-        </div>
-      </section>
     </div>
   );
 }

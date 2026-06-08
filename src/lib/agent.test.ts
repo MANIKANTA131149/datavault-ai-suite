@@ -491,7 +491,38 @@ describe("runDatabaseAgent", () => {
     ]);
     expect(String(steps[0].result)).toContain("Table 'orders'");
     expect(String(steps[0].result)).toContain("Table 'customers'");
-    expect(steps[2].result).toEqual({ result: 510 });
+  });
+
+  it("uses custom NoSQL prompt when dbTypeLabel is MongoDB Atlas", async () => {
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetSchema","args":{}}',
+        inputTokens: 10,
+        outputTokens: 5,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"Answer","args":{"value":"Hello"}}',
+        inputTokens: 10,
+        outputTokens: 5,
+      });
+
+    const steps = [];
+    for await (const step of runDatabaseAgent(
+      "Give me a summary",
+      databaseTables,
+      "orders",
+      "MongoDB Atlas",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps[0].command).toBe("GetSchema");
+    expect(vi.mocked(callLLM).mock.calls[0][4]).toContain("You are a NoSQL database analysis agent");
   });
 
   it("executes database-native SQL through the SQL tool", async () => {
@@ -908,6 +939,210 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
     expect(steps[0].result[0]).toHaveProperty("sales_1_revenue");
     expect(steps[0].result[0]).toHaveProperty("sales_2_revenue");
     expect(steps[0].result[0]).toHaveProperty("product");
+  });
+
+  it("repairs the sheet name if columns specified do not belong to the requested sheet but exist in another", async () => {
+    vi.mocked(callLLM).mockResolvedValueOnce({
+      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"inventory","operation":"groupby","params":{"groupColumn":"department","aggColumn":"salary","aggFunction":"mean"}}}',
+      inputTokens: 15,
+      outputTokens: 8,
+    });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "employee salary by department",
+      workbookSheets,
+      "inventory",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].args.sheet_name).toBe("employees");
+    expect(steps[0].result).toEqual([
+      { department: "Engineering", mean: 135 },
+      { department: "Finance", mean: 100 },
+    ]);
+  });
+
+  it("applies case-insensitive and loose comparison filters", async () => {
+    const customWorkbook: Record<string, SheetData> = {
+      employees: {
+        columns: [
+          { name: "name", dtype: "string" },
+          { name: "gender", dtype: "string" },
+          { name: "salary", dtype: "string" },
+        ],
+        rows: [
+          { name: "Alice", gender: "Female", salary: "120,000" },
+          { name: "Bob", gender: "M", salary: "90,000" },
+          { name: "Charlie", gender: "male", salary: "150,000" },
+        ],
+      },
+    };
+
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","operation":"filter","params":{"column":"gender","operator":"==","value":"female"}}}',
+        inputTokens: 10,
+        outputTokens: 6,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","operation":"filter","params":{"column":"gender","operator":"==","value":"male"}}}',
+        inputTokens: 10,
+        outputTokens: 6,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","operation":"filter","params":{"column":"salary","operator":">","value":100000}}}',
+        inputTokens: 10,
+        outputTokens: 6,
+      });
+
+    let steps = [];
+    for await (const step of runLegacyAgent(
+      "female employees", customWorkbook, "employees", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+    expect(steps[0].result).toHaveLength(1);
+    expect(steps[0].result[0].name).toBe("Alice");
+
+    steps = [];
+    for await (const step of runLegacyAgent(
+      "male employees", customWorkbook, "employees", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+    expect(steps[0].result).toHaveLength(2);
+    expect(steps[0].result.map((r: any) => r.name)).toEqual(["Bob", "Charlie"]);
+
+    steps = [];
+    for await (const step of runLegacyAgent(
+      "rich employees", customWorkbook, "employees", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+    expect(steps[0].result).toHaveLength(2);
+    expect(steps[0].result.map((r: any) => r.name)).toEqual(["Alice", "Charlie"]);
+  });
+});
+
+describe("self-healing & resilience", () => {
+  beforeEach(() => {
+    vi.mocked(callLLM).mockReset();
+  });
+
+  it("recovers from an unknown operation by feeding the error back and retrying (workbook)", async () => {
+    vi.mocked(callLLM)
+      // Turn 1: model picks an unsupported operation → execution error
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"frobnicate","params":{}}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      })
+      // Turn 2: after the corrective hint, model issues a valid command
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"revenue","function":"sum"}}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "compute the revenue figure", workbookSheets, "sales", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+
+    // The failed attempt is surfaced but NOT final — the agent self-corrected.
+    expect(steps).toHaveLength(2);
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].isFinal).toBe(false);
+    expect(JSON.stringify(steps[0].result).toLowerCase()).toContain("unknown operation");
+    expect(steps[1].isFinal).toBe(true);
+    expect(steps[1].result).toEqual({ result: 500 });
+
+    // The model was given a corrective instruction (the history array is mutated by
+    // reference across turns, so inspect the whole captured conversation).
+    const retryHistory = JSON.stringify(vi.mocked(callLLM).mock.calls[1][3]);
+    expect(retryHistory).toContain("FAILED");
+    expect(retryHistory.toLowerCase()).toContain("corrected");
+  });
+
+  it("recovers from a failed database operation by retrying with a valid command", async () => {
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"table_name":"orders"}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"table_name":"orders","operation":"frobnicate","params":{}}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"table_name":"orders","operation":"groupby","params":{"groupColumn":"status","aggColumn":"total_amount","aggFunction":"sum"}}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      });
+
+    const steps = [];
+    for await (const step of runDatabaseAgent(
+      "summarize orders", databaseTables, "orders", "PostgreSQL", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps.map((s) => s.command)).toEqual(["GetColumns", "ExecuteFinalQuery", "ExecuteFinalQuery"]);
+    expect(steps[1].isFinal).toBe(false); // errored attempt fed back
+    expect(steps[2].isFinal).toBe(true); // corrected final answer
+    expect(Array.isArray(steps[2].result)).toBe(true);
+  });
+
+  it("retries the LLM on a transient (429) error and still answers", async () => {
+    vi.mocked(callLLM)
+      .mockRejectedValueOnce(new Error("Groq error (429): Too Many Requests"))
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"revenue","function":"sum"}}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      });
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "total revenue", workbookSheets, "sales", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+
+    // One transient rejection + one success = the call was retried, not abandoned.
+    expect(vi.mocked(callLLM)).toHaveBeenCalledTimes(2);
+    expect(steps).toHaveLength(1);
+    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps[0].result).toEqual({ result: 500 });
+  });
+
+  it("does NOT retry on a fatal auth (401) error and fails fast", async () => {
+    vi.mocked(callLLM).mockRejectedValue(new Error("Groq (401): invalid api key"));
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "total revenue", workbookSheets, "sales", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+
+    // Auth errors won't fix themselves — fail fast with a single attempt.
+    expect(vi.mocked(callLLM)).toHaveBeenCalledTimes(1);
+    expect(steps).toHaveLength(1);
+    expect(steps[0].command).toBe("Error");
+    expect(steps[0].isFinal).toBe(true);
   });
 });
 

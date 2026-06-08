@@ -1,134 +1,250 @@
-import { useEffect, useState } from "react";
+import { useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, LayoutDashboard, Database, MessageSquare, Clock, Settings, Upload, FileText, Bookmark, Shield, Key, X } from "lucide-react";
-import { useDatasetStore } from "@/stores/dataset-store";
+import {
+  Bookmark,
+  Cable,
+  Clock,
+  Compass,
+  CreditCard,
+  Database,
+  FileText,
+  Key,
+  LayoutDashboard,
+  MessageSquare,
+  Plus,
+  Search,
+  Settings,
+  Shield,
+  Upload,
+} from "lucide-react";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from "@/components/ui/command";
 import { useHistoryStore } from "@/stores/history-store";
+import { useDatasetStore } from "@/stores/dataset-store";
+import { useConnectionStore } from "@/stores/connection-store";
+import { useCommandStore } from "@/stores/command-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { canAccessAdmin } from "@/lib/plans";
-
-interface CommandItem {
-  id: string;
-  label: string;
-  description?: string;
-  icon: React.ElementType;
-  action: () => void;
-  section: string;
-}
+import { DbTypeIcon } from "@/components/DbTypeIcon";
+import { cn } from "@/lib/utils";
 
 export function CommandPalette() {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const { open, setOpen } = useCommandStore();
   const navigate = useNavigate();
-  const { datasets } = useDatasetStore();
   const { entries } = useHistoryStore();
+  const { datasets } = useDatasetStore();
+  const { connections } = useConnectionStore();
   const { user } = useAuthStore();
-  const adminUser = canAccessAdmin(user?.planTier, user?.isPlanOwner);
+  const isAdmin = canAccessAdmin(user?.planTier, user?.isPlanOwner);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const isBackquote = e.key === "`" || e.key === "~" || (e as any).code === "Backquote";
-      if ((e.metaKey || e.ctrlKey) && isBackquote) {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement
+        ) return;
         e.preventDefault();
-        setOpen((p) => !p);
-        setQuery("");
-        setSelectedIndex(0);
+        setOpen(!open);
       }
-      if (e.key === "Escape") setOpen(false);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
+    document.addEventListener("keydown", down);
+    return () => document.removeEventListener("keydown", down);
+  }, [open, setOpen]);
 
-  const items: CommandItem[] = [
-    { id: "nav-dashboard", label: "Dashboard", icon: LayoutDashboard, action: () => navigate("/app/dashboard"), section: "Navigation" },
-    { id: "nav-datasets", label: "Datasets", icon: Database, action: () => navigate("/app/datasets"), section: "Navigation" },
-    { id: "nav-query", label: "Query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Navigation" },
-    { id: "nav-history", label: "History", icon: Clock, action: () => navigate("/app/history"), section: "Navigation" },
-    { id: "nav-insights", label: "Insights", icon: Bookmark, action: () => navigate("/app/insights"), section: "Navigation" },
-    ...(adminUser ? [{ id: "nav-admin", label: "Admin Panel", icon: Shield, action: () => navigate("/app/admin"), section: "Navigation" }] : []),
-    { id: "nav-settings", label: "Settings", icon: Settings, action: () => navigate("/app/settings"), section: "Navigation" },
-    { id: "action-upload", label: "Upload file", icon: Upload, action: () => navigate("/app/datasets"), section: "Actions" },
-    { id: "action-query", label: "New query", icon: MessageSquare, action: () => navigate("/app/query"), section: "Actions" },
-    ...(datasets[0] ? [{ id: "action-latest-dataset", label: "Open latest dataset in Query", description: datasets[0].fileName, icon: Database, action: () => navigate(`/app/query?dataset=${datasets[0].id}`), section: "Actions" }] : []),
-    { id: "action-providers", label: "Open provider settings", icon: Key, action: () => navigate("/app/settings"), section: "Actions" },
-    ...(query ? [{ id: "action-clear-command-search", label: "Clear command search", icon: X, action: () => setQuery(""), section: "Actions" }] : []),
-    ...datasets.map((d) => ({
-      id: `ds-${d.id}`,
-      label: d.fileName,
-      description: `${Object.values(d.rowCounts).reduce((a, b) => a + b, 0)} rows`,
-      icon: FileText,
-      action: () => navigate(`/app/query?dataset=${d.id}`),
-      section: "Datasets",
-    })),
-    ...entries.slice(0, 5).map((e) => ({
-      id: `h-${e.id}`,
-      label: e.query,
-      description: e.datasetName,
-      icon: Clock,
-      action: () => navigate("/app/history"),
-      section: "Recent Queries",
-    })),
-  ];
+  const run = useCallback(
+    (fn: () => void) => {
+      setOpen(false);
+      fn();
+    },
+    [setOpen],
+  );
 
-  const filtered = items.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()));
-  const sections = [...new Set(filtered.map((i) => i.section))];
-
-  useEffect(() => { setSelectedIndex(0); }, [query]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIndex((p) => Math.min(p + 1, filtered.length - 1)); }
-    if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIndex((p) => Math.max(p - 1, 0)); }
-    if (e.key === "Enter" && filtered[selectedIndex]) { filtered[selectedIndex].action(); setOpen(false); }
-  };
-
-  if (!open) return null;
+  const recentQueries = entries.slice(0, 6);
+  const topDatasets   = datasets.slice(0, 5);
+  const topConns      = connections.slice(0, 5);
 
   return (
-    <AnimatePresence>
-      <motion.div className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-16 sm:pt-[20vh]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setOpen(false)} />
-        <motion.div className="relative w-full max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border border-border bg-background-secondary shadow-2xl sm:max-w-lg" initial={{ scale: 0.95, y: -10 }} animate={{ scale: 1, y: 0 }}>
-          <div className="flex items-center gap-3 px-4 border-b border-border">
-            <Search size={16} className="text-muted-foreground shrink-0" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Search commands, datasets, queries..."
-              className="flex-1 py-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
-            />
-            <kbd className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5">ESC</kbd>
+    <CommandDialog open={open} onOpenChange={setOpen}>
+      <CommandInput placeholder="Search pages, queries, datasets…" />
+      <CommandList>
+        <CommandEmpty>
+          <div className="flex flex-col items-center gap-3 py-10">
+            <Search size={28} className="text-muted-foreground/25" />
+            <p className="text-sm text-muted-foreground">No results found.</p>
           </div>
-          <div className="max-h-[min(70dvh,24rem)] overflow-auto scrollbar-thin p-2">
-            {filtered.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-6">No results found</p>
-            ) : (
-              sections.map((section) => (
-                <div key={section}>
-                  <p className="text-xs text-muted-foreground px-2 py-1.5 font-medium">{section}</p>
-                  {filtered.filter((i) => i.section === section).map((item) => {
-                    const globalIndex = filtered.indexOf(item);
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => { item.action(); setOpen(false); }}
-                        className={`flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm transition-colors ${globalIndex === selectedIndex ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-card/50"}`}
-                      >
-                        <item.icon size={14} className="shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                        {item.description && <span className="text-xs text-muted-foreground ml-auto">{item.description}</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </div>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+        </CommandEmpty>
+
+        {/* Quick Actions */}
+        <CommandGroup heading="Quick Actions">
+          <CommandItem onSelect={() => run(() => navigate("/app/query"))}>
+            <CmdIcon><MessageSquare size={13} /></CmdIcon>
+            New Query
+            <CommandShortcut>⌘Q</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => navigate("/app/datasets"))}>
+            <CmdIcon><Upload size={13} /></CmdIcon>
+            Upload Dataset
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => navigate("/app/connections"))}>
+            <CmdIcon><Plus size={13} /></CmdIcon>
+            Add Connection
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => navigate("/app/settings"))}>
+            <CmdIcon><Key size={13} /></CmdIcon>
+            Configure AI Provider
+          </CommandItem>
+          {datasets[0] && (
+            <CommandItem
+              value={`query-with-${datasets[0].displayName ?? datasets[0].fileName}`}
+              onSelect={() => run(() => navigate(`/app/query?dataset=${datasets[0].id}`))}
+            >
+              <CmdIcon><Database size={13} /></CmdIcon>
+              Query "{datasets[0].displayName ?? datasets[0].fileName}"
+            </CommandItem>
+          )}
+        </CommandGroup>
+
+        <CommandSeparator />
+
+        {/* Navigation */}
+        <CommandGroup heading="Navigate">
+          {[
+            { label: "Dashboard",   Icon: LayoutDashboard, path: "/app/dashboard" },
+            { label: "Query",       Icon: MessageSquare,   path: "/app/query" },
+            { label: "History",     Icon: Clock,           path: "/app/history" },
+            { label: "Insights",    Icon: Bookmark,        path: "/app/insights" },
+            { label: "Datasets",    Icon: Database,        path: "/app/datasets" },
+            { label: "Connections", Icon: Cable,           path: "/app/connections" },
+            { label: "Get Started", Icon: Compass,         path: "/app/get-started" },
+            { label: "Pricing",     Icon: CreditCard,      path: "/app/pricing" },
+            { label: "Settings",    Icon: Settings,        path: "/app/settings" },
+            ...(isAdmin ? [{ label: "Admin Panel", Icon: Shield, path: "/app/admin" }] : []),
+          ].map(({ label, Icon, path }) => (
+            <CommandItem key={path} onSelect={() => run(() => navigate(path))}>
+              <CmdIcon><Icon size={13} /></CmdIcon>
+              {label}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+
+        {/* Recent Queries */}
+        {recentQueries.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Recent Queries">
+              {recentQueries.map((entry) => (
+                <CommandItem
+                  key={entry.id}
+                  value={`recent-query-${entry.id}-${entry.query}`}
+                  onSelect={() => run(() => navigate("/app/history"))}
+                >
+                  <CmdIcon><Clock size={12} /></CmdIcon>
+                  <span className="min-w-0 truncate">{entry.query}</span>
+                  <CommandShortcut
+                    className={cn(
+                      "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                      entry.status === "success"
+                        ? "bg-success/12 text-success"
+                        : "bg-destructive/12 text-destructive",
+                    )}
+                  >
+                    {entry.status}
+                  </CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+
+        {/* Datasets */}
+        {topDatasets.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Datasets">
+              {topDatasets.map((ds) => (
+                <CommandItem
+                  key={ds.id}
+                  value={`dataset-${ds.id}-${ds.displayName ?? ds.fileName}`}
+                  onSelect={() => run(() => navigate(`/app/query?dataset=${ds.id}`))}
+                >
+                  <CmdIcon><FileText size={12} /></CmdIcon>
+                  <span className="min-w-0 truncate">{ds.displayName ?? ds.fileName}</span>
+                  <CommandShortcut className="shrink-0 text-[10px]">
+                    {Object.values(ds.rowCounts ?? {}).reduce((a, b) => a + b, 0).toLocaleString()} rows
+                  </CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+
+        {/* Connections */}
+        {topConns.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Connections">
+              {topConns.map((conn) => (
+                <CommandItem
+                  key={conn.id}
+                  value={`connection-${conn.id}-${conn.name}`}
+                  onSelect={() => run(() => navigate("/app/connections"))}
+                >
+                  <CmdIcon>
+                    <DbTypeIcon dbType={conn.dbType} size={12} className="text-muted-foreground" />
+                  </CmdIcon>
+                  <span className="min-w-0 truncate">{conn.name}</span>
+                  <CommandShortcut
+                    className={cn(
+                      "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                      conn.status === "connected"
+                        ? "bg-success/12 text-success"
+                        : "bg-muted/60 text-muted-foreground",
+                    )}
+                  >
+                    {conn.status}
+                  </CommandShortcut>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+      </CommandList>
+
+      {/* Footer hint bar */}
+      <div className="flex items-center justify-between border-t border-border/40 px-3 py-2">
+        <div className="flex items-center gap-3.5 text-[11px] text-muted-foreground/55">
+          <span className="flex items-center gap-1">
+            <kbd className="rounded border border-border/40 bg-muted/30 px-1 font-mono text-[9px] leading-4">↑↓</kbd>
+            navigate
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="rounded border border-border/40 bg-muted/30 px-1 font-mono text-[9px] leading-4">↵</kbd>
+            open
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="rounded border border-border/40 bg-muted/30 px-1 font-mono text-[9px] leading-4">Esc</kbd>
+            close
+          </span>
+        </div>
+        <span className="text-[11px] text-muted-foreground/35 font-medium">Querify Agent</span>
+      </div>
+    </CommandDialog>
+  );
+}
+
+function CmdIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mr-2.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-border/45 bg-background/50 text-muted-foreground">
+      {children}
+    </span>
   );
 }

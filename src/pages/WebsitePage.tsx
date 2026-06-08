@@ -4,6 +4,7 @@ import {
   Bot,
   Building2,
   CheckCircle2,
+  ChevronDown,
   Cpu,
   Database,
   FileText,
@@ -13,8 +14,10 @@ import {
   Layers3,
   Lock,
   MessageSquare,
+  Quote,
   Shield,
   Sparkles,
+  Star,
   Table2,
   Users,
 } from "lucide-react";
@@ -23,18 +26,31 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { PublicSiteLayout } from "@/components/PublicSiteLayout";
 import { PLAN_DEFINITIONS, PLAN_TIERS, formatFileSizeLimit, formatPlanLimit } from "@/lib/plans";
 import { PROVIDER_LABELS } from "@/stores/llm-store";
+import {
+  CountUp,
+  FloatingOrbs,
+  GlowCard,
+  GradientText,
+  Marquee,
+  Reveal,
+  ShinyText,
+  SpotlightCard,
+  SplitText,
+  Stagger,
+  StaggerItem,
+  TiltCard,
+} from "@/components/site-motion";
 
 const PROVIDERS = Object.values(PROVIDER_LABELS);
 
 const PRODUCT_STATS = [
-  { label: "AI providers", value: "13+" },
-  { label: "Workspace modules", value: "8" },
-  { label: "Database engines", value: "14" },
-  { label: "Themes", value: "Light + Dark" },
+  { label: "AI providers", to: 13, suffix: "+" },
+  { label: "Workspace modules", to: 8, suffix: "" },
+  { label: "Database engines", to: 14, suffix: "" },
+  { label: "Themes", to: 2, suffix: "", display: "Light + Dark" },
 ];
 
 const TRUST_SIGNALS = [
@@ -336,13 +352,57 @@ const FAQS = [
   },
 ];
 
+const INTEGRATIONS_ROW_A = [...PROVIDERS.slice(0, 7), ...DATABASE_ENGINES.slice(0, 7)];
+const INTEGRATIONS_ROW_B = [...DATABASE_ENGINES.slice(7), ...PROVIDERS.slice(7)];
+
+const TESTIMONIALS = [
+  {
+    quote:
+      "Querify replaced a backlog of ad-hoc SQL requests. Our ops team now asks questions in plain English and gets governed, chartable answers in seconds.",
+    name: "Priya Nair",
+    role: "Head of Data, Northwind Retail",
+    initials: "PN",
+  },
+  {
+    quote:
+      "The reasoning trace is the killer feature. Stakeholders can see exactly how an answer was produced, which made our compliance team comfortable shipping it.",
+    name: "Marcus Reed",
+    role: "VP Analytics, Atlas Fintech",
+    initials: "MR",
+  },
+  {
+    quote:
+      "We connected Snowflake and three CSV exports in an afternoon. The provider-agnostic model layer means we are never locked into one vendor.",
+    name: "Sofia Alvarez",
+    role: "Director of BI, Lumen Health",
+    initials: "SA",
+  },
+  {
+    quote:
+      "Deployed chat let us hand a controlled analytics surface to non-technical teams without exposing the whole workspace. Adoption was instant.",
+    name: "David Chen",
+    role: "Platform Lead, Vertex Logistics",
+    initials: "DC",
+  },
+  {
+    quote:
+      "Admin controls, plan limits, and audit visibility were already there. It felt enterprise-ready on day one, not a prototype we had to harden.",
+    name: "Elena Petrova",
+    role: "CTO, Beacon Insurance",
+    initials: "EP",
+  },
+];
+
 function SectionTitle({ kicker, title, text, centered = false }: { kicker: string; title: string; text?: string; centered?: boolean }) {
   return (
-    <div className={centered ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
-      <p className="site-kicker">{kicker}</p>
+    <Reveal className={centered ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
+      <p className="site-kicker inline-flex items-center gap-1.5">
+        <span className="h-1 w-1 rounded-full bg-primary" />
+        {kicker}
+      </p>
       <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl lg:text-4xl">{title}</h2>
-      {text ? <p className="site-copy">{text}</p> : null}
-    </div>
+      {text ? <p className={centered ? "site-copy mx-auto" : "site-copy"}>{text}</p> : null}
+    </Reveal>
   );
 }
 
@@ -399,128 +459,6 @@ function PlanTable() {
         </table>
       </div>
     </Card>
-  );
-}
-
-function ProductWindow() {
-  return (
-    <div className="site-product-window overflow-hidden rounded-lg border border-border/70 bg-card shadow-[0_36px_100px_-56px_hsl(var(--foreground)/0.95)]">
-      <div className="flex items-center justify-between border-b border-border/70 bg-background-secondary/70 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-red-400/80" />
-          <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
-        </div>
-        <div className="hidden rounded-md border border-border/70 bg-background px-3 py-1 text-[11px] text-muted-foreground sm:block">
-          querify.app / workspace / query
-        </div>
-      </div>
-
-      <div className="grid min-h-[520px] lg:grid-cols-[170px_1fr]">
-        <aside className="hidden border-r border-border/70 bg-background-secondary/45 p-4 lg:block">
-          <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Querify" className="h-8 w-8 rounded-md object-contain ring-1 ring-border/70" />
-            <div>
-              <p className="text-xs font-semibold text-foreground">Querify</p>
-              <p className="text-[11px] text-muted-foreground">Data workspace</p>
-            </div>
-          </div>
-          <div className="mt-6 space-y-1.5">
-            {["Dashboard", "Datasets", "Query", "History", "Insights", "Admin"].map((item, index) => (
-              <div
-                key={item}
-                className={`rounded-md px-3 py-2 text-xs ${
-                  index === 2 ? "site-active-nav bg-primary text-primary-foreground" : "text-muted-foreground"
-                }`}
-              >
-                {item}
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <div className="p-4 sm:p-5">
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              ["Datasets", "24"],
-              ["Queries", "1.8k"],
-              ["Insights", "316"],
-            ].map(([label, value]) => (
-              <div key={label} className="site-metric-tile rounded-lg border border-border/70 bg-background/70 p-4">
-                <p className="text-[11px] uppercase text-muted-foreground">{label}</p>
-                <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 rounded-lg border border-border/70 bg-background/70 p-4 shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)]">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Ask your data</p>
-                <p className="text-xs text-muted-foreground">Natural language to governed insight</p>
-              </div>
-              <Badge variant="outline" className="w-fit border-border text-[11px]">
-                Provider ready
-              </Badge>
-            </div>
-            <div className="site-type-line mt-4 rounded-md border border-border/70 bg-card px-4 py-3 text-sm text-foreground">
-              What changed in revenue last month across enterprise accounts?
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              {["OpenAI", "Revenue.csv", "Trace on"].map((item) => (
-                <div key={item} className="rounded-md border border-border/60 bg-background px-3 py-2 text-[11px] text-muted-foreground">
-                  {item}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-            <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-foreground">Revenue movement</p>
-                <BarChart3 size={16} className="text-primary" />
-              </div>
-              <div className="mt-5 flex h-44 items-end gap-2">
-                {[44, 68, 52, 86, 74, 92, 64, 78].map((height, index) => (
-                  <div key={index} className="flex flex-1 items-end">
-                    <div className="site-chart-bar w-full rounded-t-md bg-primary/75" style={{ height: `${height}%`, animationDelay: `${index * 110}ms` }} />
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 grid grid-cols-4 gap-2 text-[10px] uppercase text-muted-foreground">
-                {["Q1", "Q2", "Q3", "Q4"].map((item) => (
-                  <span key={item}>{item}</span>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-              <p className="text-sm font-semibold text-foreground">Reasoning trace</p>
-              <div className="mt-4 space-y-3">
-                {["Selected account table", "Grouped by segment", "Compared prior period", "Generated chart"].map((item) => (
-                  <div key={item} className="flex items-start gap-2 text-sm text-muted-foreground">
-                    <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-400" />
-                    <span>{item}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-              <p className="text-xs uppercase text-muted-foreground">Output</p>
-              <p className="mt-2 text-sm leading-6 text-foreground">Chart, answer, trace, CSV export, PDF report, and saved insight.</p>
-            </div>
-            <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-              <p className="text-xs uppercase text-muted-foreground">Share</p>
-              <p className="mt-2 text-sm leading-6 text-foreground">Deployable chat link with snapshot-based configuration.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -635,64 +573,117 @@ function WorkspaceLayers3D() {
 export default function WebsitePage() {
   return (
     <PublicSiteLayout>
-      <section className="relative overflow-hidden border-b border-border/70">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 opacity-[0.18]"
-          style={{
-            backgroundImage:
-              "linear-gradient(to right, hsl(var(--border)) 1px, transparent 1px), linear-gradient(to bottom, hsl(var(--border)) 1px, transparent 1px)",
-            backgroundSize: "64px 64px",
-          }}
-        />
-        <div className="site-shell py-14 sm:py-16 lg:py-20">
-          <div className="relative grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/80 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                <Shield size={14} className="text-primary" />
-                Enterprise AI data platform
+      <section className="relative overflow-hidden">
+        <FloatingOrbs className="opacity-80" />
+        <div className="site-shell relative py-20 sm:py-24 lg:py-32">
+          <div className="mx-auto max-w-4xl text-center">
+            <Reveal direction="up" distance={16}>
+              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/60 px-3.5 py-1.5 text-xs font-medium text-muted-foreground">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                </span>
+                <ShinyText>Enterprise AI data platform</ShinyText>
+                <span className="mx-1 h-3 w-px bg-border" />
+                <span className="text-foreground/80">v2 · Now live</span>
               </div>
-              <h1 className="mt-6 max-w-3xl text-4xl font-semibold leading-tight tracking-tight text-foreground sm:text-5xl lg:text-6xl">
-                Querify AI Data Workspace
-              </h1>
-              <p className="mt-5 max-w-2xl text-lg leading-8 text-muted-foreground">
-                Plain-language analytics for teams that need governed answers from files, databases, model providers, and shared workspaces.
-              </p>
+            </Reveal>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Button asChild size="lg">
+            <h1 className="mx-auto mt-7 max-w-4xl text-balance text-[2.75rem] font-semibold leading-[1.04] tracking-tight text-foreground sm:text-6xl lg:text-[5rem]">
+              <SplitText text="Talk to your data." />{" "}
+              <GradientText className="site-gradient-text">
+                <SplitText text="Ship answers." delay={0.2} />
+              </GradientText>
+            </h1>
+
+            <Reveal delay={0.5} className="mx-auto mt-6 max-w-2xl">
+              <p className="text-lg leading-8 text-muted-foreground sm:text-xl">
+                Querify turns plain-language questions into governed, explainable analytics across files, databases, and every major model provider — with charts, traces, and shareable workspaces built in.
+              </p>
+            </Reveal>
+
+            <Reveal delay={0.65}>
+              <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <Button asChild size="lg" className="site-cta gap-2 rounded-xl px-6 text-[15px]">
                   <Link to="/auth">
-                    Open workspace <ArrowRight size={14} />
+                    Open workspace <ArrowRight size={16} />
                   </Link>
                 </Button>
-                <Button asChild variant="outline" size="lg" className="border-border">
+                <Button
+                  asChild
+                  variant="outline"
+                  size="lg"
+                  className="rounded-xl border-border/70 bg-card/60 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card"
+                >
                   <a href="#contact">
                     Request demo <ArrowRight size={14} />
                   </a>
                 </Button>
               </div>
-
-              <div className="mt-9 grid gap-3 sm:grid-cols-2">
-                {PRODUCT_STATS.map((stat) => (
-                  <div key={stat.label} className="rounded-lg border border-border/70 bg-card/70 p-4">
-                    <p className="text-xs font-medium uppercase text-muted-foreground">{stat.label}</p>
-                    <p className="mt-2 text-xl font-semibold text-foreground">{stat.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <ProductWindow />
+            </Reveal>
           </div>
 
-          <div className="relative mt-12 grid gap-3 border-t border-border/70 pt-6 sm:grid-cols-2 lg:grid-cols-4">
-            {TRUST_SIGNALS.map((item) => (
-              <div key={item} className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
-                <span>{item}</span>
-              </div>
+          <Stagger className="mx-auto mt-16 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4" gap={0.08} delay={0.85}>
+            {PRODUCT_STATS.map((stat) => (
+              <StaggerItem key={stat.label}>
+                <TiltCard max={8} className="h-full">
+                  <SpotlightCard className="site-panel h-full !p-4 text-center">
+                    <p className="bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
+                      {stat.display ? stat.display : <CountUp to={stat.to} suffix={stat.suffix} />}
+                    </p>
+                    <p className="mt-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{stat.label}</p>
+                  </SpotlightCard>
+                </TiltCard>
+              </StaggerItem>
             ))}
-          </div>
+          </Stagger>
+
+          <Stagger className="relative mx-auto mt-14 grid max-w-4xl gap-3 border-t border-border/50 pt-7 sm:grid-cols-2 lg:grid-cols-4" gap={0.08}>
+            {TRUST_SIGNALS.map((item) => (
+              <StaggerItem key={item}>
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+                  <span>{item}</span>
+                </div>
+              </StaggerItem>
+            ))}
+          </Stagger>
+
+          <Reveal delay={0.6} className="mt-14 flex justify-center">
+            <a href="#integrations" className="group flex flex-col items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground transition-colors hover:text-foreground">
+              Scroll to explore
+              <ChevronDown size={16} className="animate-bounce text-primary/70" />
+            </a>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Integrations / social-proof marquee ──────────────────────────── */}
+      <section id="integrations" className="border-y border-border/50 bg-background-secondary/20 py-12 sm:py-14">
+        <div className="site-shell">
+          <Reveal className="text-center">
+            <p className="text-sm font-medium text-muted-foreground">
+              Connects to <span className="text-foreground">13+ model providers</span> and <span className="text-foreground">14 database engines</span> out of the box
+            </p>
+          </Reveal>
+        </div>
+        <div className="mt-8 space-y-3">
+          <Marquee speed={42}>
+            {INTEGRATIONS_ROW_A.map((label) => (
+              <span key={label} className="site-logo-pill">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+                {label}
+              </span>
+            ))}
+          </Marquee>
+          <Marquee speed={48} reverse>
+            {INTEGRATIONS_ROW_B.map((label) => (
+              <span key={`r-${label}`} className="site-logo-pill">
+                <span className="h-1.5 w-1.5 rounded-full bg-accent/70" />
+                {label}
+              </span>
+            ))}
+          </Marquee>
         </div>
       </section>
 
@@ -709,17 +700,23 @@ export default function WebsitePage() {
             </div>
           </div>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Stagger className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4" gap={0.06}>
             {PLATFORM_AREAS.map(({ title, icon: Icon, text }) => (
-              <Card key={title} className="site-panel">
-                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                  <Icon size={18} />
-                </div>
-                <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
-              </Card>
+              <StaggerItem key={title} className="h-full">
+                <TiltCard max={7} className="h-full">
+                  <GlowCard>
+                    <SpotlightCard className="site-panel h-full">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-accent/15 text-primary ring-1 ring-border/40 transition-transform duration-300 group-hover/spot:scale-110">
+                        <Icon size={18} />
+                      </div>
+                      <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+                    </SpotlightCard>
+                  </GlowCard>
+                </TiltCard>
+              </StaggerItem>
             ))}
-          </div>
+          </Stagger>
         </div>
       </section>
 
@@ -732,31 +729,33 @@ export default function WebsitePage() {
               text="The same platform speaks clearly to end users, technical teams, and enterprise reviewers."
             />
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <Stagger className="grid gap-4 lg:grid-cols-3" gap={0.08}>
               {EXPERIENCE_COLUMNS.map(({ title, icon: Icon, points }) => (
-                <Card key={title} className="site-panel">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      <Icon size={18} />
+                <StaggerItem key={title} className="h-full">
+                  <SpotlightCard className="site-panel h-full">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <Icon size={18} />
+                      </div>
+                      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
                     </div>
-                    <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-                  </div>
-                  <ul className="mt-5 space-y-3">
-                    {points.map((point) => (
-                      <li key={point} className="flex items-start gap-2 text-sm leading-6 text-muted-foreground">
-                        <CheckCircle2 size={14} className="mt-1 shrink-0 text-emerald-400" />
-                        <span>{point}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </Card>
+                    <ul className="mt-5 space-y-3">
+                      {points.map((point) => (
+                        <li key={point} className="flex items-start gap-2 text-sm leading-6 text-muted-foreground">
+                          <CheckCircle2 size={14} className="mt-1 shrink-0 text-emerald-400" />
+                          <span>{point}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </SpotlightCard>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           </div>
         </div>
       </section>
 
-      <section className="border-y border-border/70 bg-background-secondary/35">
+      <section id="platform" className="border-y border-border/50 bg-background-secondary/25">
         <div className="site-shell py-16 sm:py-20 lg:py-24">
           <div className="grid gap-10 lg:grid-cols-[0.92fr_1.08fr] lg:items-center">
             <div>
@@ -782,45 +781,6 @@ export default function WebsitePage() {
 
       <section className="site-section">
         <div className="site-shell">
-          <div className="grid gap-10 lg:grid-cols-[0.95fr_1.05fr] lg:items-start">
-            <div>
-              <SectionTitle
-                kicker="Data and models"
-                title="Provider flexibility with a clear data path"
-                text="Querify supports file upload, database connections, provider configuration, and model selection from one workspace."
-              />
-              <div className="mt-8 grid gap-3 sm:grid-cols-2">
-                {["CSV, XLSX, and XLS uploads", "Database connection flow", "Schema and table previews", "History, exports, and insights"].map((item) => (
-                  <div key={item} className="flex items-start gap-3 rounded-lg border border-border/70 bg-card/70 p-4 text-sm text-foreground">
-                    <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-400" />
-                    <span>{item}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <Card className="site-panel">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Supported providers</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Configured from settings and used across query workflows.</p>
-                </div>
-                <Bot size={18} className="text-primary" />
-              </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                {PROVIDERS.map((label) => (
-                  <Badge key={label} variant="outline" className="border-border text-[11px]">
-                    {label}
-                  </Badge>
-                ))}
-              </div>
-            </Card>
-          </div>
-        </div>
-      </section>
-
-      <section className="site-section">
-        <div className="site-shell">
           <div className="grid gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
             <SectionTitle
               kicker="Intelligence layer"
@@ -828,17 +788,21 @@ export default function WebsitePage() {
               text="Querify combines model reasoning, structured local operations, chart intelligence, and reviewable outputs so users can move from question to answer with confidence."
             />
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <Stagger className="grid gap-4 md:grid-cols-2" gap={0.08}>
               {INTELLIGENCE_FEATURES.map(({ title, icon: Icon, text }) => (
-                <Card key={title} className="site-panel">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <Icon size={18} />
-                  </div>
-                  <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
-                </Card>
+                <StaggerItem key={title} className="h-full">
+                  <TiltCard max={7} className="h-full">
+                    <SpotlightCard className="site-panel h-full">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <Icon size={18} />
+                      </div>
+                      <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+                    </SpotlightCard>
+                  </TiltCard>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           </div>
 
           <Card className="site-panel mt-6">
@@ -896,38 +860,53 @@ export default function WebsitePage() {
               text="Querify is not limited to one query path. It supports browser-side analysis for uploaded files, live database execution for connected systems, and public deployed chat experiences."
             />
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <Stagger className="grid gap-4 lg:grid-cols-3" gap={0.08}>
               {ARCHITECTURE_MODES.map(({ title, icon: Icon, text }) => (
-                <Card key={title} className="site-panel">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <Icon size={18} />
-                  </div>
-                  <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
-                </Card>
+                <StaggerItem key={title} className="h-full">
+                  <TiltCard max={7} className="h-full">
+                    <SpotlightCard className="site-panel h-full">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <Icon size={18} />
+                      </div>
+                      <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+                    </SpotlightCard>
+                  </TiltCard>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           </div>
 
-          <div className="mt-10 grid gap-4 lg:grid-cols-[1fr_0.8fr]">
-            <Card className="site-panel">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Database coverage</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Coverage across relational, warehouse, document, search, and local engines.</p>
+          <div className="mt-10 grid items-stretch gap-4 lg:grid-cols-[1fr_0.8fr]">
+            <Reveal className="h-full">
+              <SpotlightCard className="site-panel flex h-full flex-col">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Database coverage</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Coverage across relational, warehouse, document, search, and local engines.</p>
+                  </div>
+                  <Database size={18} className="text-primary" />
                 </div>
-                <Database size={18} className="text-primary" />
-              </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                {DATABASE_ENGINES.map((engine) => (
-                  <Badge key={engine} variant="outline" className="border-border text-[11px]">
-                    {engine}
-                  </Badge>
-                ))}
-              </div>
-            </Card>
+                <div className="mt-5 flex flex-1 flex-col justify-center space-y-2.5">
+                  <Marquee speed={30}>
+                    {DATABASE_ENGINES.map((engine) => (
+                      <Badge key={engine} variant="outline" className="border-border bg-background/60 text-[11px] whitespace-nowrap">
+                        {engine}
+                      </Badge>
+                    ))}
+                  </Marquee>
+                  <Marquee speed={34} reverse>
+                    {DATABASE_ENGINES.map((engine) => (
+                      <Badge key={`r-${engine}`} variant="outline" className="border-border bg-background/60 text-[11px] whitespace-nowrap">
+                        {engine}
+                      </Badge>
+                    ))}
+                  </Marquee>
+                </div>
+              </SpotlightCard>
+            </Reveal>
 
-            <Card className="site-panel">
+            <Card className="site-panel flex h-full flex-col">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">Export and reporting</p>
@@ -935,7 +914,7 @@ export default function WebsitePage() {
                 </div>
                 <FileText size={18} className="text-primary" />
               </div>
-              <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <div className="mt-5 grid flex-1 content-center gap-2 sm:grid-cols-2">
                 {EXPORT_CHANNELS.map((item) => (
                   <div key={item} className="rounded-md border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
                     {item}
@@ -992,17 +971,21 @@ export default function WebsitePage() {
               text="Querify turns answers into charts, tables, exports, saved insights, and report-friendly assets that can move through a team."
             />
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <Stagger className="grid gap-4 md:grid-cols-2" gap={0.08}>
               {VISUALIZATION_FEATURES.map(({ title, icon: Icon, text }) => (
-                <Card key={title} className="site-panel">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <Icon size={18} />
-                  </div>
-                  <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
-                </Card>
+                <StaggerItem key={title} className="h-full">
+                  <TiltCard max={7} className="h-full">
+                    <SpotlightCard className="site-panel h-full">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        <Icon size={18} />
+                      </div>
+                      <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+                    </SpotlightCard>
+                  </TiltCard>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           </div>
 
           <Card className="site-panel mt-6">
@@ -1034,15 +1017,19 @@ export default function WebsitePage() {
             text="Every step has a clear place: source selection, model setup, query execution, result review, and sharing."
             centered
           />
-          <div className="mt-10 grid gap-4 lg:grid-cols-4">
+          <Stagger className="mt-10 grid gap-4 lg:grid-cols-4" gap={0.1}>
             {WORKFLOW.map(({ step, title, text }) => (
-              <Card key={step} className="site-panel">
-                <p className="text-xs font-semibold uppercase text-primary">{step}</p>
-                <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
-              </Card>
+              <StaggerItem key={step} className="h-full">
+                <TiltCard max={6} className="h-full">
+                  <SpotlightCard className="site-panel h-full">
+                    <p className="text-3xl font-bold tracking-tight text-primary/25">{step}</p>
+                    <h3 className="mt-3 text-base font-semibold text-foreground">{title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+                  </SpotlightCard>
+                </TiltCard>
+              </StaggerItem>
             ))}
-          </div>
+          </Stagger>
         </div>
       </section>
 
@@ -1065,17 +1052,19 @@ export default function WebsitePage() {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <Stagger className="grid gap-4 sm:grid-cols-2" gap={0.08}>
               {GOVERNANCE_CAPABILITIES.map(({ title, icon: Icon, text }) => (
-                <Card key={title} className="site-panel">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                    <Icon size={18} />
-                  </div>
-                  <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
-                </Card>
+                <StaggerItem key={title} className="h-full">
+                  <SpotlightCard className="site-panel h-full">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <Icon size={18} />
+                    </div>
+                    <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{text}</p>
+                  </SpotlightCard>
+                </StaggerItem>
               ))}
-            </div>
+            </Stagger>
           </div>
 
           <Card className="site-panel mt-8">
@@ -1099,23 +1088,61 @@ export default function WebsitePage() {
         </div>
       </section>
 
-      <section id="pricing" className="border-y border-border/70 bg-background-secondary/35">
+      {/* ── Testimonials ─────────────────────────────────────────────────── */}
+      <section className="site-section overflow-hidden">
+        <div className="site-shell">
+          <SectionTitle
+            kicker="Loved by data teams"
+            title="Trusted across analytics, finance, health, and logistics"
+            text="Teams adopt Querify because it pairs natural-language speed with the governance and explainability enterprises actually require."
+            centered
+          />
+        </div>
+        <div className="relative mt-12">
+          <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 bg-gradient-to-r from-background to-transparent" />
+          <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-l from-background to-transparent" />
+          <Marquee speed={55} pauseOnHover>
+            {TESTIMONIALS.map((t) => (
+              <div key={t.name} className="site-panel mx-1.5 w-[340px] shrink-0 whitespace-normal sm:w-[400px]">
+                <Quote size={22} className="text-primary/40" />
+                <p className="mt-3 text-sm leading-7 text-foreground/90">{t.quote}</p>
+                <div className="mt-5 flex items-center gap-3 border-t border-border/50 pt-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-accent/30 text-xs font-bold text-foreground ring-1 ring-border/60">
+                    {t.initials}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{t.name}</p>
+                    <p className="text-xs text-muted-foreground">{t.role}</p>
+                  </div>
+                  <div className="ml-auto flex gap-0.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Star key={i} size={12} className="fill-amber-400 text-amber-400" />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </Marquee>
+        </div>
+      </section>
+
+      <section id="pricing" className="border-y border-border/50 bg-background-secondary/25">
         <div className="site-shell py-16 sm:py-20 lg:py-24">
           <SectionTitle
             kicker="Plans"
             title="Plan limits that are easy to compare"
             text="A simple pricing surface helps buyers understand query volume, datasets, file limits, saved insights, and admin access."
           />
-          <div className="mt-8">
+          <Reveal className="mt-8">
             <PlanTable />
-          </div>
+          </Reveal>
         </div>
       </section>
 
       <section id="faq" className="site-section">
         <div className="site-shell">
           <SectionTitle kicker="FAQ" title="Short answers for product review" centered />
-          <div className="mx-auto mt-8 max-w-4xl">
+          <Reveal className="mx-auto mt-8 max-w-4xl">
             <Accordion type="single" collapsible className="rounded-lg border border-border/70 bg-card/80 px-4">
               {FAQS.map((item) => (
                 <AccordionItem key={item.question} value={item.question}>
@@ -1124,37 +1151,49 @@ export default function WebsitePage() {
                 </AccordionItem>
               ))}
             </Accordion>
-          </div>
+          </Reveal>
         </div>
       </section>
 
-      <section id="contact" className="pb-20">
+      <section id="contact" className="py-16 sm:py-24">
         <div className="site-shell">
-          <div className="rounded-lg border border-border/70 bg-card/80 p-6 shadow-[0_24px_70px_-48px_hsl(var(--foreground)/0.8)] sm:p-8">
-            <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
-              <div>
-                <p className="site-kicker">Contact</p>
-                <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-                  Bring Querify into your enterprise data workflow.
+          <Reveal>
+            <div className="relative overflow-hidden rounded-[2rem] border border-border/60 p-8 text-center sm:p-14">
+              <FloatingOrbs className="opacity-60" />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 -z-10"
+                style={{ background: "radial-gradient(60% 80% at 50% 0%, hsl(var(--accent) / 0.12), transparent 70%)" }}
+              />
+              <div className="relative mx-auto max-w-2xl">
+                <p className="site-kicker justify-center">Get started</p>
+                <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
+                  Bring <GradientText className="site-gradient-text">Querify</GradientText> into your data workflow.
                 </h2>
-                <p className="site-copy">
-                  Review product depth, pricing, deployment, and governance with a clear demo path.
+                <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
+                  Spin up a workspace in minutes, or talk to us about a guided enterprise demo covering depth, pricing, deployment, and governance.
                 </p>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Button asChild size="lg">
-                  <Link to="/auth">
-                    Open workspace <ArrowRight size={14} />
-                  </Link>
-                </Button>
-                <Button asChild variant="outline" size="lg" className="border-border">
-                  <a href="mailto:support@querify.in">
-                    Email support <ArrowRight size={14} />
-                  </a>
-                </Button>
+                <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                  <Button asChild size="lg" className="site-cta gap-2 rounded-xl px-6 text-[15px]">
+                    <Link to="/auth">
+                      Open workspace <ArrowRight size={16} />
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="lg"
+                    className="rounded-xl border-border/70 bg-card/60 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card"
+                  >
+                    <a href="mailto:support@querify.in">
+                      Email support <ArrowRight size={14} />
+                    </a>
+                  </Button>
+                </div>
+                <p className="mt-6 text-xs text-muted-foreground">No credit card required · Free tier available</p>
               </div>
             </div>
-          </div>
+          </Reveal>
         </div>
       </section>
     </PublicSiteLayout>

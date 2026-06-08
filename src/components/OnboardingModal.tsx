@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Upload, Settings, ArrowRight, X } from "lucide-react";
+import { Upload, Settings, ArrowRight, X, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -8,7 +8,8 @@ const STEPS = [
   {
     title: "Welcome to Querify Agent",
     description: "Your AI-powered data analytics platform. Query your data in plain English with full reasoning trace.",
-    icon: "🎉",
+    icon: null,
+    iconComponent: Sparkles,
   },
   {
     title: "Upload your first file",
@@ -36,7 +37,7 @@ export function OnboardingModal() {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />
       <motion.div
-        className="relative w-full max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-background-secondary p-5 shadow-2xl sm:max-w-md sm:p-6"
+        className="relative w-full max-w-[calc(100vw-2rem)] rounded-2xl border border-border/55 bg-background-secondary/95 p-5 shadow-[0_24px_48px_-20px_hsl(var(--foreground)/0.2)] backdrop-blur-xl sm:max-w-md sm:p-6"
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
       >

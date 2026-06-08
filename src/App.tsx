@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
-import { Toaster as Sonner } from "@/components/ui/sonner";
+import { PremiumToaster } from "@/lib/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CommandPalette } from "@/components/CommandPalette";
 import { OnboardingModal } from "@/components/OnboardingModal";
@@ -38,7 +38,7 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Sonner position="top-right" richColors closeButton />
+      <PremiumToaster position="top-right" max={4} />
       <BrowserRouter>
         <Seo />
         <CommandPalette />

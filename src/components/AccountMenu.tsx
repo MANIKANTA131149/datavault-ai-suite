@@ -63,7 +63,7 @@ export function AccountMenu({
   }, [user?.planTier, token]);
 
   useEffect(() => {
-    console.log("📊 [Daily Token Tracker] Current User Plan Tier:", user?.planTier, "| Has Token:", !!token, "| Daily Tokens Data:", dailyTokens);
+    console.log("[Daily Token Tracker] Current User Plan Tier:", user?.planTier, "| Has Token:", !!token, "| Daily Tokens Data:", dailyTokens);
     fetchDailyTokens();
   }, [fetchDailyTokens, user?.planTier, token]);
 
