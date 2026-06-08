@@ -190,6 +190,18 @@ function getFormatBg(rule: ColFormatRule, cellValue: string): string {
   }
 }
 
+// Turns an unexpected exception thrown during a query run into a readable
+// message. Real internal bugs (TypeError/ReferenceError from minified code,
+// e.g. "e.filter is not a function") are opaque to users, so we surface a
+// generic message while the full error + stack is logged to the console.
+function formatRunError(err: any): string {
+  const raw = err?.message ? String(err.message) : String(err ?? "Unknown error");
+  if (err instanceof TypeError || err instanceof ReferenceError || /is not a function|undefined|null/i.test(raw)) {
+    return "Something went wrong while processing this query. Please try rephrasing it or running it again. (Technical details were logged to the console.)";
+  }
+  return raw;
+}
+
 function computeColStats(rows: Record<string, any>[], col: string) {
   const vals = rows.map((r) => r[col]);
   const nonNull = vals.filter((v) => v !== null && v !== undefined && v !== "");
@@ -3890,9 +3902,11 @@ export default function QueryPage() {
         fetchPlan();
       }
     } catch (err: any) {
-      toast.error(err.message);
+      console.error("Query run failed:", err);
+      const message = formatRunError(err);
+      toast.error(message);
       setLastFailedQuery(question);
-      setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
+      setMessages((prev) => [...prev, { role: "agent", content: message, steps: [] }]);
     } finally {
       setIsRunning(false);
       fetchDailyTokens();
@@ -4156,9 +4170,11 @@ export default function QueryPage() {
         hitlResolverRef.current = null;
       }
       setHitlState(null);
-      toast.error(err.message);
+      console.error("Query run failed:", err);
+      const message = formatRunError(err);
+      toast.error(message);
       setLastFailedQuery(question);
-      setMessages((prev) => [...prev, { role: "agent", content: err.message, steps: [] }]);
+      setMessages((prev) => [...prev, { role: "agent", content: message, steps: [] }]);
     } finally {
       setIsRunning(false);
       setHitlState(null);
