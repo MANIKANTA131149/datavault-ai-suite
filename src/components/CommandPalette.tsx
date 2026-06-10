@@ -83,7 +83,7 @@ export function CommandPalette() {
           </div>
         </CommandEmpty>
 
-        {/* Quick Actions */}
+        {/* Quick Actions — always rendered, stable slot */}
         <CommandGroup heading="Quick Actions">
           <CommandItem onSelect={() => run(() => navigate("/app/query"))}>
             <CmdIcon><MessageSquare size={13} /></CmdIcon>
@@ -115,7 +115,7 @@ export function CommandPalette() {
 
         <CommandSeparator />
 
-        {/* Navigation */}
+        {/* Navigation — always rendered, stable slot */}
         <CommandGroup heading="Navigate">
           {[
             { label: "Dashboard",   Icon: LayoutDashboard, path: "/app/dashboard" },
@@ -137,86 +137,80 @@ export function CommandPalette() {
         </CommandGroup>
 
         {/* Recent Queries */}
-        {recentQueries.length > 0 && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Recent Queries">
-              {recentQueries.map((entry) => (
-                <CommandItem
-                  key={entry.id}
-                  value={`recent-query-${entry.id}-${entry.query}`}
-                  onSelect={() => run(() => navigate("/app/history"))}
+        <div hidden={recentQueries.length === 0}>
+          <CommandSeparator />
+          <CommandGroup heading="Recent Queries">
+            {recentQueries.map((entry) => (
+              <CommandItem
+                key={entry.id}
+                value={`recent-query-${entry.id}-${entry.query}`}
+                onSelect={() => run(() => navigate("/app/history"))}
+              >
+                <CmdIcon><Clock size={12} /></CmdIcon>
+                <span className="min-w-0 truncate">{entry.query}</span>
+                <CommandShortcut
+                  className={cn(
+                    "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                    entry.status === "success"
+                      ? "bg-success/12 text-success"
+                      : "bg-destructive/12 text-destructive",
+                  )}
                 >
-                  <CmdIcon><Clock size={12} /></CmdIcon>
-                  <span className="min-w-0 truncate">{entry.query}</span>
-                  <CommandShortcut
-                    className={cn(
-                      "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
-                      entry.status === "success"
-                        ? "bg-success/12 text-success"
-                        : "bg-destructive/12 text-destructive",
-                    )}
-                  >
-                    {entry.status}
-                  </CommandShortcut>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        )}
+                  {entry.status}
+                </CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </div>
 
         {/* Datasets */}
-        {topDatasets.length > 0 && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Datasets">
-              {topDatasets.map((ds) => (
-                <CommandItem
-                  key={ds.id}
-                  value={`dataset-${ds.id}-${ds.displayName ?? ds.fileName}`}
-                  onSelect={() => run(() => navigate(`/app/query?dataset=${ds.id}`))}
-                >
-                  <CmdIcon><FileText size={12} /></CmdIcon>
-                  <span className="min-w-0 truncate">{ds.displayName ?? ds.fileName}</span>
-                  <CommandShortcut className="shrink-0 text-[10px]">
-                    {Object.values(ds.rowCounts ?? {}).reduce((a, b) => a + b, 0).toLocaleString()} rows
-                  </CommandShortcut>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        )}
+        <div hidden={topDatasets.length === 0}>
+          <CommandSeparator />
+          <CommandGroup heading="Datasets">
+            {topDatasets.map((ds) => (
+              <CommandItem
+                key={ds.id}
+                value={`dataset-${ds.id}-${ds.displayName ?? ds.fileName}`}
+                onSelect={() => run(() => navigate(`/app/query?dataset=${ds.id}`))}
+              >
+                <CmdIcon><FileText size={12} /></CmdIcon>
+                <span className="min-w-0 truncate">{ds.displayName ?? ds.fileName}</span>
+                <CommandShortcut className="shrink-0 text-[10px]">
+                  {Object.values(ds.rowCounts ?? {}).reduce((a, b) => a + b, 0).toLocaleString()} rows
+                </CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </div>
 
         {/* Connections */}
-        {topConns.length > 0 && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Connections">
-              {topConns.map((conn) => (
-                <CommandItem
-                  key={conn.id}
-                  value={`connection-${conn.id}-${conn.name}`}
-                  onSelect={() => run(() => navigate("/app/connections"))}
+        <div hidden={topConns.length === 0}>
+          <CommandSeparator />
+          <CommandGroup heading="Connections">
+            {topConns.map((conn) => (
+              <CommandItem
+                key={conn._id}
+                value={`connection-${conn._id}-${conn.name}`}
+                onSelect={() => run(() => navigate("/app/connections"))}
+              >
+                <CmdIcon>
+                  <DbTypeIcon dbType={conn.dbType} size={12} className="text-muted-foreground" />
+                </CmdIcon>
+                <span className="min-w-0 truncate">{conn.name}</span>
+                <CommandShortcut
+                  className={cn(
+                    "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                    conn.status === "connected"
+                      ? "bg-success/12 text-success"
+                      : "bg-muted/60 text-muted-foreground",
+                  )}
                 >
-                  <CmdIcon>
-                    <DbTypeIcon dbType={conn.dbType} size={12} className="text-muted-foreground" />
-                  </CmdIcon>
-                  <span className="min-w-0 truncate">{conn.name}</span>
-                  <CommandShortcut
-                    className={cn(
-                      "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none",
-                      conn.status === "connected"
-                        ? "bg-success/12 text-success"
-                        : "bg-muted/60 text-muted-foreground",
-                    )}
-                  >
-                    {conn.status}
-                  </CommandShortcut>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        )}
+                  {conn.status}
+                </CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </div>
       </CommandList>
 
       {/* Footer hint bar */}

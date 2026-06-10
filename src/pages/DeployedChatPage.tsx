@@ -21,6 +21,7 @@ import {
   ClipboardCheck, Clipboard, MessageSquareText, RotateCcw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -608,6 +609,69 @@ const StepsTimeline = memo(function StepsTimeline({ steps, live = false }: any) 
   );
 });
 
+const MultiTableMiniChart = memo(function MultiTableMiniChart({ data }: { data: Record<string, any>[] }) {
+  const { chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(data), [data]);
+  const [chartType, setChartType] = useState<"bar" | "line" | "pie">(defaultChart === "line" ? "line" : "bar");
+  const [showChart, setShowChart] = useState(true);
+
+  if (!isChartable) return null;
+
+  const displayRows = chartRows.slice(0, 20);
+  const color = "hsl(var(--primary))";
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <button onClick={() => setShowChart((p) => !p)} className="text-[10px] text-primary hover:underline flex items-center gap-1">
+          <BarChart3 size={11} />
+          {showChart ? "Hide chart" : "Show chart"}
+        </button>
+        {showChart && (
+          <div className="flex gap-1">
+            {(["bar", "line", "pie"] as const).map((t) => (
+              <button key={t} onClick={() => setChartType(t)} className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-zinc-400 hover:text-foreground"}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {showChart && (
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card/40 p-2">
+          <ResponsiveContainer width="100%" height={180}>
+            {chartType === "pie" ? (
+              <PieChart>
+                <Pie data={displayRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={65} fill={color} label={({ name, percent }) => `${String(name).slice(0, 12)} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                  {displayRows.map((_: any, i: number) => (
+                    <Cell key={i} fill={`hsl(${(215 + i * 37) % 360}, 65%, 54%)`} />
+                  ))}
+                </Pie>
+                <RechartsTooltip formatter={(v: any) => [typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v, valueKey]} />
+              </PieChart>
+            ) : chartType === "line" ? (
+              <LineChart data={displayRows} margin={{ top: 4, right: 12, left: 0, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                <YAxis tick={{ fontSize: 10 }} width={40} />
+                <RechartsTooltip formatter={(v: any) => [typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v, valueKey]} />
+                <Line type="monotone" dataKey={valueKey} stroke={color} dot={displayRows.length <= 15} strokeWidth={2} />
+              </LineChart>
+            ) : (
+              <BarChart data={displayRows} margin={{ top: 4, right: 12, left: 0, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                <YAxis tick={{ fontSize: 10 }} width={40} />
+                <RechartsTooltip formatter={(v: any) => [typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v, valueKey]} />
+                <Bar dataKey={valueKey} fill={color} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+});
+
 const MultiTableResult = memo(function MultiTableResult({ result }: { result: any }) {
   if (typeof result !== "object" || result === null || Array.isArray(result)) return null;
 
@@ -634,29 +698,32 @@ const MultiTableResult = memo(function MultiTableResult({ result }: { result: an
           } else {
             const headers = Object.keys(val[0] || {});
             content = (
-              <div className="max-h-60 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card shadow-sm">
-                <table className="w-full text-xs">
-                  <thead className="bg-zinc-50 dark:bg-zinc-900">
-                    <tr>
-                      {headers.map((h) => (
-                        <th key={h} className="text-left px-3 py-2 text-zinc-500 dark:text-zinc-400 font-semibold whitespace-nowrap">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {val.map((row: any, i: number) => (
-                      <tr key={i} className="border-t border-zinc-200/50 dark:border-zinc-800/50">
-                        {headers.map((h, j) => (
-                          <td key={j} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 min-w-[80px] max-w-[140px] truncate">
-                            {String(row[h] ?? "")}
-                          </td>
+              <div className="space-y-2">
+                <div className="max-h-60 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800 bg-card shadow-sm">
+                  <table className="w-full text-xs">
+                    <thead className="bg-zinc-50 dark:bg-zinc-900">
+                      <tr>
+                        {headers.map((h) => (
+                          <th key={h} className="text-left px-3 py-2 text-zinc-500 dark:text-zinc-400 font-semibold whitespace-nowrap">
+                            {h}
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {val.map((row: any, i: number) => (
+                        <tr key={i} className="border-t border-zinc-200/50 dark:border-zinc-800/50">
+                          {headers.map((h, j) => (
+                            <td key={j} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 min-w-[80px] max-w-[140px] truncate">
+                              {String(row[h] ?? "")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <MultiTableMiniChart data={val} />
               </div>
             );
           }
@@ -933,6 +1000,49 @@ export default function DeployedChatPage() {
       setHitlState(null);
     }
   };
+
+  // ── Memory-loss warning ────────────────────────────────────────────────────
+  const hasMemory = messages.length > 0 || conversationContext.length > 0;
+  const hasMemoryRef = useRef(hasMemory);
+  hasMemoryRef.current = hasMemory;
+
+  const [navBlocked, setNavBlocked] = useState<string | null>(null);
+  const pendingNavRef = useRef<(() => void) | null>(null);
+
+  // Case 1: In-app route navigation — intercept pushState / popstate.
+  useEffect(() => {
+    const origPush = window.history.pushState.bind(window.history);
+    window.history.pushState = function (state, title, url) {
+      const next = url ? String(url) : "";
+      if (hasMemoryRef.current && next && !next.includes(window.location.pathname)) {
+        pendingNavRef.current = () => origPush(state, title, url);
+        setNavBlocked(next);
+        return;
+      }
+      origPush(state, title, url);
+    };
+    const handlePop = (e: PopStateEvent) => {
+      if (hasMemoryRef.current) {
+        e.preventDefault();
+        window.history.pushState(null, "", window.location.href);
+        pendingNavRef.current = () => window.history.back();
+        setNavBlocked("back");
+      }
+    };
+    window.addEventListener("popstate", handlePop);
+    return () => {
+      window.history.pushState = origPush;
+      window.removeEventListener("popstate", handlePop);
+    };
+  }, []);
+
+  // Case 2: Page refresh or browser tab close.
+  useEffect(() => {
+    if (!hasMemory) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [hasMemory]);
 
   // Multi-turn conversation memory
   const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
@@ -1271,6 +1381,32 @@ export default function DeployedChatPage() {
 
   return (
     <div className="relative h-screen flex flex-col md:flex-row w-full overflow-hidden overflow-x-hidden bg-background text-foreground font-sans antialiased transition-colors duration-200">
+
+      {/* ── Memory-loss warning dialog (route navigation) ── */}
+      <AlertDialog open={navBlocked !== null}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span>⚠️</span> Leave page?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-sm">
+              <p>Your agent conversation memory will be permanently deleted if you leave this page. This includes:</p>
+              <ul className="list-disc pl-5 space-y-1 text-muted-foreground text-xs">
+                <li><strong>Chat history</strong> — all messages in this session</li>
+                <li><strong>Conversation context</strong> — {conversationContext.length} turn{conversationContext.length !== 1 ? "s" : ""} the agent is using to answer follow-up questions</li>
+                <li><strong>Agent memory</strong> — the agent will start completely fresh on the next question</li>
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { pendingNavRef.current = null; setNavBlocked(null); }}>Stay on page</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { const go = pendingNavRef.current; pendingNavRef.current = null; setNavBlocked(null); go?.(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Leave & clear memory
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-10 bg-black/20 backdrop-blur-sm md:hidden"

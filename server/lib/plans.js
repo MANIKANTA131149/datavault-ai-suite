@@ -246,7 +246,20 @@ async function getUsage(db, user, planOwner = user) {
   const historyFilter = {
     userId: { $in: userIds },
     date: { $gte: start, $lt: end },
-    model: { $nin: ["amazon.nova-pro-v1:0", "amazon.nova-micro-v1:0", "amazon.nova-lite-v1:0"] }
+    // Platform-served free models (daily-limited, not counted against the monthly plan quota).
+    model: { $nin: [
+      "amazon.nova-pro-v1:0", "amazon.nova-micro-v1:0", "amazon.nova-lite-v1:0",
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "google.gemma-3-12b-it",
+      "openai.gpt-oss-120b-1:0",
+      "meta.llama3-3-70b-instruct-v1:0",
+      "amazon.nova-premier-v1:0",
+      "deepseek.v3.2",
+      "deepseek.r1-v1:0",
+      "qwen.qwen3-next-80b-a3b",
+      "nvidia.nemotron-super-3-120b",
+      "moonshot.kimi-k2-thinking",
+    ] }
   };
 
   const [queryCount, tokenAgg, datasetCount, insightCount, memberCount] = await Promise.all([

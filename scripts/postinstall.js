@@ -6,4 +6,4 @@ if (process.env.AWS_APP_ID) {
   process.exit(0);
 }
 
-execSync("npm --prefix server install --omit=dev", { stdio: "inherit" });
+execSync("npm --prefix server install --omit=dev --ignore-scripts", { stdio: "inherit" });

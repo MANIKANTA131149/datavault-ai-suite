@@ -76,9 +76,24 @@ OPERATIONS & PARAMS (for ExecuteFinalQuery / QuerySheet)
 ═══════════════════════════════════════════════════════
 
 filter        {"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}
+              OR use value_column to compare row[column] against another column's value: {"column":"col","operator":">","value_column":"avg_col","multiplier":1.5}
+              IMPORTANT: When comparing against a per-row column (e.g. after lookup_sheets adds an AvgQuantity column), ALWAYS use value_column — NEVER put a column name as "value" (that compares against the literal string).
 sort          {"column":"col","order":"asc|desc","limit":N}
 remove_nulls  {"column":"col"} or {} to remove all null rows
-groupby       {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"desc|asc","filter":{optional},"transformColumn":{optional},"transformFunction":{optional},"removeOutliers":{optional},"removeNulls":{true|false}}
+groupby       {"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"desc|asc","having":{"operator":">","value":N},"filter":{optional},"transformColumn":{optional},"transformFunction":{optional},"removeOutliers":{optional},"removeNulls":{true|false}}
+              OUTPUT COLUMNS: groupby outputs (1) groupColumn as-is, (2) aggregated value as "<aggColumn>_<aggFunction>" (e.g. aggColumn="Sales", aggFunction="sum" → "Sales_sum"). Use "having" to filter on the aggregate WITHIN groupby instead of a downstream filter step — this avoids column-loss in pipelines. Example: having:{"operator":">","value":1} keeps only groups where the aggregate > 1.
+groupby_multi {"groupColumn":"col","aggregations":[{"column":"col2","function":"count_distinct","alias":"cat_count"},{"column":"col3","function":"sum","alias":"total_rev"}],"having":{"alias":"cat_count","operator":">","value":1},"limit":N,"order":"desc|asc"}
+              *** MANDATORY *** USE groupby_multi — NEVER chain multiple groupby steps in a pipeline.
+              WHY: After the first groupby, ALL original columns are DESTROYED. Only groupColumn and the ONE aggregate column survive.
+              Chaining a second groupby on destroyed data = 0 rows ALWAYS.
+              RULE: Any time you need (A) filter by one aggregate (e.g. count_distinct > 1) AND (B) compute another aggregate (e.g. sum) grouped by the SAME column → you MUST use ONE groupby_multi call, NOT two groupby steps.
+              WRONG (always returns 0 rows):
+                pipeline: [groupby(CustomerID/Category/count_distinct, having>1), groupby(CustomerID/TotalAmount/sum)]
+              CORRECT:
+                groupby_multi: {groupColumn:"CustomerID", aggregations:[{column:"Category",function:"count_distinct",alias:"cat_count"},{column:"TotalAmount",function:"sum",alias:"total_revenue"}], having:{alias:"cat_count",operator:">",value:1}}
+              AGGREGATION FUNCTIONS: count, count_distinct, sum, mean, min, max, first, last.
+              For STRING columns (status, category, name): use "first" to carry the value through, or "count_distinct" to count unique values. "max"/"min" on strings does lexicographic comparison.
+              EXAMPLE (string column carry-through): {column:"InventoryStatus",function:"first",alias:"Status"} — carries the status string through the groupby so you can filter on it afterward.
 aggregate     {"column":"col","function":"sum|count|mean|min|max|median|std|variance"}
 select        {"columns":["col1","col2"],"limit":N}
 head          {"n":N}
@@ -411,10 +426,11 @@ SELF-CORRECTION PROTOCOL (follow whenever a result is an error)
 // Single source of truth. Add new operations here and every system prompt
 // automatically picks them up via buildOperationsBlock().
 const SUPPORTED_OPERATIONS: Array<{ name: string; params: string; note?: string }> = [
-  { name: "filter",           params: '{"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X}' },
+  { name: "filter",           params: '{"column":"col","operator":"==|!=|>|<|>=|<=|contains|starts_with|ends_with|is_null|not_null","value":X} OR {"column":"col","operator":">","value_column":"other_col","multiplier":1.5} — use value_column to compare row[column] against row[other_col] (optionally scaled). Use this when comparing a value against a per-row computed column (e.g. after a lookup_sheets step).' },
   { name: "sort",             params: '{"column":"col","order":"asc|desc","limit":N}' },
   { name: "remove_nulls",     params: '{"column":"col"} or {} to remove all null rows' },
-  { name: "groupby",          params: '{"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"desc|asc","filter":{optional},"transformColumn":{optional},"transformFunction":{optional},"removeOutliers":{optional},"removeNulls":{true|false}}' },
+  { name: "groupby",          params: '{"groupColumn":"col","aggColumn":"col2","aggFunction":"sum|count|count_distinct|mean|min|max","limit":N,"order":"desc|asc","having":{"operator":">","value":N},"filter":{optional},"transformColumn":{optional},"transformFunction":{optional},"removeOutliers":{optional},"removeNulls":{true|false}}', note: 'WARNING: groupby destroys all columns except groupColumn and the ONE aggregate. NEVER chain two groupby steps — use groupby_multi instead.' },
+  { name: "groupby_multi",    params: '{"groupColumn":"col","aggregations":[{"column":"col2","function":"count_distinct","alias":"alias1"},{"column":"col3","function":"sum","alias":"alias2"}],"having":{"alias":"alias1","operator":">","value":1},"limit":N,"order":"desc|asc"}', note: 'MANDATORY when you need multiple aggregations per group OR when filtering by one aggregate while computing another. NEVER chain two groupby steps — use groupby_multi instead. Supported agg functions: count, count_distinct, sum, mean, min, max, first, last. For STRING columns use "first" to carry the value through. Example: products ordered >10 times with Low Stock = groupby_multi(ProductName, [{OrderID,count,OrderCount},{InventoryStatus,first,Status}], having:{alias:OrderCount,operator:>,value:10}) then filter Status=="Low Stock".' },
   { name: "aggregate",        params: '{"column":"col","function":"sum|count|mean|min|max|median|std|variance"}' },
   { name: "select",           params: '{"columns":["col1","col2"],"limit":N}' },
   { name: "head",             params: '{"n":N}' },
@@ -563,6 +579,19 @@ ${opsBlock}
 DATASET-SPECIFIC EXAMPLES (using YOUR actual column names)
 ═══════════════════════════════════════════════════════
 ${examples}
+
+═══════════════════════════════════════════════════════
+HARD RULE — groupby_multi IS MANDATORY
+═══════════════════════════════════════════════════════
+If you need BOTH: (A) filter groups by one aggregate (e.g. count_distinct > 1) AND (B) compute another aggregate (e.g. sum) for the SAME groups:
+→ YOU MUST USE groupby_multi IN A SINGLE STEP.
+→ NEVER chain two groupby steps in a pipeline — the first groupby destroys all original columns, so the second always returns 0 rows.
+
+CORRECT PATTERN for "customers who bought from multiple categories + their total revenue":
+{"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"groupby_multi","params":{"groupColumn":"CustomerID","aggregations":[{"column":"Category","function":"count_distinct","alias":"cat_count"},{"column":"TotalAmount","function":"sum","alias":"total_revenue"}],"having":{"alias":"cat_count","operator":">","value":1}}}}
+
+WRONG PATTERN (always returns 0 rows — FORBIDDEN):
+pipeline with two groupby steps where second groupby references columns lost after first groupby.
 
 FINAL REMINDER: output ONLY a single JSON object. Zero prose. Zero markdown. Zero explanation.`;
 }
@@ -1094,6 +1123,10 @@ function repairLegacyCommandSheet(
       ? args.sheet_name.trim()
       : defaultSheetName;
 
+  // Never remap virtual/cross-sheet queries — cross_sheet is a runtime workspace that
+  // holds join/union results in memory; it won't be found in the sheets map by design.
+  if (requestedSheetName === "cross_sheet") return parsed;
+
   const operation = typeof args.operation === "string" ? args.operation.trim() : "";
   let referencedColumns = getReferencedSheetColumns(operation, args.params || {});
   if (referencedColumns.length === 0 && typeof args.pandas_query === "string") {
@@ -1356,12 +1389,13 @@ function looseCompare(a: any, b: any, operator: string): boolean {
 // the code expects to be an array arriving as a string/object, which would throw
 // "x.filter is not a function") becomes a recoverable error result instead of
 // crashing the whole run. The returned { error } feeds the self-healing loop.
-function safeExecuteOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
-  if (!Array.isArray(data)) {
+function safeExecuteOperation(data: Record<string, any>[], operation: string, params: Record<string, any>, sheets?: WorkbookSheets): any {
+  const noArrayRequired = new Set(["pipeline", "multi_analysis", "groupby_multi"]);
+  if (!Array.isArray(data) && !noArrayRequired.has(operation)) {
     return { error: "No tabular data is available to run this operation on. Inspect the columns first with GetColumns." };
   }
   try {
-    return executeOperation(data, operation, params);
+    return executeOperation(data, operation, params, sheets);
   } catch (err: any) {
     console.error(`executeOperation("${operation}") failed:`, err, { params });
     return {
@@ -1370,7 +1404,63 @@ function safeExecuteOperation(data: Record<string, any>[], operation: string, pa
   }
 }
 
-function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>): any {
+function normalizeOperationParams(operation: string, params: any): Record<string, any> {
+  if (params === null || params === undefined) return {};
+  if (typeof params !== "object") return {};
+  if ((operation === "multi_analysis" || operation === "pipeline") && Array.isArray(params)) return { operations: params };
+  if (operation === "groupby" && params.aggFunction && typeof params.aggFunction === "object") {
+    return { ...params, aggFunction: (params.aggFunction as any).function ?? "count" };
+  }
+  if (operation === "filter" && params.filter && !params.column) {
+    return { ...params, ...params.filter, filter: undefined };
+  }
+  if (operation === "sort" && !params.column) {
+    const col = params.orderBy ?? params.sortBy ?? params.sortColumn ?? params.order_by;
+    if (col) return { ...params, column: col };
+  }
+  if (operation === "aggregate" && !params.aggFunction && params.function) {
+    return { ...params, aggFunction: params.function };
+  }
+  return params as Record<string, any>;
+}
+
+const CROSS_SHEET_OPS = new Set(["join_sheets", "compare_sheets", "union_sheets", "vlookup_sheets", "lookup_sheets"]);
+
+const OP_PARAM_KEYS: Record<string, string[]> = {
+  groupby: ["groupColumn", "aggColumn", "aggFunction", "limit", "order"],
+  filter: ["column", "operator", "value"],
+  sort: ["column", "order", "limit"],
+  aggregate: ["column", "aggFunction", "function"],
+  select: ["columns", "limit"],
+  join_sheets: ["sheet1", "sheet2", "key1", "key2", "joinType"],
+};
+
+function normalizeStepOp(op: any): { operation: string; params: Record<string, any> } {
+  const operation = typeof op.operation === "string" ? op.operation : String(op.operation ?? "");
+  let params: Record<string, any> = op.params ?? {};
+  const keys = OP_PARAM_KEYS[operation];
+  if (keys) {
+    const hoisted: Record<string, any> = {};
+    for (const k of keys) {
+      if (op[k] !== undefined && params[k] === undefined) hoisted[k] = op[k];
+    }
+    if (Object.keys(hoisted).length > 0) params = { ...hoisted, ...params };
+  }
+  return { operation, params: normalizeOperationParams(operation, params) };
+}
+
+function executeOperation(data: Record<string, any>[], operation: string, params: Record<string, any>, sheets?: WorkbookSheets): any {
+  params = normalizeOperationParams(operation, params);
+
+  // Pipeline/multi_analysis manage their own data — don't require array input
+  const noArrayRequired = new Set(["pipeline", "multi_analysis", "groupby_multi"]);
+  if (!Array.isArray(data) && !noArrayRequired.has(operation)) {
+    const preview = typeof data === "object" && data !== null
+      ? JSON.stringify(data).slice(0, 200)
+      : String(data);
+    return { error: `Operation "${operation}" expects an array of rows but received: ${preview}. Check that previous pipeline steps returned tabular data.` };
+  }
+
   switch (operation) {
     case "filter": {
       let normalizedParams = params;
@@ -1382,20 +1472,26 @@ function executeOperation(data: Record<string, any>[], operation: string, params
         }
       }
 
-      const { column, operator = "==", value } = normalizedParams;
+      const { column, operator = "==", value, value_column, multiplier } = normalizedParams;
       return data.filter((row) => {
         const actualCol = resolveColumn(row, column);
         const v = row[actualCol];
+        // value_column: compare row[column] against row[value_column] (optionally scaled by multiplier)
+        let resolvedValue = value;
+        if (value_column) {
+          const actualValCol = resolveColumn(row, value_column);
+          resolvedValue = multiplier != null ? Number(row[actualValCol]) * Number(multiplier) : row[actualValCol];
+        }
         switch (operator) {
-          case ">": return looseCompare(v, value, ">");
-          case "<": return looseCompare(v, value, "<");
-          case ">=": return looseCompare(v, value, ">=");
-          case "<=": return looseCompare(v, value, "<=");
-          case "==": return looseEquals(v, value);
-          case "!=": return !looseEquals(v, value);
-          case "contains": return String(v).toLowerCase().includes(String(value).toLowerCase());
-          case "starts_with": return String(v).toLowerCase().startsWith(String(value).toLowerCase());
-          case "ends_with": return String(v).toLowerCase().endsWith(String(value).toLowerCase());
+          case ">": return looseCompare(v, resolvedValue, ">");
+          case "<": return looseCompare(v, resolvedValue, "<");
+          case ">=": return looseCompare(v, resolvedValue, ">=");
+          case "<=": return looseCompare(v, resolvedValue, "<=");
+          case "==": return looseEquals(v, resolvedValue);
+          case "!=": return !looseEquals(v, resolvedValue);
+          case "contains": return String(v).toLowerCase().includes(String(resolvedValue).toLowerCase());
+          case "starts_with": return String(v).toLowerCase().startsWith(String(resolvedValue).toLowerCase());
+          case "ends_with": return String(v).toLowerCase().endsWith(String(resolvedValue).toLowerCase());
           case "is_null": return v == null || v === "";
           case "not_null": return v != null && v !== "";
           default: return true;
@@ -1415,7 +1511,7 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       return limit ? sorted.slice(0, limit) : sorted;
     }
     case "groupby": {
-      const { groupColumn, aggColumn, aggFunction, filter: filterParam, transformColumn, transformFunction, removeOutliers, removeNulls = true, limit, order = "desc" } = params;
+      const { groupColumn, aggColumn, aggFunction, filter: filterParam, transformColumn, transformFunction, removeOutliers, removeNulls = true, limit, order = "desc", having } = params;
       const aggregateKey = String(aggFunction || "count");
       
       const firstRow = data[0] || {};
@@ -1499,15 +1595,119 @@ function executeOperation(data: Record<string, any>[], operation: string, params
             default: agg = vals.length;
           }
         }
-        return { [groupColumn]: key, [aggregateKey]: agg };
+        // Output column name: use bare aggFunction (e.g. "sum", "mean") for backward compat.
+        // The having filter below also checks both naming forms for robustness.
+        const row: Record<string, string | number> = { [groupColumn]: key, [aggregateKey]: agg };
+        return row;
       });
-      
+
+      // Apply HAVING filter on the aggregated value before sorting/limiting
+      let finalResult = result;
+      if (having) {
+        const { operator = ">", value } = having;
+        const havingVal = Number(value);
+        finalResult = result.filter((row) => {
+          const v = Number(row[aggregateKey] ?? 0);
+          switch (operator) {
+            case ">":  return v > havingVal;
+            case ">=": return v >= havingVal;
+            case "<":  return v < havingVal;
+            case "<=": return v <= havingVal;
+            case "==": case "=": return v === havingVal;
+            case "!=": return v !== havingVal;
+            default:   return v > havingVal;
+          }
+        });
+      }
+
       // Sort by aggregate descending by default
-      const sorted = result.sort((a, b) => {
+      const sorted = finalResult.sort((a, b) => {
         const diff = Number(b[aggregateKey] ?? 0) - Number(a[aggregateKey] ?? 0);
         return order === "asc" ? -diff : diff;
       });
       return limit ? sorted.slice(0, Number(limit)) : sorted;
+    }
+
+    // groupby_multi: aggregate multiple columns per group in one pass.
+    // Returns one row per group with ALL requested aggregations — no column loss.
+    // params: { groupColumn, aggregations: [{column, function, alias?}], having?, limit?, order? }
+    // Example: group by CustomerID, count_distinct Category AND sum TotalAmount:
+    //   {"groupColumn":"CustomerID","aggregations":[{"column":"Category","function":"count_distinct","alias":"category_count"},{"column":"TotalAmount","function":"sum","alias":"total_revenue"}],"having":{"alias":"category_count","operator":">","value":1}}
+    case "groupby_multi": {
+      const { groupColumn, aggregations = [], having: havingMulti, limit: limitMulti, order: orderMulti = "desc" } = params;
+      if (!groupColumn || !Array.isArray(aggregations) || aggregations.length === 0) {
+        return { error: 'groupby_multi requires "groupColumn" and non-empty "aggregations" array.' };
+      }
+      const firstRow = data[0] || {};
+      const actualGrpCol = resolveColumn(firstRow, groupColumn);
+
+      // Group all rows by the group column
+      const groups: Record<string, Record<string, any>[]> = {};
+      for (const row of data) {
+        const key = String(row[actualGrpCol] ?? "null");
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(row);
+      }
+
+      const multiResult = Object.entries(groups).map(([key, rows]) => {
+        const out: Record<string, any> = { [groupColumn]: key };
+        for (const agg of aggregations) {
+          const col = resolveColumn(firstRow, agg.column);
+          const fn = String(agg.function || "count");
+          const alias = agg.alias || `${agg.column}_${fn}`;
+          const vals = rows.map((r) => r[col]).filter((v) => v != null && v !== "");
+          const isNumericCol = vals.length > 0 && !isNaN(Number(vals[0]));
+          let aggVal: number | string;
+          switch (fn) {
+            case "count":          aggVal = rows.length; break;
+            case "count_distinct": aggVal = new Set(vals.map(String)).size; break;
+            case "sum":            aggVal = vals.reduce((s: number, v) => s + Number(v), 0); break;
+            case "mean":           aggVal = vals.length ? vals.reduce((s: number, v) => s + Number(v), 0) / vals.length : 0; break;
+            case "min":
+              aggVal = isNumericCol
+                ? Math.min(...vals.map(Number))
+                : (vals.slice().sort()[0] ?? ""); // lexicographic min for strings
+              break;
+            case "max":
+              aggVal = isNumericCol
+                ? Math.max(...vals.map(Number))
+                : (vals.slice().sort().reverse()[0] ?? ""); // lexicographic max for strings
+              break;
+            case "first": aggVal = vals[0] ?? ""; break;
+            case "last":  aggVal = vals[vals.length - 1] ?? ""; break;
+            default:               aggVal = rows.length;
+          }
+          out[alias] = aggVal;
+        }
+        return out;
+      });
+
+      // Apply HAVING on a named alias
+      let filteredMulti = multiResult;
+      if (havingMulti) {
+        const { alias: havingAlias, operator: havingOp = ">", value: havingVal } = havingMulti;
+        const hv = Number(havingVal);
+        filteredMulti = multiResult.filter((row) => {
+          const v = Number(row[havingAlias] ?? 0);
+          switch (havingOp) {
+            case ">":  return v > hv;
+            case ">=": return v >= hv;
+            case "<":  return v < hv;
+            case "<=": return v <= hv;
+            case "==": case "=": return v === hv;
+            case "!=": return v !== hv;
+            default:   return v > hv;
+          }
+        });
+      }
+
+      // Sort by first aggregation alias descending by default
+      const sortAlias = aggregations[0]?.alias || `${aggregations[0]?.column}_${aggregations[0]?.function}`;
+      const sortedMulti = filteredMulti.sort((a, b) => {
+        const diff = Number(b[sortAlias] ?? 0) - Number(a[sortAlias] ?? 0);
+        return orderMulti === "asc" ? -diff : diff;
+      });
+      return limitMulti ? sortedMulti.slice(0, Number(limitMulti)) : sortedMulti;
     }
     case "aggregate": {
       const { column, function: fn } = params;
@@ -1896,27 +2096,96 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     }
 
     case "pipeline": {
-      const { operations } = params;
-      if (!Array.isArray(operations)) {
+      const rawOps = params.operations ?? params;
+      if (!Array.isArray(rawOps)) {
         return { error: 'The "pipeline" operation requires an "operations" array of {operation, params} steps.' };
       }
-      let currentData = data;
-      for (const op of operations) {
-        currentData = executeOperation(currentData, op.operation, op.params || {});
+
+      // Auto-fix: detect chained groupby steps that reference destroyed columns.
+      // When pipeline has 2+ consecutive groupby steps on the same groupColumn,
+      // automatically convert them to a single groupby_multi call.
+      const normalizedOps = [...rawOps];
+      const gbIndices: number[] = [];
+      for (let i = 0; i < normalizedOps.length; i++) {
+        const op = normalizeStepOp(normalizedOps[i]);
+        if (op.operation === "groupby") gbIndices.push(i);
+      }
+      if (gbIndices.length >= 2) {
+        // Check if they share the same groupColumn
+        const firstOp = normalizeStepOp(normalizedOps[gbIndices[0]]);
+        const allSameGroup = gbIndices.every((idx) => {
+          const o = normalizeStepOp(normalizedOps[idx]);
+          return o.params.groupColumn === firstOp.params.groupColumn;
+        });
+        if (allSameGroup) {
+          // Build aggregations array from all chained groupby steps
+          const aggregations = gbIndices.map((idx) => {
+            const o = normalizeStepOp(normalizedOps[idx]);
+            const col = o.params.aggColumn ?? o.params.column ?? "";
+            const fn = o.params.aggFunction ?? o.params.function ?? "count";
+            return { column: col, function: fn, alias: `${col}_${fn}` };
+          });
+          // Use having from the first groupby that has one (usually the filter step)
+          const havingSource = gbIndices.find((idx) => normalizeStepOp(normalizedOps[idx]).params.having);
+          const having = havingSource != null ? { ...normalizeStepOp(normalizedOps[havingSource]).params.having, alias: aggregations[gbIndices.indexOf(havingSource)].alias } : undefined;
+          const multiStep = {
+            operation: "groupby_multi",
+            params: { groupColumn: firstOp.params.groupColumn, aggregations, ...(having ? { having } : {}) },
+          };
+          // Replace all groupby steps with a single groupby_multi
+          const nonGbOps = normalizedOps.filter((_, i) => !gbIndices.includes(i));
+          // Insert groupby_multi where the first groupby was
+          const insertAt = gbIndices[0];
+          nonGbOps.splice(insertAt, 0, multiStep);
+          // Re-run pipeline with fixed ops
+          return executeOperation(data, "pipeline", { operations: nonGbOps }, sheets);
+        }
+      }
+
+      const VIRTUAL = "cross_sheet";
+      let currentData: any = Array.isArray(data) ? data : [];
+      for (let stepIdx = 0; stepIdx < rawOps.length; stepIdx++) {
+        const rawOp = rawOps[stepIdx];
+        const op = normalizeStepOp(rawOp);
+        let stepResult: any;
+        if (CROSS_SHEET_OPS.has(op.operation) && sheets) {
+          const joinParams = op.params as any;
+          if ((joinParams.sheet1 === VIRTUAL || joinParams.sheet2 === VIRTUAL) && Array.isArray(currentData)) {
+            const virtualSheets: WorkbookSheets = {
+              ...sheets,
+              [VIRTUAL]: {
+                rows: currentData,
+                columns: currentData.length > 0
+                  ? Object.keys(currentData[0]).map((name) => ({ name, dtype: "string" as const, sampleValues: [] }))
+                  : [],
+              },
+            };
+            stepResult = executeCrossSheetOperation(virtualSheets, op.operation, joinParams);
+          } else {
+            stepResult = executeCrossSheetOperation(sheets, op.operation, joinParams);
+          }
+        } else {
+          stepResult = executeOperation(currentData, op.operation, op.params, sheets);
+        }
+        // If a step returned an error object or non-array where next step needs array, stop early
+        if (stepResult && typeof stepResult === "object" && !Array.isArray(stepResult) && stepResult.error) {
+          return stepResult;
+        }
+        currentData = stepResult;
       }
       return currentData;
     }
 
     case "multi_analysis": {
-      const { operations = [] } = params;
-      if (!Array.isArray(operations)) {
+      const rawOps = params.operations ?? params;
+      if (!Array.isArray(rawOps)) {
         return { error: 'The "multi_analysis" operation requires an "operations" array of {operation, params} steps.' };
       }
       const results: Record<string, any> = {};
-      for (let i = 0; i < operations.length; i++) {
-        const op = operations[i];
-        const key = op.name || op.label || `analysis_${i}_${op.operation}`;
-        results[key] = executeOperation(data, op.operation, op.params || {});
+      for (let i = 0; i < rawOps.length; i++) {
+        const op = normalizeStepOp(rawOps[i]);
+        const key = rawOps[i].name || rawOps[i].label || `analysis_${i}_${op.operation}`;
+        results[key] = executeOperation(data, op.operation, op.params, sheets);
       }
       return results;
     }
@@ -2368,6 +2637,386 @@ LAST-RESORT RULE: If no named operation fits what you need, use universal_comput
   {"command":"ExecuteFinalQuery","args":{"operation":"universal_compute","params":{"code":"return data.filter(r => ...).map(r => ...)"}}}
 The code receives data (array of row objects) and must return a serializable value. Network and filesystem access are blocked.`;
 
+// ─── Zero-Rows Smart Probe ─────────────────────────────────────────────────────
+// Runs inline data stats (no extra LLM calls) to diagnose WHY a query returned
+// 0 rows and produce a targeted corrective hint for the next LLM turn.
+
+interface FilterSpec {
+  column: string;
+  operator: string;
+  value: any;
+}
+
+function extractFiltersFromArgs(operation: string, params: Record<string, any>): FilterSpec[] {
+  const out: FilterSpec[] = [];
+  if (operation === "filter") {
+    if (params.column) out.push({ column: params.column, operator: params.operator ?? "==", value: params.value });
+  } else if (operation === "multi_filter" && Array.isArray(params.filters)) {
+    for (const f of params.filters) {
+      if (f?.column) out.push({ column: f.column, operator: f.operator ?? "==", value: f.value });
+    }
+  } else if (operation === "pipeline" && Array.isArray(params.operations)) {
+    for (const step of params.operations) {
+      const s = normalizeStepOp(step);
+      out.push(...extractFiltersFromArgs(s.operation, s.params));
+    }
+  } else if (operation === "groupby" && params.filter) {
+    const f = params.filter;
+    if (f?.column) out.push({ column: f.column, operator: f.operator ?? "==", value: f.value });
+  }
+  return out;
+}
+
+function findJoinSpec(operation: string, params: Record<string, any>): { sheet1: string; sheet2: string; key1: string; key2: string } | null {
+  if (operation === "join_sheets") {
+    if (params.sheet1 && params.sheet2 && params.key1 && params.key2) {
+      return { sheet1: params.sheet1, sheet2: params.sheet2, key1: params.key1, key2: params.key2 };
+    }
+  }
+  if (operation === "pipeline" && Array.isArray(params.operations)) {
+    for (const step of params.operations) {
+      const s = normalizeStepOp(step);
+      const found = findJoinSpec(s.operation, s.params);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function probeZeroRowsCause(
+  _command: string,
+  normalizedArgs: Record<string, any>,
+  sheets: WorkbookSheets,
+  defaultSheetName: string,
+  columnRangeCache?: Map<string, Map<string, any>>,
+): string | null {
+  const operation = (normalizedArgs.operation as string) ?? "";
+  const params = (normalizedArgs.params ?? {}) as Record<string, any>;
+  const sheetName = (normalizedArgs.sheet_name as string) || defaultSheetName;
+
+  // ── Probe: join key overlap (most definitive — check first) ──
+  if (sheetName !== "cross_sheet") {
+    const joinSpec = findJoinSpec(operation, params);
+    if (joinSpec) {
+      try {
+        const s1 = sheets[joinSpec.sheet1];
+        const s2 = sheets[joinSpec.sheet2];
+        if (s1 && s2) {
+          const col1Info = s1.columns.find((c) => c.name === joinSpec.key1 || c.name.toLowerCase() === joinSpec.key1.toLowerCase());
+          const col2Info = s2.columns.find((c) => c.name === joinSpec.key2 || c.name.toLowerCase() === joinSpec.key2.toLowerCase());
+          const skipProbe = (col1Info?.uniqueCount ?? 0) > 500 || (col2Info?.uniqueCount ?? 0) > 500;
+          if (!skipProbe) {
+            const u1 = executeOperation(s1.rows, "unique", { column: joinSpec.key1 });
+            const u2 = executeOperation(s2.rows, "unique", { column: joinSpec.key2 });
+            if (Array.isArray(u1) && Array.isArray(u2)) {
+              const set1 = new Set(u1.map((r: any) => String(r[joinSpec.key1] ?? "")));
+              const set2 = new Set(u2.map((r: any) => String(r[joinSpec.key2] ?? "")));
+              const overlap = [...set1].filter((v) => set2.has(v)).length;
+              return [
+                `Your join_sheets on "${joinSpec.sheet1}.${joinSpec.key1}" = "${joinSpec.sheet2}.${joinSpec.key2}" returned 0 rows.`,
+                `"${joinSpec.key1}" has ${set1.size} unique values in "${joinSpec.sheet1}"; "${joinSpec.key2}" has ${set2.size} unique values in "${joinSpec.sheet2}".`,
+                `Overlapping key values: ${overlap}.`,
+                overlap === 0
+                  ? `No keys match — these may not be the correct join keys. Use GetColumns on both sheets and pick columns whose values overlap.`
+                  : `Some keys match but the inner join still returned 0 rows — try joinType: "left" to see which rows have no match.`,
+                `Rewrite the command.`,
+              ].join(" ");
+            }
+          }
+        }
+      } catch { /* ignore probe errors */ }
+    }
+  }
+
+  // ── Probe: pipeline step-through — find which step first kills rows ──
+  // Runs each step of the pipeline in sequence so we can pinpoint exactly which
+  // step first reduces the row count to 0.  Cross-sheet ops (join_sheets etc.) are
+  // dispatched through executeCrossSheetOperation rather than executeOperation so
+  // the probe doesn't silently break on step 0.
+  if (operation === "pipeline" && Array.isArray(params.operations) && params.operations.length >= 2) {
+    try {
+      const CROSS_SHEET_OPS = new Set(["join_sheets", "compare_sheets", "union_sheets", "vlookup_sheets", "lookup_sheets"]);
+
+      // Helper: run one pipeline step and return resulting rows (or null on failure)
+      function runStep(rows: Record<string, any>[], step: { operation: string; params: Record<string, any> }): Record<string, any>[] | null {
+        try {
+          if (CROSS_SHEET_OPS.has(step.operation)) {
+            const res = executeCrossSheetOperation(sheets, step.operation, step.params);
+            return Array.isArray(res) ? res : null;
+          }
+          const res = executeOperation(rows, step.operation, step.params, sheets);
+          return Array.isArray(res) ? res : null;
+        } catch { return null; }
+      }
+
+      // Helper: replay steps 0..upTo-1 to get rows going into step upTo
+      function replayUpTo(upTo: number): Record<string, any>[] {
+        let r: Record<string, any>[] = [];
+        for (let j = 0; j < upTo; j++) {
+          const s = normalizeStepOp(params.operations[j]);
+          const res = runStep(r, s);
+          if (res !== null) r = res;
+          else break;
+        }
+        return r;
+      }
+
+      // Walk each step; if it produces 0 rows from non-zero input, diagnose it.
+      let rows: Record<string, any>[] = [];
+      for (let i = 0; i < params.operations.length; i++) {
+        const step = normalizeStepOp(params.operations[i]);
+        const prevLen = rows.length;
+        const next = runStep(rows, step);
+        if (next === null) break; // step failed internally — can't probe further
+        rows = next;
+
+        if (rows.length === 0 && (prevLen > 0 || i === 0)) {
+          const stepDesc = `step ${i + 1} (${step.operation})`;
+
+          // ── Diagnose: join_sheets key mismatch ──
+          if (step.operation === "join_sheets") {
+            const js = step.params;
+            const s1 = sheets[js.sheet1];
+            const s2 = sheets[js.sheet2];
+            if (s1 && s2) {
+              const vals1 = [...new Set(s1.rows.slice(0, 200).map((r) => String(r[js.key1] ?? "")))];
+              const vals2 = [...new Set(s2.rows.slice(0, 200).map((r) => String(r[js.key2] ?? "")))];
+              const overlap = vals1.filter((v) => vals2.includes(v)).length;
+              if (overlap === 0) {
+                return [
+                  `Pipeline failed at ${stepDesc}: join on ${js.sheet1}.${js.key1} = ${js.sheet2}.${js.key2} returned 0 rows.`,
+                  `Sample "${js.key1}" values in ${js.sheet1}: [${vals1.slice(0, 5).join(", ")}].`,
+                  `Sample "${js.key2}" values in ${js.sheet2}: [${vals2.slice(0, 5).join(", ")}].`,
+                  `No overlap found — the join keys may not match (e.g. number vs. string, different IDs).`,
+                  `Use GetColumns on both sheets and pick columns whose values overlap. Rewrite the command.`,
+                ].join(" ");
+              }
+            }
+          }
+
+          // ── Diagnose: groupby_multi string agg mismatch ──
+          if (step.operation === "groupby_multi" && Array.isArray(step.params.aggregations)) {
+            const prevRows = replayUpTo(i);
+            const badAggs: string[] = [];
+            for (const agg of step.params.aggregations) {
+              const fn = String(agg.function || "count");
+              if (!["count", "count_distinct", "first", "last"].includes(fn)) {
+                const colName = agg.column;
+                const sampleVals = prevRows.slice(0, 10).map((r: any) => r[colName]).filter((v: any) => v != null && v !== "");
+                const isStringCol = sampleVals.length > 0 && isNaN(Number(sampleVals[0]));
+                if (isStringCol) {
+                  badAggs.push(`"${colName}" (${fn} on strings → NaN, alias "${agg.alias || colName + "_" + fn}" unusable)`);
+                }
+              }
+            }
+            if (badAggs.length > 0) {
+              return [
+                `Pipeline failed at ${stepDesc}: groupby_multi used a numeric function on a string column: ${badAggs.join("; ")}.`,
+                `Numeric functions (max/min/sum/mean) on string columns produce NaN — downstream filters on those aliases always return 0 rows.`,
+                `Fix: replace with "first" to carry the string value through: {"column":"<col>","function":"first","alias":"<alias>"}.`,
+                `Rewrite the command.`,
+              ].join(" ");
+            }
+          }
+
+          // ── Diagnose: filter / multi_filter with wrong value on aggregated column ──
+          if (step.operation === "filter" || step.operation === "multi_filter") {
+            const prevRows = replayUpTo(i);
+            if (prevRows.length > 0) {
+              const filters = extractFiltersFromArgs(step.operation, step.params);
+              const hints: string[] = [];
+              // Check each filter condition independently
+              for (const f of filters) {
+                if (!f.column || f.value === undefined) continue;
+                const actualVals = [...new Set(prevRows.slice(0, 50).map((r: any) => r[f.column]).filter((v: any) => v != null).map(String))].slice(0, 8);
+                if (actualVals.length === 0) {
+                  hints.push(`column "${f.column}" not found in grouped data — check that the alias matches the groupby_multi alias exactly`);
+                } else {
+                  const matchCount = prevRows.filter((r: any) => {
+                    const v = String(r[f.column] ?? "");
+                    if (f.operator === "==" || f.operator === "=") return v === String(f.value);
+                    if (f.operator === "!=" || f.operator === "<>") return v !== String(f.value);
+                    if ([">", ">=", "<", "<="].includes(f.operator)) {
+                      const n = Number(r[f.column]); const fv = Number(f.value);
+                      if (f.operator === ">") return n > fv;
+                      if (f.operator === ">=") return n >= fv;
+                      if (f.operator === "<") return n < fv;
+                      if (f.operator === "<=") return n <= fv;
+                    }
+                    return false;
+                  }).length;
+                  hints.push(`"${f.column} ${f.operator} ${JSON.stringify(f.value)}" matches ${matchCount}/${prevRows.length} rows — actual values: [${actualVals.map((v) => `"${v}"`).join(", ")}]`);
+                }
+              }
+              if (hints.length > 0) {
+                const noRowsFromBothFilters = hints.every((h) => h.includes("matches 0/"));
+                return [
+                  `Pipeline failed at ${stepDesc}: filter returned 0 rows from ${prevRows.length} grouped rows.`,
+                  hints.join("; ") + ".",
+                  noRowsFromBothFilters
+                    ? `The data may genuinely have no rows matching ALL conditions simultaneously — check if any product satisfies BOTH criteria, or relax one condition.`
+                    : `At least one condition is too strict or uses the wrong value. Check spelling/casing and alias names.`,
+                  `Rewrite the command or report to the user that no data matches.`,
+                ].join(" ");
+              }
+            }
+          }
+
+          // ── Generic ──
+          return [
+            `Pipeline returned 0 rows at ${stepDesc} (input had ${prevLen} rows).`,
+            `Steps so far: ${params.operations.slice(0, i + 1).map((s: any) => normalizeStepOp(s).operation).join(" → ")}.`,
+            `Check column names and filter values for ${step.operation}.`,
+            `Rewrite the command.`,
+          ].join(" ");
+        }
+      }
+    } catch { /* ignore probe errors */ }
+  }
+
+  // ── Per-filter probes ──
+  const sheet = sheets[sheetName] || sheets[defaultSheetName];
+  if (!sheet || sheet.rows.length === 0) {
+    // fallback to value_column hint below
+  } else {
+    const filters = extractFiltersFromArgs(operation, params);
+    for (const f of filters) {
+      if (!f.column || f.value === undefined || f.value === null) continue;
+      const colInfo = sheet.columns.find(
+        (c) => c.name === f.column || c.name.toLowerCase() === f.column.toLowerCase()
+      );
+      if (!colInfo) continue;
+
+      // ── Probe: numeric threshold out of range ──
+      if (
+        [">", ">=", "<", "<="].includes(f.operator) &&
+        colInfo.dtype === "number" &&
+        typeof f.value === "number" &&
+        Number.isFinite(f.value)
+      ) {
+        try {
+          const cacheKey = colInfo.name;
+          let stats: any = columnRangeCache?.get(sheetName)?.get(cacheKey) ?? null;
+          if (!stats) {
+            const described = executeOperation(sheet.rows, "describe", { columns: [colInfo.name] });
+            stats = described?.[colInfo.name] ?? null;
+            if (stats && columnRangeCache) {
+              if (!columnRangeCache.has(sheetName)) columnRangeCache.set(sheetName, new Map());
+              columnRangeCache.get(sheetName)!.set(cacheKey, stats);
+            }
+          }
+          if (stats) {
+            const suggested = (f.operator === ">" || f.operator === ">=") ? stats.p75 : stats.p25;
+            const outOfRange = f.value > stats.max || f.value < stats.min;
+            return [
+              `Your filter "${colInfo.name} ${f.operator} ${f.value}" returned 0 rows.`,
+              `Actual "${colInfo.name}" distribution (${stats.count} non-null values):`,
+              `min=${stats.min}, p25=${stats.p25}, median=${stats.median}, p75=${stats.p75}, max=${stats.max}, mean=${stats.mean}.`,
+              outOfRange
+                ? `Your threshold (${f.value}) is ${f.value > stats.max ? "above the maximum" : "below the minimum"}.`
+                : `No rows pass this filter with the current data distribution.`,
+              `Suggested threshold: ${f.operator} ${suggested}.`,
+              `Rewrite the command using a value within the actual data range.`,
+            ].join(" ");
+          }
+        } catch { /* ignore */ }
+      }
+
+      // ── Probe: date format mismatch ──
+      const isDateCol = colInfo.dtype === "date" || /date|time|_at$|created|updated|timestamp/i.test(colInfo.name);
+      if (
+        isDateCol &&
+        ["==", "contains", "starts_with", ">", "<", ">=", "<="].includes(f.operator) &&
+        typeof f.value === "string"
+      ) {
+        try {
+          const samples = (colInfo.sampleValues ?? []).slice(0, 3).map(String).filter(Boolean);
+          if (samples.length > 0) {
+            const isIso = samples.some((s) => s.includes("T") && s.includes("Z"));
+            return [
+              `Your filter "${colInfo.name} ${f.operator} '${f.value}'" returned 0 rows.`,
+              `Sample values in "${colInfo.name}": ${samples.map((s) => `"${s}"`).join(", ")}.`,
+              `Your filter value '${f.value}' may not match the stored format.`,
+              isIso
+                ? `Tip: for ISO timestamp columns use operator "contains" with a partial value (e.g. contains "2024") or "starts_with" for YYYY-MM.`
+                : `Tip: match the exact format shown in the samples above.`,
+              `Rewrite the command with a value that matches the actual date format.`,
+            ].join(" ");
+          }
+        } catch { /* ignore */ }
+      }
+
+      // ── Probe: string case / typo mismatch ──
+      if (
+        colInfo.dtype === "string" &&
+        (f.operator === "==" || f.operator === "!=") &&
+        typeof f.value === "string" &&
+        f.value.trim() !== "" &&
+        (colInfo.uniqueCount ?? 0) <= 500
+      ) {
+        try {
+          const uniqueResult = executeOperation(sheet.rows, "unique", { column: colInfo.name });
+          if (Array.isArray(uniqueResult) && uniqueResult.length > 0) {
+            const actualValues = uniqueResult
+              .slice(0, 10)
+              .map((r: any) => r[colInfo.name])
+              .filter((v: any) => v != null);
+            return [
+              `Your filter "${colInfo.name} ${f.operator} '${f.value}'" returned 0 rows.`,
+              `Actual values in "${colInfo.name}" (first ${actualValues.length}): ${actualValues.map((v: any) => `"${v}"`).join(", ")}.`,
+              `"${f.value}" was not found — check spelling and casing.`,
+              `For a partial match use operator "contains" instead of "==".`,
+              `Rewrite using an exact value from the list above.`,
+            ].join(" ");
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  // ── Fallback: value_column hint (existing behavior) ──
+  const ops = (params.operations ?? []) as any[];
+  const hasFilter = ops.some((o: any) => o?.operation === "filter" || o?.params?.column);
+  const filterOps = ops.filter((o: any) => o?.operation === "filter");
+  const badFilterVal = filterOps.find((o: any) => {
+    const val = o?.params?.value;
+    return typeof val === "string" && isNaN(Number(val)) && val !== "" && !["null", "true", "false"].includes(val.toLowerCase());
+  });
+  if (badFilterVal) {
+    return `Your filter used "value": "${badFilterVal.params?.value}" — this compares against the literal string "${badFilterVal.params?.value}", not a column. If you intended to compare against a per-row column value, use "value_column": "${badFilterVal.params?.value}" instead (and optionally "multiplier": 1.5 to scale it). Rewrite the command with the correct approach.`;
+  }
+  if (hasFilter) {
+    return `Your pipeline returned 0 rows. If you have a filter step that compares a column against another column's value (e.g. Quantity > AvgQuantity), use "value_column" instead of "value". Alternatively, use universal_compute to express the comparison in JS. Rewrite the command.`;
+  }
+
+  return null;
+}
+
+// ─── Query Complexity Detector ────────────────────────────────────────────────
+// Heuristic classifier — zero cost, no LLM call. Requires 2+ signals to fire
+// so simple questions are never mis-classified as complex.
+function detectQueryComplexity(question: string, sheets: WorkbookSheets): { isComplex: boolean; reason: string } {
+  const q = question.toLowerCase();
+  const words = question.trim().split(/\s+/);
+  const sheetNames = Object.keys(sheets).map((n) => n.toLowerCase());
+  const signals: string[] = [];
+
+  const mentionedSheets = sheetNames.filter((name) => name.length > 2 && q.includes(name));
+  if (mentionedSheets.length >= 2) signals.push(`references multiple sheets (${mentionedSheets.join(", ")})`);
+
+  if (/\band\s+(calculate|compute|find|show|compare|get)\b/.test(q)) signals.push("compound operation (and calculate/compare)");
+
+  if (/\bcompare\b.{0,50}\b(across|between|vs\.?|versus|against)\b/.test(q)) signals.push("cross-group comparison");
+
+  if (/\b(both|as well as|along with|also)\b/.test(q) && /\b(sum|count|average|mean|total|max|min|revenue|amount)\b/.test(q)) signals.push("multiple aggregations implied");
+
+  if (words.length >= 25) signals.push(`long question (${words.length} words)`);
+
+  if (/\bfor each\b.{0,40}\b(and|also|plus)\b/.test(q)) signals.push("per-group multi-metric");
+
+  return { isComplex: signals.length >= 2, reason: signals.join("; ") };
+}
+
 // ─── Main Agent Runner ─────────────────────────────────────────────────────────
 export async function* runAgent(
   question: string,
@@ -2600,6 +3249,21 @@ export async function* runAgent(
       continue;
     }
 
+    // ── Smart zero-rows probe (legacy single-sheet runAgent) ──
+    const zrProbableOps = new Set(["filter", "multi_filter", "pipeline", "join_sheets", "groupby", "groupby_multi"]);
+    const zrOp = (rawArgs as any).operation as string ?? "";
+    if (command === "ExecuteFinalQuery" && Array.isArray(result) && result.length === 0 && healAttempts < MAX_HEAL_ATTEMPTS && turn < maxTurns && zrProbableOps.has(zrOp)) {
+      const singleSheetMap: WorkbookSheets = { [sheetData.name ?? "sheet"]: sheetData };
+      const probe = probeZeroRowsCause(command, rawArgs as Record<string, any>, singleSheetMap, sheetData.name ?? "sheet");
+      if (probe) {
+        healAttempts++;
+        yield { turn, command, args, result, tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens }, durationMs, isFinal: false };
+        messages.push({ role: "assistant", content: assistantCommandContent });
+        messages.push({ role: "user", content: probe });
+        continue;
+      }
+    }
+
     yield {
       turn,
       command,
@@ -2716,8 +3380,15 @@ Rules:
 - Use QuerySheet for intermediate work and ExecuteFinalQuery only for the final answer when ONE operation suffices.
 - For cross-sheet/multi-sheet questions:
   1. Start by calling GetSheetDescription() to see all sheet names and schemas.
-  2. Use QuerySheet with a cross-sheet operation (like join_sheets or union_sheets) and set the sheet_name to "cross_sheet".
-  3. The result of the cross-sheet operation will be returned to you. In subsequent turns, you can run normal operations (groupby, filter, select) on "cross_sheet" to analyze the combined data.
+  2. PREFERRED — use a single ExecuteFinalQuery pipeline that chains ALL joins and aggregations in one shot:
+     {"command":"ExecuteFinalQuery","args":{"sheet_name":"cross_sheet","operation":"pipeline","params":{"operations":[{"operation":"join_sheets","params":{"sheet1":"A","sheet2":"B","key1":"id","key2":"id","joinType":"inner"}},{"operation":"join_sheets","params":{"sheet1":"cross_sheet","sheet2":"C","key1":"order_id","key2":"order_id","joinType":"left"}},{"operation":"groupby_multi","params":{...}}]}}}
+     Inside a pipeline, "cross_sheet" as sheet1 always refers to the accumulated result of previous steps.
+  3. ALTERNATIVE — sequential QuerySheet joins. After the first QuerySheet join, the result is stored as "cross_sheet". The next QuerySheet can use sheet1:"cross_sheet" to join with another sheet:
+     Turn 1: QuerySheet join_sheets(sheet1:A, sheet2:B) → stored as "cross_sheet"
+     Turn 2: QuerySheet join_sheets(sheet1:"cross_sheet", sheet2:C) → chained join
+     Turn 3: ExecuteFinalQuery groupby_multi on "cross_sheet"
+  4. NEVER issue QuerySheet with sheet_name:"cross_sheet" for a plain join on a fresh "cross_sheet" that doesn't exist yet — always name a real sheet (e.g. "Customers") as the starting point for the first join.
+- CRITICAL: When you need to compute multiple aggregations per group (e.g. count distinct categories AND sum revenue, grouped by the same column), you MUST use groupby_multi in a SINGLE step — NEVER chain two groupby steps in a pipeline. After the first groupby, all original columns are destroyed, so the second groupby will always return 0 rows. groupby_multi computes all aggregations in one pass with no column loss. Example: "customers who bought from >1 category and their total revenue" → {"operation":"groupby_multi","params":{"groupColumn":"CustomerID","aggregations":[{"column":"Category","function":"count_distinct","alias":"cat_count"},{"column":"TotalAmount","function":"sum","alias":"total_revenue"}],"having":{"alias":"cat_count","operator":">","value":1}}}
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
@@ -2923,6 +3594,8 @@ AUTHORITATIVE OPERATION LIST (auto-generated from code — always current)
 Use ONLY these operation names. Unknown operations return errors.
 ═══════════════════════════════════════════════════════
 ${opsBlock}
+
+HARD RULE — groupby_multi IS MANDATORY: If you need multiple aggregations per group (e.g. count_distinct of one column AND sum of another, grouped by the same key), use groupby_multi in a SINGLE step. NEVER chain two groupby steps — after the first groupby all original columns are gone and the second returns 0 rows.
 
 OUTPUT RULE: respond with exactly ONE JSON object. No prose. No markdown. No trailing text.`;
 }
@@ -3294,16 +3967,20 @@ function buildColumnsDescription(sheets: WorkbookSheets, sheetName: string) {
   const lines = [`Sheet '${sheetName}' schema:`];
   for (const column of sheet.columns) {
     const values = getColumnValues(sheet.rows, column.name);
-    const sample = `[${column.sampleValues.slice(0, 3).map(formatSampleValue).join(", ")}]`;
-    const nullCount = sheet.rows.length - column.nonNullCount;
-    const coverage = sheet.rows.length > 0 ? `${((column.nonNullCount / sheet.rows.length) * 100).toFixed(1)}% filled` : "0.0% filled";
+    const sampleVals = column.sampleValues ?? values.slice(0, 3);
+    const sample = `[${sampleVals.slice(0, 3).map(formatSampleValue).join(", ")}]`;
+    const nonNullCount = column.nonNullCount ?? values.filter((v) => v != null && v !== "").length;
+    const nullCount = sheet.rows.length - nonNullCount;
+    const coverage = sheet.rows.length > 0 ? `${((nonNullCount / sheet.rows.length) * 100).toFixed(1)}% filled` : "0.0% filled";
+    const uniqueCount = column.uniqueCount ?? new Set(values.filter((v) => v != null && v !== "").map(String)).size;
+    const colForMeaning = { ...column, nonNullCount: nonNullCount, uniqueCount };
     const multiValueProfile = detectMultiValueTextProfile(values, column.name);
-    const meaning = inferColumnMeaning(column, sheet.rows.length, values, multiValueProfile);
+    const meaning = inferColumnMeaning(colForMeaning, sheet.rows.length, values, multiValueProfile);
     const parts = [
       `${column.name} (${column.dtype})`,
       `meaning: ${meaning}`,
       coverage,
-      `${column.uniqueCount} unique non-null values`,
+      `${uniqueCount} unique non-null values`,
     ];
 
     if (nullCount > 0) {
@@ -3894,6 +4571,69 @@ function executeCrossSheetOperation(
   }
 }
 
+// Returns column names referenced in operation params (recursively handles pipeline/multi_analysis steps)
+function extractReferencedColumns(operation: string, params: Record<string, any>): string[] {
+  const cols: string[] = [];
+  const add = (v: any) => { if (typeof v === "string" && v.trim()) cols.push(v.trim()); };
+
+  // Recurse into pipeline / multi_analysis steps
+  if (operation === "pipeline" || operation === "multi_analysis") {
+    const ops = params.operations ?? [];
+    if (Array.isArray(ops)) {
+      for (const op of ops) {
+        if (op.operation && op.params) {
+          cols.push(...extractReferencedColumns(op.operation, op.params));
+        }
+      }
+    }
+    return cols;
+  }
+
+  // Common param keys that hold column names
+  for (const key of ["column", "column1", "column2", "groupColumn", "aggColumn", "rankColumn", "dateColumn", "rowColumn", "colColumn", "valueColumn"]) {
+    add(params[key]);
+  }
+  if (Array.isArray(params.columns)) params.columns.forEach(add);
+  if (Array.isArray(params.filters)) {
+    params.filters.forEach((f: any) => add(f?.column));
+  }
+  if (params.filter) add(params.filter?.column);
+  if (Array.isArray(params.aggregations)) {
+    params.aggregations.forEach((a: any) => add(a?.column));
+  }
+  return cols.filter(Boolean);
+}
+
+// Returns the set of known column names for a sheet (case-insensitive lookup included)
+function getSheetColumnNames(sheets: WorkbookSheets, sheetName: string): Set<string> | null {
+  const sheet = sheets[sheetName];
+  if (!sheet) return null;
+  const names = new Set<string>();
+  for (const col of sheet.columns) {
+    names.add(col.name);
+    names.add(col.name.toLowerCase());
+  }
+  return names;
+}
+
+// Returns unknown column names the LLM referenced that don't exist in the sheet.
+// Cross-sheet ops (join_sheets etc.) are exempt — their "columns" are keys across sheets.
+// Virtual sheet "cross_sheet" is exempt — its schema is built at runtime.
+function findUnknownColumns(
+  operation: string,
+  params: Record<string, any>,
+  sheets: WorkbookSheets,
+  sheetName: string
+): string[] {
+  const CROSS_SHEET_OPS_SET = new Set(["join_sheets", "compare_sheets", "union_sheets", "vlookup_sheets", "lookup_sheets", "pipeline", "multi_analysis"]);
+  if (CROSS_SHEET_OPS_SET.has(operation)) return []; // schema is dynamic / multi-sheet
+  if (sheetName === "cross_sheet" || !sheets[sheetName]) return []; // virtual sheet
+  const known = getSheetColumnNames(sheets, sheetName);
+  if (!known) return [];
+  const referenced = extractReferencedColumns(operation, params);
+  return referenced.filter((col) => !known.has(col) && !known.has(col.toLowerCase()));
+}
+
 function executeSheetCommand(
   args: Record<string, any>,
   sheets: WorkbookSheets,
@@ -3906,26 +4646,52 @@ function executeSheetCommand(
 
   const operation = typeof args.operation === "string" ? args.operation.trim() : "";
   const isCrossSheetOp = ["join_sheets", "compare_sheets", "union_sheets", "vlookup_sheets", "lookup_sheets"].includes(operation);
+  const isPipelineOp = operation === "pipeline" || operation === "multi_analysis";
 
-  if (!isCrossSheetOp && !sourceRows) {
-    const sheet = sheets[requestedSheetName];
-    if (!sheet) {
-      return {
-        args: { ...args, sheet_name: requestedSheetName },
-        result: `ERROR: Sheet '${requestedSheetName}' not found. Available: ${Object.keys(sheets).join(", ")}`,
-      };
-    }
+  // When the LLM targets "cross_sheet" (a virtual workspace name) with a pipeline,
+  // the sheet doesn't physically exist yet — resolve starting rows from the first
+  // pipeline step's sheet1 param so the pipeline can build it up from real sheets.
+  const isVirtualSheet = requestedSheetName === "cross_sheet" || !sheets[requestedSheetName];
+
+  if (!isCrossSheetOp && !isPipelineOp && !sourceRows && isVirtualSheet) {
+    return {
+      args: { ...args, sheet_name: requestedSheetName },
+      result: `ERROR: Sheet '${requestedSheetName}' not found. Available: ${Object.keys(sheets).join(", ")}`,
+    };
   }
 
   if (isCrossSheetOp) {
-    const result = executeCrossSheetOperation(sheets, operation, args.params || {});
+    // For join_sheets where sheet1 is "cross_sheet" (a virtual accumulated result),
+    // substitute the sourceRows as the left-hand table by injecting a synthetic entry.
+    let sheetsForOp = sheets;
+    const joinParams = args.params || {};
+    if (operation === "join_sheets" && joinParams.sheet1 === "cross_sheet" && sourceRows) {
+      sheetsForOp = {
+        ...sheets,
+        cross_sheet: { name: "cross_sheet", columns: [], rows: sourceRows },
+      };
+    }
+    const result = executeCrossSheetOperation(sheetsForOp, operation, joinParams);
     return {
       args: { ...args, sheet_name: requestedSheetName },
       result,
     };
   }
 
-  const rows = sourceRows || sheets[requestedSheetName]?.rows || [];
+  // For pipeline/multi_analysis targeting a virtual sheet, start with the first real
+  // sheet referenced in the first step's sheet1 param (or fall back to defaultSheet).
+  let rows: Record<string, any>[];
+  if (sourceRows) {
+    rows = sourceRows;
+  } else if (sheets[requestedSheetName]) {
+    rows = sheets[requestedSheetName].rows;
+  } else if (isPipelineOp) {
+    const ops = args.params?.operations ?? [];
+    const firstSheet1 = ops[0]?.params?.sheet1;
+    rows = (firstSheet1 && sheets[firstSheet1]) ? sheets[firstSheet1].rows : [];
+  } else {
+    rows = [];
+  }
 
   if (typeof args.pandas_query === "string" && args.pandas_query.trim()) {
     const translated = translateLegacyPandasQuery(args.pandas_query);
@@ -3938,7 +4704,7 @@ function executeSheetCommand(
 
     return {
       args: { ...args, sheet_name: requestedSheetName },
-      result: executeOperation(rows, translated.operation, translated.params),
+      result: safeExecuteOperation(rows, translated.operation, translated.params),
     };
   }
 
@@ -3951,7 +4717,7 @@ function executeSheetCommand(
 
   return {
     args: { ...args, sheet_name: requestedSheetName },
-    result: executeOperation(rows, operation, args.params || {}),
+    result: safeExecuteOperation(rows, operation, args.params || {}, sheets),
   };
 }
 
@@ -3972,7 +4738,7 @@ function executeDatabaseTableCommand(args: Record<string, any>, tables: Database
 
   return {
     args: { ...args, table_name: requestedTableName },
-    result: executeOperation(table.rows, args.operation, args.params || {}),
+    result: safeExecuteOperation(table.rows, args.operation, args.params || {}),
   };
 }
 
@@ -4216,6 +4982,7 @@ export async function* runDatabaseAgent(
   const maxTurns = 15;
   const inspectedTables = new Set<string>();
   const lastIntermediateFilterByTable = new Map<string, { operation: string; params: Record<string, any> }>();
+  let schemaShown = false; // tracks whether GetSchema has been surfaced to the model
   let turn = 0;
   let healAttempts = 0; // Bounded self-healing budget for execution errors
 
@@ -4274,6 +5041,9 @@ export async function* runDatabaseAgent(
 
     history.push({ role: "assistant", content: llmResponse.content });
 
+    // Wrap turn execution — unexpected JS errors become error steps, not generator crashes.
+    try {
+
     let parsed = parseCommand(llmResponse.content);
     if (!parsed) {
       yield {
@@ -4314,6 +5084,13 @@ export async function* runDatabaseAgent(
         ? defaultRawResult?.trim() || "No result returned from the model."
         : answerPayload;
 
+    // Inspect-first: if model jumps straight to SQL without seeing the schema, force GetSchema first.
+    if ((command === "QuerySQL" || command === "ExecuteSQL") && !schemaShown && !systemPromptOverride) {
+      command = "GetSchema";
+      args = {};
+      rawArgs = args as Record<string, any>;
+    }
+
     if (
       (command === "QueryTable" || command === "ExecuteFinalQuery") &&
       !inspectedTables.has(requestedTableName) &&
@@ -4351,6 +5128,7 @@ export async function* runDatabaseAgent(
       case "GetSchema":
         result = buildDatabaseSchemaDescription(tables, question);
         normalizedArgs = {};
+        schemaShown = true;
         break;
       case "GetColumns":
         normalizedArgs = { ...rawArgs, table_name: requestedTableName };
@@ -4525,8 +5303,19 @@ export async function* runDatabaseAgent(
         }
         break;
       }
-      default:
-        result = `ERROR: Unknown command '${command}'`;
+      default: {
+        const knownOpsDb = new Set([...SUPPORTED_OPERATIONS.map((o) => o.name), "group_by", "groupBy", "multi_analysis", "pipeline", "fuzzy_search", "universal_compute", "regex_filter", "running_total", "value_counts", "describe"]);
+        if (knownOpsDb.has(command) || knownOpsDb.has(command.toLowerCase())) {
+          const wrappedTable = (rawArgs.table_name as string) || defaultTableName;
+          const executed = executeDatabaseTableCommand({ table_name: wrappedTable, operation: command, params: rawArgs.params ?? rawArgs }, tables, defaultTableName);
+          normalizedArgs = executed.args;
+          result = executed.result;
+          command = "ExecuteFinalQuery";
+        } else {
+          result = `ERROR: Unknown command '${command}'. Use ExecuteFinalQuery, QueryTable, GetSchema, Answer, NarrativeAnswer, or HumanApproval.`;
+        }
+        break;
+      }
     }
 
     const answerText = command === "NarrativeAnswer"
@@ -4625,6 +5414,32 @@ export async function* runDatabaseAgent(
     }
 
     llmInput = guidance;
+
+    } catch (turnErr: any) {
+      console.error(`[DB agent] Turn ${turn} crashed:`, turnErr);
+      yield {
+        turn,
+        command: "Error",
+        args: {},
+        result: `Internal error on turn ${turn}: ${turnErr?.message || String(turnErr)}. The agent will attempt to self-correct.`,
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = `An internal error occurred while executing the previous command: ${turnErr?.message || String(turnErr)}. Please try a different approach to answer: "${question}"`;
+      if (++healAttempts > MAX_HEAL_ATTEMPTS) {
+        yield {
+          turn: turn + 1,
+          command: "Error",
+          args: {},
+          result: "Too many errors — could not complete the query.",
+          tokens: { input: 0, output: 0 },
+          durationMs: 0,
+          isFinal: true,
+        };
+        return;
+      }
+    }
   }
 
   // Smart fallback: try to synthesize an answer from gathered intermediate results
@@ -4695,8 +5510,11 @@ export async function* runLegacyAgent(
   const maxTurns = 12;
   const lastIntermediateRowsBySheet = new Map<string, Record<string, any>[]>();
   const lastIntermediateFilterBySheet = new Map<string, { operation: string; params: Record<string, any> }>();
+  const columnRangeCache = new Map<string, Map<string, any>>(); // caches describe() results per sheet/column
+  const inspectedSheets = new Set<string>(); // tracks which sheets have had GetColumns run
   let turn = 0;
   let healAttempts = 0; // Bounded self-healing budget for execution errors
+  // complexity detected after introParts are built (injected below)
 
   const sheetInventory = buildSheetDescription(sheets);
   const introParts = [
@@ -4713,6 +5531,18 @@ export async function* runLegacyAgent(
   }
 
   introParts.push("Respond with one JSON command only.");
+
+  // Inject planning preamble for complex multi-step queries (2+ signals required)
+  const complexity = detectQueryComplexity(question, sheets);
+  if (complexity.isComplex) {
+    introParts.push(
+      `PLANNING REQUIRED (${complexity.reason}): This question needs multiple steps. ` +
+      `Before executing, output your plan as the first response: ` +
+      `{"command":"Plan","args":{"steps":["step 1 — e.g. join Orders+Products on ProductID","step 2 — groupby_multi CustomerID with count_distinct(Category) and sum(TotalAmount)","step 3 — filter where cat_count > 1"]}} ` +
+      `Be concrete: name the sheets, columns, and operations. Output the Plan JSON only.`
+    );
+  }
+
   let llmInput = introParts.join("\n\n");
 
   while (turn < maxTurns) {
@@ -4737,6 +5567,9 @@ export async function* runLegacyAgent(
     }
 
     history.push({ role: "assistant", content: llmResponse.content });
+
+    // Wrap turn execution — unexpected JS errors become error steps, not generator crashes.
+    try {
 
     let parsed = parseCommand(llmResponse.content);
     if (!parsed) {
@@ -4774,6 +5607,37 @@ export async function* runLegacyAgent(
         ? defaultRawResult?.trim() || "No result returned from the model."
         : answerPayload;
 
+    // ── Inspect-first gate: force GetColumns before the first ExecuteFinalQuery on
+    //    any real sheet that hasn't been inspected yet. This grounds the query in the
+    //    actual schema and enables the model to self-correct column names/sheet routing.
+    if (command === "ExecuteFinalQuery" && !systemPromptOverride) {
+      const targetSheet =
+        typeof rawArgs.sheet_name === "string" && rawArgs.sheet_name.trim()
+          ? rawArgs.sheet_name.trim()
+          : defaultSheetName;
+      const isCrossSheet = targetSheet === "cross_sheet" || !sheets[targetSheet];
+      const opName = typeof rawArgs.operation === "string" ? rawArgs.operation : "";
+      const isCrossSheetOp = ["join_sheets", "compare_sheets", "union_sheets", "vlookup_sheets", "lookup_sheets"].includes(opName);
+      if (!isCrossSheet && !isCrossSheetOp && !inspectedSheets.has(targetSheet)) {
+        command = "GetColumns";
+        args = { sheet_name: targetSheet };
+        normalizedArgs = { sheet_name: targetSheet };
+        result = buildColumnsDescription(sheets, targetSheet);
+        inspectedSheets.add(targetSheet);
+        yield {
+          turn,
+          command: "GetColumns",
+          args: normalizedArgs,
+          result,
+          tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+          durationMs: Date.now() - startTime,
+          isFinal: false,
+        };
+        llmInput = `Schema for "${targetSheet}":\n${typeof result === "string" ? result : JSON.stringify(result)}\n\nNow execute the query using only the exact column names shown above.`;
+        continue;
+      }
+    }
+
     switch (command) {
       case "Answer":
       case "FinalAnswer":
@@ -4795,6 +5659,7 @@ export async function* runLegacyAgent(
           : defaultSheetName;
         normalizedArgs = { ...rawArgs, sheet_name: requestedSheetName };
         result = buildColumnsDescription(sheets, requestedSheetName);
+        inspectedSheets.add(requestedSheetName);
         break;
       }
       case "QuerySheet":
@@ -4860,6 +5725,38 @@ export async function* runLegacyAgent(
         }
         // --- End HITL ---
 
+        // --- Column validation: if LLM referenced columns that don't exist in the sheet,
+        //     intercept and run GetColumns instead so the model can self-correct. ---
+        const unknownCols = findUnknownColumns(
+          operation,
+          operationParams,
+          sheets,
+          requestedSheetName
+        );
+        if (unknownCols.length > 0 && sheets[requestedSheetName]) {
+          command = "GetColumns";
+          normalizedArgs = { sheet_name: requestedSheetName };
+          result = {
+            _warning: `Column(s) not found: ${unknownCols.join(", ")}. Showing actual columns so you can correct the query.`,
+            ...buildColumnsDescription(sheets, requestedSheetName),
+            actualColumns: sheets[requestedSheetName].columns.map((c) => c.name),
+          };
+          // history already has the assistant turn pushed at the top of the loop.
+          // Feed the column-validation hint as the next user message via llmInput.
+          llmInput = `Column validation failed — these column names do not exist in sheet "${requestedSheetName}": ${unknownCols.map((c) => `"${c}"`).join(", ")}.\n\nActual columns: ${sheets[requestedSheetName].columns.map((c) => `"${c.name}"`).join(", ")}.\n\nPlease rewrite your query using ONLY the exact column names listed above.`;
+          yield {
+            turn,
+            command: "GetColumns",
+            args: normalizedArgs,
+            result,
+            tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+            durationMs: Date.now() - startTime,
+            isFinal: false,
+          };
+          continue;
+        }
+        // --- End column validation ---
+
         const executed = executeSheetCommand(commandArgs, sheets, defaultSheetName, sourceRows);
         normalizedArgs = executed.args;
         result = command === "QuerySheet" && Array.isArray(executed.result)
@@ -4868,6 +5765,9 @@ export async function* runLegacyAgent(
         if (command === "QuerySheet") {
           if (Array.isArray(executed.result)) {
             lastIntermediateRowsBySheet.set(requestedSheetName, executed.result);
+            // Also store under "cross_sheet" so subsequent steps that reference "cross_sheet"
+            // as sheet1 in a join can find the accumulated intermediate data.
+            lastIntermediateRowsBySheet.set("cross_sheet", executed.result);
           }
 
           const carriableFilter = getCarriableSheetFilter(operation, operationParams);
@@ -4877,8 +5777,44 @@ export async function* runLegacyAgent(
         }
         break;
       }
-      default:
-        result = `ERROR: Unknown command '${command}'`;
+      case "Plan": {
+        // Planning turn — model outputs its intended execution plan before acting.
+        result = { plan: rawArgs.steps || rawArgs.plan || rawArgs.reasoning || [] };
+        normalizedArgs = rawArgs;
+        break;
+      }
+      default: {
+        const knownOpsLegacy = new Set([...SUPPORTED_OPERATIONS.map((o) => o.name), "group_by", "groupBy", "multi_analysis", "pipeline", "fuzzy_search", "universal_compute", "regex_filter", "running_total", "value_counts", "describe"]);
+        if (knownOpsLegacy.has(command) || knownOpsLegacy.has(command.toLowerCase())) {
+          const wrappedSheet = (rawArgs.sheet_name as string) || defaultSheetName;
+          const executed = executeSheetCommand({ sheet_name: wrappedSheet, operation: command, params: rawArgs.params ?? rawArgs }, sheets, defaultSheetName);
+          normalizedArgs = executed.args;
+          result = executed.result;
+          command = "ExecuteFinalQuery";
+        } else {
+          result = `ERROR: Unknown command '${command}'. Use ExecuteFinalQuery, QuerySheet, GetColumns, GetSheetDescription, Answer, NarrativeAnswer, or HumanApproval.`;
+        }
+        break;
+      }
+    }
+
+    // ── Plan command: receive plan, feed it back, proceed to execution ──
+    if (command === "Plan") {
+      const steps = (rawArgs.steps || rawArgs.plan || rawArgs.reasoning || []) as any;
+      const planText = Array.isArray(steps)
+        ? steps.map((s: any, i: number) => `${i + 1}. ${s}`).join("\n")
+        : String(steps);
+      yield {
+        turn,
+        command: "Plan",
+        args: normalizedArgs,
+        result,
+        tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = `Your plan was received:\n${planText}\n\nNow execute step 1. Issue one JSON command.`;
+      continue;
     }
 
     const answerText = command === "NarrativeAnswer"
@@ -4954,6 +5890,49 @@ export async function* runLegacyAgent(
       continue;
     }
 
+    // ── Smart zero-rows probe: diagnose WHY 0 rows, feed specific hint back ──
+    // Only probe operations that actually filter/join data — not count/head/aggregate which
+    // legitimately return empty arrays without any bug.
+    const probableOps = new Set(["filter", "multi_filter", "pipeline", "join_sheets", "groupby", "groupby_multi"]);
+    const opName = (normalizedArgs.operation as string) ?? "";
+    if (command === "ExecuteFinalQuery" && Array.isArray(result) && result.length === 0 && turn < maxTurns && probableOps.has(opName)) {
+      const probe = probeZeroRowsCause(command, normalizedArgs, sheets, defaultSheetName, columnRangeCache);
+      if (probe && healAttempts < MAX_HEAL_ATTEMPTS) {
+        healAttempts++;
+        yield {
+          turn,
+          command,
+          args: normalizedArgs,
+          result,
+          tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+          durationMs: Date.now() - startTime,
+          isFinal: false,
+        };
+        // If probe says data genuinely has no rows, tell the agent to explain rather than retry.
+        const isGenuinelyEmpty = probe.includes("genuinely have no rows") || probe.includes("no data matches");
+        llmInput = isGenuinelyEmpty
+          ? `Diagnostic result: ${probe}\n\nThe data has been verified — there are genuinely no rows matching all criteria. Do NOT retry the same query. Instead, respond with a NarrativeAnswer explaining clearly: which conditions matched individually, and that no rows satisfy all conditions together. Be specific about what the data shows.`
+          : probe;
+        continue;
+      }
+      // Probe returned null (no structural bug found) — data is genuinely empty.
+      // Force the agent to explain rather than return a silent empty result.
+      if (!probe && healAttempts === 0 && opName === "pipeline") {
+        healAttempts++;
+        yield {
+          turn,
+          command,
+          args: normalizedArgs,
+          result,
+          tokens: { input: llmResponse.inputTokens, output: llmResponse.outputTokens },
+          durationMs: Date.now() - startTime,
+          isFinal: false,
+        };
+        llmInput = `Your query returned 0 rows. Before concluding, verify: (1) run each filter condition INDEPENDENTLY on the data to count how many rows each condition alone would return, (2) then explain to the user in a NarrativeAnswer why no rows match — e.g. "8 products have >10 orders, 3 products have Low Stock status, but none overlap." Do NOT just return empty results silently.`;
+        continue;
+      }
+    }
+
     yield {
       turn,
       command,
@@ -4966,6 +5945,32 @@ export async function* runLegacyAgent(
 
     if (isFinal) return;
     llmInput = `Result: ${formatResultForModel(result)}`;
+
+    } catch (turnErr: any) {
+      console.error(`[Legacy agent] Turn ${turn} crashed:`, turnErr);
+      yield {
+        turn,
+        command: "Error",
+        args: {},
+        result: `Internal error on turn ${turn}: ${turnErr?.message || String(turnErr)}. The agent will attempt to self-correct.`,
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+        isFinal: false,
+      };
+      llmInput = `An internal error occurred while executing the previous command: ${turnErr?.message || String(turnErr)}. Please try a different approach to answer the question: "${question}"`;
+      if (++healAttempts > MAX_HEAL_ATTEMPTS) {
+        yield {
+          turn: turn + 1,
+          command: "Error",
+          args: {},
+          result: "Too many errors — could not complete the query.",
+          tokens: { input: 0, output: 0 },
+          durationMs: 0,
+          isFinal: true,
+        };
+        return;
+      }
+    }
   }
 
   // Smart fallback: try to return the last intermediate result as an answer

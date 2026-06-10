@@ -202,11 +202,17 @@ describe("runLegacyAgent", () => {
   });
 
   it("supports legacy pandas-style filter plus aggregate queries", async () => {
-    vi.mocked(callLLM).mockResolvedValueOnce({
-      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","pandas_query":"df[df[\'department\']==\'Engineering\'][\'salary\'].max()"}}',
-      inputTokens: 10,
-      outputTokens: 6,
-    });
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"employees"}}',
+        inputTokens: 8,
+        outputTokens: 4,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","pandas_query":"df[df[\'department\']==\'Engineering\'][\'salary\'].max()"}}',
+        inputTokens: 10,
+        outputTokens: 6,
+      });
 
     const steps = [];
     for await (const step of runLegacyAgent(
@@ -222,18 +228,23 @@ describe("runLegacyAgent", () => {
       steps.push(step);
     }
 
-    expect(steps).toHaveLength(1);
-    expect(steps[0].command).toBe("ExecuteFinalQuery");
-    expect(steps[0].result).toEqual({ result: 150 });
-    expect(steps[0].isFinal).toBe(true);
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[1].result).toEqual({ result: 150 });
+    expect(steps[1].isFinal).toBe(true);
   });
 
   it("supports legacy pandas-style groupby ranking queries", async () => {
-    vi.mocked(callLLM).mockResolvedValueOnce({
-      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","pandas_query":"df.groupby(\'product\')[\'revenue\'].sum().sort_values(ascending=False).head(2)"}}',
-      inputTokens: 10,
-      outputTokens: 6,
-    });
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"sales"}}',
+        inputTokens: 8,
+        outputTokens: 4,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","pandas_query":"df.groupby(\'product\')[\'revenue\'].sum().sort_values(ascending=False).head(2)"}}',
+        inputTokens: 10,
+        outputTokens: 6,
+      });
 
     const steps = [];
     for await (const step of runLegacyAgent(
@@ -249,19 +260,25 @@ describe("runLegacyAgent", () => {
       steps.push(step);
     }
 
-    expect(steps).toHaveLength(1);
-    expect(steps[0].result).toEqual([
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[1].result).toEqual([
       { product: "A", sum: 250 },
       { product: "B", sum: 200 },
     ]);
   });
 
   it("repairs grouped ranking questions when the model emits aggregate plus groupBy", async () => {
-    vi.mocked(callLLM).mockResolvedValueOnce({
-      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"engines","operation":"aggregate","params":{"column":"displacement_cc","function":"min","groupBy":"Title"}}}',
-      inputTokens: 14,
-      outputTokens: 9,
-    });
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"engines"}}',
+        inputTokens: 8,
+        outputTokens: 4,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"engines","operation":"aggregate","params":{"column":"displacement_cc","function":"min","groupBy":"Title"}}}',
+        inputTokens: 14,
+        outputTokens: 9,
+      });
 
     const steps = [];
     for await (const step of runLegacyAgent(
@@ -277,9 +294,8 @@ describe("runLegacyAgent", () => {
       steps.push(step);
     }
 
-    expect(steps).toHaveLength(1);
-    expect(steps[0].command).toBe("ExecuteFinalQuery");
-    expect(steps[0].args).toMatchObject({
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[1].args).toMatchObject({
       sheet_name: "engines",
       operation: "groupby",
       params: {
@@ -290,7 +306,7 @@ describe("runLegacyAgent", () => {
         order: "asc",
       },
     });
-    expect(steps[0].result).toEqual([{ Title: "Toyota", min: 12 }]);
+    expect(steps[1].result).toEqual([{ Title: "Toyota", min: 12 }]);
   });
 
   it("describes multi-value text columns so the agent can understand list-like cells", async () => {
@@ -327,11 +343,17 @@ describe("runLegacyAgent", () => {
   });
 
   it("repairs actor frequency questions to use split_frequency on multi-value text columns", async () => {
-    vi.mocked(callLLM).mockResolvedValueOnce({
-      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"groupby","params":{"groupColumn":"cast","aggColumn":"cast","aggFunction":"count","order":"desc","limit":1}}}',
-      inputTokens: 16,
-      outputTokens: 10,
-    });
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"titles"}}',
+        inputTokens: 8,
+        outputTokens: 4,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"titles","operation":"groupby","params":{"groupColumn":"cast","aggColumn":"cast","aggFunction":"count","order":"desc","limit":1}}}',
+        inputTokens: 16,
+        outputTokens: 10,
+      });
 
     const steps = [];
     for await (const step of runLegacyAgent(
@@ -347,8 +369,8 @@ describe("runLegacyAgent", () => {
       steps.push(step);
     }
 
-    expect(steps).toHaveLength(1);
-    expect(steps[0].args).toMatchObject({
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[1].args).toMatchObject({
       sheet_name: "titles",
       operation: "split_frequency",
       params: {
@@ -358,7 +380,7 @@ describe("runLegacyAgent", () => {
         order: "desc",
       },
     });
-    expect(steps[0].result).toEqual([{ cast: "John Doe", count: 3 }]);
+    expect(steps[1].result).toEqual([{ cast: "John Doe", count: 3 }]);
   });
 
   it("carries a successful intermediate sheet filter into the final select", async () => {
@@ -417,11 +439,17 @@ describe("runLegacyAgent", () => {
   });
 
   it("supports executing multi_analysis to run multiple operations in a single command", async () => {
-    vi.mocked(callLLM).mockResolvedValueOnce({
-      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"multi_analysis","params":{"operations":[{"name":"total_rev","operation":"aggregate","params":{"column":"revenue","function":"sum"}},{"name":"prod_count","operation":"count","params":{}}]}}}',
-      inputTokens: 12,
-      outputTokens: 6,
-    });
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"sales"}}',
+        inputTokens: 8,
+        outputTokens: 4,
+      })
+      .mockResolvedValueOnce({
+        content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"multi_analysis","params":{"operations":[{"name":"total_rev","operation":"aggregate","params":{"column":"revenue","function":"sum"}},{"name":"prod_count","operation":"count","params":{}}]}}}',
+        inputTokens: 12,
+        outputTokens: 6,
+      });
 
     const steps = [];
     for await (const step of runLegacyAgent(
@@ -437,12 +465,36 @@ describe("runLegacyAgent", () => {
       steps.push(step);
     }
 
-    expect(steps).toHaveLength(1);
-    expect(steps[0].command).toBe("ExecuteFinalQuery");
-    expect(steps[0].result).toEqual({
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[1].result).toEqual({
       total_rev: { result: 500 },
       prod_count: { result: 4 },
     });
+  });
+
+  it("forces a GetColumns inspection before a direct query when the model skips it", async () => {
+    // The model jumps straight to a query on both turns; inspect-first injects a
+    // GetColumns grounding step, then the re-issued query runs against the schema.
+    const directQuery = {
+      content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"revenue","function":"sum"}}}',
+      inputTokens: 6,
+      outputTokens: 4,
+    };
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce(directQuery)
+      .mockResolvedValueOnce(directQuery);
+
+    const steps = [];
+    for await (const step of runLegacyAgent(
+      "total revenue", workbookSheets, "sales", "groq", "test-model", "test-key", 0.1, 512
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[0].args.sheet_name).toBe("sales");
+    expect(String(steps[0].result)).toContain("Sheet 'sales' schema:");
+    expect(steps[1].result).toEqual({ result: 500 });
   });
 });
 
@@ -786,6 +838,46 @@ describe("runDatabaseAgent", () => {
     expect(steps[2].result).toEqual([{ order_id: 1001, status: "paid" }]);
     expect(steps[2].args.params.filter).toEqual({ column: "status", operator: "==", value: "paid" });
   });
+
+  it("loads the schema before running SQL when the model skips GetSchema", async () => {
+    // The model jumps straight to SQL; inspect-first injects a GetSchema grounding
+    // step first so the query is written against the real table inventory.
+    const directSql = {
+      content: '{"command":"ExecuteSQL","args":{"sql":"SELECT SUM(total_amount) AS total FROM orders"}}',
+      inputTokens: 8,
+      outputTokens: 5,
+    };
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce(directSql)
+      .mockResolvedValueOnce(directSql);
+    const executeSql = vi.fn().mockResolvedValueOnce({
+      data: [{ total: 510 }],
+      sql: "SELECT SUM(total_amount) AS total FROM orders",
+    });
+
+    const steps = [];
+    for await (const step of runDatabaseAgent(
+      "total order amount",
+      databaseTables,
+      "orders",
+      "PostgreSQL",
+      "groq",
+      "test-model",
+      "test-key",
+      0.1,
+      512,
+      undefined,
+      undefined,
+      {},
+      { executeSql }
+    )) {
+      steps.push(step);
+    }
+
+    expect(steps.map((step) => step.command)).toEqual(["GetSchema", "ExecuteSQL"]);
+    expect(executeSql).toHaveBeenCalledTimes(1);
+    expect(steps[1].result).toEqual([{ total: 510 }]);
+  });
 });
 
 describe("runLegacyAgent - Cross-Sheet Operations", () => {
@@ -942,11 +1034,16 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
   });
 
   it("repairs the sheet name if columns specified do not belong to the requested sheet but exist in another", async () => {
-    vi.mocked(callLLM).mockResolvedValueOnce({
+    // The model keeps targeting "inventory"; inspect-first forces a GetColumns on the
+    // sheet that actually owns the columns (employees), then the query runs there.
+    const misroutedQuery = {
       content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"inventory","operation":"groupby","params":{"groupColumn":"department","aggColumn":"salary","aggFunction":"mean"}}}',
       inputTokens: 15,
       outputTokens: 8,
-    });
+    };
+    vi.mocked(callLLM)
+      .mockResolvedValueOnce(misroutedQuery)
+      .mockResolvedValueOnce(misroutedQuery);
 
     const steps = [];
     for await (const step of runLegacyAgent(
@@ -962,9 +1059,10 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
       steps.push(step);
     }
 
-    expect(steps[0].command).toBe("ExecuteFinalQuery");
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
     expect(steps[0].args.sheet_name).toBe("employees");
-    expect(steps[0].result).toEqual([
+    expect(steps[1].args.sheet_name).toBe("employees");
+    expect(steps[1].result).toEqual([
       { department: "Engineering", mean: 135 },
       { department: "Finance", mean: 100 },
     ]);
@@ -986,17 +1084,25 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
       },
     };
 
+    const inspect = {
+      content: '{"command":"GetColumns","args":{"sheet_name":"employees"}}',
+      inputTokens: 8,
+      outputTokens: 4,
+    };
     vi.mocked(callLLM)
+      .mockResolvedValueOnce(inspect)
       .mockResolvedValueOnce({
         content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","operation":"filter","params":{"column":"gender","operator":"==","value":"female"}}}',
         inputTokens: 10,
         outputTokens: 6,
       })
+      .mockResolvedValueOnce(inspect)
       .mockResolvedValueOnce({
         content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","operation":"filter","params":{"column":"gender","operator":"==","value":"male"}}}',
         inputTokens: 10,
         outputTokens: 6,
       })
+      .mockResolvedValueOnce(inspect)
       .mockResolvedValueOnce({
         content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"employees","operation":"filter","params":{"column":"salary","operator":">","value":100000}}}',
         inputTokens: 10,
@@ -1009,8 +1115,8 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
     )) {
       steps.push(step);
     }
-    expect(steps[0].result).toHaveLength(1);
-    expect(steps[0].result[0].name).toBe("Alice");
+    expect(steps[1].result).toHaveLength(1);
+    expect(steps[1].result[0].name).toBe("Alice");
 
     steps = [];
     for await (const step of runLegacyAgent(
@@ -1018,8 +1124,8 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
     )) {
       steps.push(step);
     }
-    expect(steps[0].result).toHaveLength(2);
-    expect(steps[0].result.map((r: any) => r.name)).toEqual(["Bob", "Charlie"]);
+    expect(steps[1].result).toHaveLength(2);
+    expect(steps[1].result.map((r: any) => r.name)).toEqual(["Bob", "Charlie"]);
 
     steps = [];
     for await (const step of runLegacyAgent(
@@ -1027,8 +1133,8 @@ describe("runLegacyAgent - Cross-Sheet Operations", () => {
     )) {
       steps.push(step);
     }
-    expect(steps[0].result).toHaveLength(2);
-    expect(steps[0].result.map((r: any) => r.name)).toEqual(["Alice", "Charlie"]);
+    expect(steps[1].result).toHaveLength(2);
+    expect(steps[1].result.map((r: any) => r.name)).toEqual(["Alice", "Charlie"]);
   });
 });
 
@@ -1039,13 +1145,19 @@ describe("self-healing & resilience", () => {
 
   it("recovers from an unknown operation by feeding the error back and retrying (workbook)", async () => {
     vi.mocked(callLLM)
-      // Turn 1: model picks an unsupported operation → execution error
+      // Turn 1: inspect-first forces/uses a GetColumns grounding step
+      .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"sales"}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      })
+      // Turn 2: model picks an unsupported operation → execution error
       .mockResolvedValueOnce({
         content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"frobnicate","params":{}}}',
         inputTokens: 5,
         outputTokens: 5,
       })
-      // Turn 2: after the corrective hint, model issues a valid command
+      // Turn 3: after the corrective hint, model issues a valid command
       .mockResolvedValueOnce({
         content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"revenue","function":"sum"}}}',
         inputTokens: 5,
@@ -1059,17 +1171,17 @@ describe("self-healing & resilience", () => {
       steps.push(step);
     }
 
-    // The failed attempt is surfaced but NOT final — the agent self-corrected.
-    expect(steps).toHaveLength(2);
-    expect(steps[0].command).toBe("ExecuteFinalQuery");
-    expect(steps[0].isFinal).toBe(false);
-    expect(JSON.stringify(steps[0].result).toLowerCase()).toContain("unknown operation");
-    expect(steps[1].isFinal).toBe(true);
-    expect(steps[1].result).toEqual({ result: 500 });
+    // GetColumns first, then the failed attempt (NOT final), then the self-corrected answer.
+    expect(steps).toHaveLength(3);
+    expect(steps[0].command).toBe("GetColumns");
+    expect(steps[1].command).toBe("ExecuteFinalQuery");
+    expect(steps[1].isFinal).toBe(false);
+    expect(JSON.stringify(steps[1].result).toLowerCase()).toContain("unknown operation");
+    expect(steps[2].isFinal).toBe(true);
+    expect(steps[2].result).toEqual({ result: 500 });
 
-    // The model was given a corrective instruction (the history array is mutated by
-    // reference across turns, so inspect the whole captured conversation).
-    const retryHistory = JSON.stringify(vi.mocked(callLLM).mock.calls[1][3]);
+    // The model was given a corrective instruction before its final (third) call.
+    const retryHistory = JSON.stringify(vi.mocked(callLLM).mock.calls[2][3]);
     expect(retryHistory).toContain("FAILED");
     expect(retryHistory.toLowerCase()).toContain("corrected");
   });
@@ -1109,6 +1221,11 @@ describe("self-healing & resilience", () => {
     vi.mocked(callLLM)
       .mockRejectedValueOnce(new Error("Groq error (429): Too Many Requests"))
       .mockResolvedValueOnce({
+        content: '{"command":"GetColumns","args":{"sheet_name":"sales"}}',
+        inputTokens: 5,
+        outputTokens: 5,
+      })
+      .mockResolvedValueOnce({
         content: '{"command":"ExecuteFinalQuery","args":{"sheet_name":"sales","operation":"aggregate","params":{"column":"revenue","function":"sum"}}}',
         inputTokens: 5,
         outputTokens: 5,
@@ -1121,11 +1238,10 @@ describe("self-healing & resilience", () => {
       steps.push(step);
     }
 
-    // One transient rejection + one success = the call was retried, not abandoned.
-    expect(vi.mocked(callLLM)).toHaveBeenCalledTimes(2);
-    expect(steps).toHaveLength(1);
-    expect(steps[0].command).toBe("ExecuteFinalQuery");
-    expect(steps[0].result).toEqual({ result: 500 });
+    // Transient rejection retried within the first turn (GetColumns), then the query runs.
+    expect(vi.mocked(callLLM)).toHaveBeenCalledTimes(3);
+    expect(steps.map((step) => step.command)).toEqual(["GetColumns", "ExecuteFinalQuery"]);
+    expect(steps[1].result).toEqual({ result: 500 });
   });
 
   it("does NOT retry on a fatal auth (401) error and fails fast", async () => {
