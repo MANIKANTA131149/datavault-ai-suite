@@ -15,7 +15,7 @@
     "build": "vite build",
     "build:local": "vite build",
     "build:dev": "vite build --mode development",
-    "aws-deploy:backend": "cd server && serverless deploy",
+    "aws-deploy:backend": "cd server && node --max-old-space-size=4096 node_modules/.bin/serverless deploy",
     "aws-offline:backend": "cd server && serverless offline",
     "lint": "eslint .",
     "preview": "vite preview",

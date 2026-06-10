@@ -18,16 +18,43 @@ provider:
 
 package:
   patterns:
+    # Exclude dev/build artifacts that don't belong in Lambda
     - '!node_modules/**/test/**'
     - '!node_modules/**/tests/**'
+    - '!node_modules/**/__tests__/**'
+    - '!node_modules/**/spec/**'
     - '!node_modules/**/README*'
     - '!node_modules/**/*.md'
-    - '!node_modules/**/LICENSE'
+    - '!node_modules/**/CHANGELOG*'
+    - '!node_modules/**/LICENSE*'
     - '!node_modules/**/*.ts'
     - '!node_modules/**/*.map'
+    - '!node_modules/**/*.d.ts'
     - '!node_modules/**/docs/**'
+    - '!node_modules/**/doc/**'
     - '!node_modules/**/example/**'
     - '!node_modules/**/examples/**'
+    - '!node_modules/**/benchmark/**'
+    - '!node_modules/**/benchmarks/**'
+    - '!node_modules/**/.bin/**'
+    # Exclude frontend build tools — never needed at runtime
+    - '!node_modules/vite/**'
+    - '!node_modules/@vitejs/**'
+    - '!node_modules/rollup/**'
+    - '!node_modules/@rollup/**'
+    - '!node_modules/esbuild/**'
+    - '!node_modules/@esbuild/**'
+    - '!node_modules/typescript/**'
+    - '!node_modules/eslint/**'
+    - '!node_modules/@eslint/**'
+    - '!node_modules/vitest/**'
+    - '!node_modules/@vitest/**'
+    - '!node_modules/tailwindcss/**'
+    - '!node_modules/postcss/**'
+    - '!node_modules/autoprefixer/**'
+    - '!node_modules/prettier/**'
+    - '!node_modules/@swc/**'
+    - '!node_modules/tsx/**'
 
 
 functions:
