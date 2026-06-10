@@ -3,7 +3,19 @@ import { persist } from "zustand/middleware";
 import type { Provider } from "@/lib/llm-client";
 
 export const PROVIDER_MODELS: Record<Provider, string[]> = {
-  querify: ["amazon.nova-pro-v1:0"],
+  querify: [
+    "amazon.nova-pro-v1:0",
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "google.gemma-3-12b-it",
+    "openai.gpt-oss-120b-1:0",
+    "meta.llama3-3-70b-instruct-v1:0",
+    "amazon.nova-premier-v1:0",
+    "deepseek.v3.2",
+    "deepseek.r1-v1:0",
+    "qwen.qwen3-next-80b-a3b",
+    "nvidia.nemotron-super-3-120b",
+    "moonshot.kimi-k2-thinking",
+  ],
   groq: ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"],
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
   gemini: [

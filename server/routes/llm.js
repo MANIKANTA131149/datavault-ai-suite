@@ -351,7 +351,21 @@ router.post("/bedrock/chat", async (req, res) => {
     return res.status(400).json({ error: "Model and messages are required" });
   }
 
-  const isFreeBedrockModel = ["amazon.nova-pro-v1:0"].includes(model);
+  // Platform-served default Querify models: use admin AWS creds + enforce the daily free limit.
+  // Keep in sync with the querify list in src/stores/llm-store.ts and history.js/plans.js.
+  const isFreeBedrockModel = [
+    "amazon.nova-pro-v1:0",
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "google.gemma-3-12b-it",
+    "openai.gpt-oss-120b-1:0",
+    "meta.llama3-3-70b-instruct-v1:0",
+    "amazon.nova-premier-v1:0",
+    "deepseek.v3.2",
+    "deepseek.r1-v1:0",
+    "qwen.qwen3-next-80b-a3b",
+    "nvidia.nemotron-super-3-120b",
+    "moonshot.kimi-k2-thinking",
+  ].includes(model);
   let isFreeUser = true;
   let userId = null;
 

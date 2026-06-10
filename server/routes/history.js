@@ -56,7 +56,21 @@ router.post("/", async (req, res) => {
     const db = await getDb();
     const planContext = await getPlanContext(db, req.userId);
 
-    const isFreeNovaModel = ["amazon.nova-pro-v1:0"].includes(model) && planContext.plan.tier === "free";
+    // Platform-served free Querify models are governed by the daily free limit, not the
+    // monthly plan quota. Keep in sync with llm.js/plans.js and the querify list in llm-store.ts.
+    const isFreeNovaModel = [
+      "amazon.nova-pro-v1:0",
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "google.gemma-3-12b-it",
+      "openai.gpt-oss-120b-1:0",
+      "meta.llama3-3-70b-instruct-v1:0",
+      "amazon.nova-premier-v1:0",
+      "deepseek.v3.2",
+      "deepseek.r1-v1:0",
+      "qwen.qwen3-next-80b-a3b",
+      "nvidia.nemotron-super-3-120b",
+      "moonshot.kimi-k2-thinking",
+    ].includes(model) && planContext.plan.tier === "free";
 
     if (!isFreeNovaModel) {
       const queryCheck = canUseMetric(planContext.plan, "monthlyQueries", planContext.usage.monthlyQueries, 1);

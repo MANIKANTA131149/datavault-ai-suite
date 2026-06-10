@@ -40,6 +40,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useConnectionStore, DB_TYPE_LABELS } from "@/stores/connection-store";
@@ -1098,7 +1099,10 @@ function CostEstimatorBadge({ input, model, provider }: { input: string; model: 
     const COST_PER_M: Record<string, number> = {
       "gpt-4o": 5, "gpt-4o-mini": 0.15, "claude-3-5-sonnet": 3, "claude-3-haiku": 0.25,
       "gemini-1.5-flash": 0.075, "gemini-1.5-pro": 3.5, "llama3-70b-8192": 0.59,
-      "amazon.nova-pro-v1:0": 0.8,
+      "amazon.nova-premier-v1:0": 2.5, "amazon.nova-pro-v1:0": 0.8, "us.anthropic.claude-sonnet-4-5-20250929-v1:0": 3,
+      "meta.llama3-3-70b-instruct-v1:0": 0.72, "deepseek.r1-v1:0": 1.35, "deepseek.v3.2": 0.95,
+      "google.gemma-3-12b-it": 0.3, "openai.gpt-oss-120b-1:0": 5, "qwen.qwen3-next-80b-a3b": 0.9,
+      "nvidia.nemotron-super-3-120b": 4, "moonshot.kimi-k2-thinking": 2,
     };
     const rate = COST_PER_M[model] ?? 1;
     const cost = (tokens / 1_000_000) * rate;
@@ -1321,6 +1325,70 @@ const StepsTimeline = memo(function StepsTimeline({
   );
 });
 
+// Mini chart shown inside each multi_analysis sub-result panel.
+const MultiTableMiniChart = memo(function MultiTableMiniChart({ data }: { data: Record<string, any>[] }) {
+  const { chartRows, valueKey, labelKey, isChartable, defaultChart } = useMemo(() => getChartMeta(data), [data]);
+  const [chartType, setChartType] = useState<ChartType>(defaultChart);
+  const [showChart, setShowChart] = useState(true);
+
+  if (!isChartable) return null;
+
+  const displayRows = chartRows.slice(0, 20);
+  const color = "hsl(var(--primary))";
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <button onClick={() => setShowChart((p) => !p)} className="text-[10px] text-primary hover:underline flex items-center gap-1">
+          <BarChart3 size={11} />
+          {showChart ? "Hide chart" : "Show chart"}
+        </button>
+        {showChart && (
+          <div className="flex gap-1">
+            {(["bar", "line", "pie"] as const).map((t) => (
+              <button key={t} onClick={() => setChartType(t)} className={`text-[10px] px-1.5 py-0.5 rounded capitalize ${chartType === t ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {showChart && (
+        <div className="rounded-md border border-border bg-card/40 p-2">
+          <ResponsiveContainer width="100%" height={180}>
+            {chartType === "pie" ? (
+              <PieChart>
+                <Pie data={displayRows} dataKey={valueKey} nameKey={labelKey} cx="50%" cy="50%" outerRadius={65} fill={color} label={({ name, percent }) => `${String(name).slice(0, 12)} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                  {displayRows.map((_: any, i: number) => (
+                    <Cell key={i} fill={`hsl(${(215 + i * 37) % 360}, 65%, 54%)`} />
+                  ))}
+                </Pie>
+                <RechartsTooltip formatter={(v: any) => [typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v, valueKey]} />
+              </PieChart>
+            ) : chartType === "line" ? (
+              <LineChart data={displayRows} margin={{ top: 4, right: 12, left: 0, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                <YAxis tick={{ fontSize: 10 }} width={40} />
+                <RechartsTooltip formatter={(v: any) => [typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v, valueKey]} />
+                <Line type="monotone" dataKey={valueKey} stroke={color} dot={displayRows.length <= 15} strokeWidth={2} />
+              </LineChart>
+            ) : (
+              <BarChart data={displayRows} margin={{ top: 4, right: 12, left: 0, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} angle={-35} textAnchor="end" interval={0} />
+                <YAxis tick={{ fontSize: 10 }} width={40} />
+                <RechartsTooltip formatter={(v: any) => [typeof v === "number" ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v, valueKey]} />
+                <Bar dataKey={valueKey} fill={color} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+});
+
 const MultiTableResult = memo(function MultiTableResult({ result, density = "compact" }: { result: any, density?: ResultDensity }) {
   if (typeof result !== "object" || result === null || Array.isArray(result)) return null;
 
@@ -1347,29 +1415,32 @@ const MultiTableResult = memo(function MultiTableResult({ result, density = "com
           } else {
             const headers = Object.keys(val[0] || {});
             content = (
-              <div className="max-h-60 overflow-auto rounded-md border border-border">
-                <table className="w-full text-xs">
-                  <thead className="bg-background-secondary">
-                    <tr>
-                      {headers.map((h) => (
-                        <th key={h} className="text-left px-3 py-1.5 text-muted-foreground font-medium whitespace-nowrap">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {val.map((row: any, i: number) => (
-                      <tr key={i} className="border-t border-border/50">
-                        {headers.map((h, j) => (
-                          <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
-                            {String(row[h] ?? "")}
-                          </td>
+              <div className="space-y-2">
+                <div className="max-h-60 overflow-auto rounded-md border border-border">
+                  <table className="w-full text-xs">
+                    <thead className="bg-background-secondary">
+                      <tr>
+                        {headers.map((h) => (
+                          <th key={h} className="text-left px-3 py-1.5 text-muted-foreground font-medium whitespace-nowrap">
+                            {h}
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {val.map((row: any, i: number) => (
+                        <tr key={i} className="border-t border-border/50">
+                          {headers.map((h, j) => (
+                            <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
+                              {String(row[h] ?? "")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <MultiTableMiniChart data={val} />
               </div>
             );
           }
@@ -2546,7 +2617,19 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
   const [loadingData, setLoadingData] = useState(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [sortCol, setSortCol] = useState("");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const PAGE_SIZE = 100;
+
+  const handlePreviewSort = (col: string) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+    setPage(0);
+  };
 
   useEffect(() => {
     const inMem = dataset.data?.sheets[sheet];
@@ -2560,10 +2643,20 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
 
   const filtered = useMemo(() => {
     if (!sheetData) return [];
-    if (!search.trim()) return sheetData.rows;
-    const q = search.toLowerCase();
-    return sheetData.rows.filter((row) => Object.values(row).some((v) => String(v).toLowerCase().includes(q)));
-  }, [sheetData, search]);
+    const q = search.trim().toLowerCase();
+    let rows = q
+      ? sheetData.rows.filter((row) => Object.values(row).some((v) => String(v).toLowerCase().includes(q)))
+      : sheetData.rows;
+    if (sortCol) {
+      rows = [...rows].sort((a, b) => {
+        const av = a[sortCol], bv = b[sortCol];
+        const an = Number(av), bn = Number(bv);
+        const cmp = Number.isFinite(an) && Number.isFinite(bn) ? an - bn : String(av ?? "").localeCompare(String(bv ?? ""));
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
+    return rows;
+  }, [sheetData, search, sortCol, sortDir]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -2628,9 +2721,26 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
               <table className="min-w-[720px] w-full text-xs border-collapse">
                 <thead className="sticky top-0 bg-background-secondary z-10">
                   <tr>
-                    <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border">#</th>
+                    <th className="px-4 py-2.5 text-left text-muted-foreground font-medium border-b border-border select-none w-10">#</th>
                     {sheetData.columns.map((col: any) => (
-                      <th key={col.name} className="px-4 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-b border-border">{col.name}</th>
+                      <th key={col.name} className="border-b border-border">
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewSort(col.name)}
+                          className="group flex w-full items-center gap-1 px-4 py-2.5 text-left text-xs font-medium text-muted-foreground whitespace-nowrap hover:text-foreground transition-colors"
+                        >
+                          <span>{col.name}</span>
+                          <span className="ml-auto shrink-0">
+                            {sortCol === col.name ? (
+                              sortDir === "asc"
+                                ? <ChevronUp size={11} className="text-primary" />
+                                : <ChevronDown size={11} className="text-primary" />
+                            ) : (
+                              <ChevronUp size={11} className="opacity-0 group-hover:opacity-30 transition-opacity" />
+                            )}
+                          </span>
+                        </button>
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -3150,7 +3260,12 @@ export default function QueryPage() {
   const { checkMetric, checkExport, fetchPlan } = usePlanStore();
   const { user } = useAuthStore();
   const isFreeUser = user?.planTier === "free";
-  const isFreeNovaModel = (activeProvider === "bedrock" || activeProvider === "querify") && ["amazon.nova-pro-v1:0"].includes(activeModel);
+  const isFreeNovaModel = (activeProvider === "bedrock" || activeProvider === "querify") && [
+    "amazon.nova-pro-v1:0", "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "google.gemma-3-12b-it", "openai.gpt-oss-120b-1:0", "meta.llama3-3-70b-instruct-v1:0",
+    "amazon.nova-premier-v1:0", "deepseek.v3.2", "deepseek.r1-v1:0",
+    "qwen.qwen3-next-80b-a3b", "nvidia.nemotron-super-3-120b", "moonshot.kimi-k2-thinking",
+  ].includes(activeModel);
 
   const [isLargeScreen, setIsLargeScreen] = useState(false);
 
@@ -3596,6 +3711,22 @@ export default function QueryPage() {
     localStorage.setItem(FAVORITE_PROMPTS_KEY, JSON.stringify(favoritePrompts));
   }, [favoritePrompts]);
 
+  // Clear chat memory when the user switches dataset/connection so stale context never bleeds over.
+  const prevDatasetIdRef = useRef<string | null>(null);
+  const prevConnectionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const didChange =
+      (prevDatasetIdRef.current !== null && prevDatasetIdRef.current !== selectedDatasetId) ||
+      (prevConnectionIdRef.current !== null && prevConnectionIdRef.current !== selectedConnectionId);
+    prevDatasetIdRef.current = selectedDatasetId ?? null;
+    prevConnectionIdRef.current = selectedConnectionId ?? null;
+    if (didChange) {
+      setMessages([]);
+      setConversationContext([]);
+      setCurrentSteps([]);
+    }
+  }, [selectedDatasetId, selectedConnectionId]);
+
   // New enterprise state
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
   const [notifEnabled, setNotifEnabled] = useState(false);
@@ -3706,6 +3837,57 @@ export default function QueryPage() {
     setConversationContext([]);
     toast.success("Conversation context cleared");
   };
+
+  const handleClearChat = () => {
+    setMessages([]);
+    setConversationContext([]);
+    setCurrentSteps([]);
+    setInput("");
+    toast.success("Chat cleared");
+  };
+
+  // ── Memory-loss warning ────────────────────────────────────────────────────
+  const hasMemory = messages.length > 0 || conversationContext.length > 0;
+  const hasMemoryRef = useRef(hasMemory);
+  hasMemoryRef.current = hasMemory;
+
+  const [navBlocked, setNavBlocked] = useState<string | null>(null);
+  const pendingNavRef = useRef<(() => void) | null>(null);
+
+  // Case 1: In-app route navigation — intercept pushState / popstate.
+  useEffect(() => {
+    const origPush = window.history.pushState.bind(window.history);
+    window.history.pushState = function (state, title, url) {
+      const next = url ? String(url) : "";
+      if (hasMemoryRef.current && next && !next.includes(window.location.pathname)) {
+        pendingNavRef.current = () => origPush(state, title, url);
+        setNavBlocked(next);
+        return;
+      }
+      origPush(state, title, url);
+    };
+    const handlePop = (e: PopStateEvent) => {
+      if (hasMemoryRef.current) {
+        e.preventDefault();
+        window.history.pushState(null, "", window.location.href);
+        pendingNavRef.current = () => window.history.back();
+        setNavBlocked("back");
+      }
+    };
+    window.addEventListener("popstate", handlePop);
+    return () => {
+      window.history.pushState = origPush;
+      window.removeEventListener("popstate", handlePop);
+    };
+  }, []);
+
+  // Case 2: Page refresh or browser tab close.
+  useEffect(() => {
+    if (!hasMemory) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [hasMemory]);
 
   const handleSendLegacy = async (overrideQuestion?: string) => {
     const question = (overrideQuestion ?? input).trim();
@@ -4269,6 +4451,33 @@ export default function QueryPage() {
 
   return (
     <div className="relative flex h-[calc(100dvh-3.5rem-4.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] md:h-[calc(100dvh-3.5rem)]">
+
+      {/* ── Memory-loss warning dialog (route navigation) ── */}
+      <AlertDialog open={navBlocked !== null}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span>⚠️</span> Leave page?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-sm">
+              <p>Your agent conversation memory will be permanently deleted if you leave this page. This includes:</p>
+              <ul className="list-disc pl-5 space-y-1 text-muted-foreground text-xs">
+                <li><strong>Chat history</strong> — all messages in this session</li>
+                <li><strong>Conversation context</strong> — {conversationContext.length} turn{conversationContext.length !== 1 ? "s" : ""} the agent is using to answer follow-up questions</li>
+                <li><strong>Agent memory</strong> — the agent will start completely fresh on the next question</li>
+              </ul>
+              <p className="text-xs text-muted-foreground">Use the <strong>New Chat</strong> button instead if you want to reset within this page.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { pendingNavRef.current = null; setNavBlocked(null); }}>Stay on page</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { const go = pendingNavRef.current; pendingNavRef.current = null; setNavBlocked(null); go?.(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Leave & clear memory
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Top switcher/actions bar */}
       <div className="shrink-0 border-b border-border bg-background-secondary/85 backdrop-blur-md px-4 py-2.5 flex items-center justify-between z-40 gap-4">
         <div className="flex items-center gap-2">
@@ -4948,6 +5157,17 @@ export default function QueryPage() {
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1.5 sm:gap-2">
+                    {messages.length > 0 && !isRunning && (
+                      <Button
+                        variant="outline"
+                        onClick={handleClearChat}
+                        size="icon"
+                        title="New chat (clear history)"
+                        className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border hover:text-destructive hover:border-destructive/40"
+                      >
+                        <MessageSquarePlus size={16} />
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       onClick={handleSpeech}
