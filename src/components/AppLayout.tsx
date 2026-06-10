@@ -51,7 +51,9 @@ const BREADCRUMBS: Record<string, string> = {
 const MOBILE_NAV_ITEMS = [
   { label: "Home",     icon: LayoutDashboard, path: "/app/dashboard" },
   { label: "Query",    icon: MessageSquare,   path: "/app/query" },
-  { label: "Insights", icon: Bookmark,        path: "/app/insights" },
+  // Insights — temporarily disabled, will release later
+  // { label: "Insights", icon: Bookmark,        path: "/app/insights" },
+  { label: "History",  icon: Clock,           path: "/app/history" },
   { label: "Settings", icon: Settings,        path: "/app/settings" },
 ];
 

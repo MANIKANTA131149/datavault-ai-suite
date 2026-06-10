@@ -217,7 +217,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="page-shell-narrow space-y-6">
+    <div className="page-shell-narrow page-enter space-y-6">
       <PageHeader
         title="Settings"
         titleIcon={SettingsIcon}

@@ -121,7 +121,8 @@ export function CommandPalette() {
             { label: "Dashboard",   Icon: LayoutDashboard, path: "/app/dashboard" },
             { label: "Query",       Icon: MessageSquare,   path: "/app/query" },
             { label: "History",     Icon: Clock,           path: "/app/history" },
-            { label: "Insights",    Icon: Bookmark,        path: "/app/insights" },
+            // Insights — temporarily disabled, will release later
+            // { label: "Insights",    Icon: Bookmark,        path: "/app/insights" },
             { label: "Datasets",    Icon: Database,        path: "/app/datasets" },
             { label: "Connections", Icon: Cable,           path: "/app/connections" },
             { label: "Get Started", Icon: Compass,         path: "/app/get-started" },

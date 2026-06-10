@@ -42,6 +42,10 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { DensityToggle } from "@/components/shared/DensityToggle";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useDatasetStore, type StoredDataset } from "@/stores/dataset-store";
 import { useConnectionStore, DB_TYPE_LABELS } from "@/stores/connection-store";
 import { useLLMStore, PROVIDER_MODELS, PROVIDER_LABELS, getModelDisplayName } from "@/stores/llm-store";
@@ -101,6 +105,7 @@ const CHART_PIE_LABEL_LIMIT = 6;
 const CHART_PIE_SLICE_LIMIT = 8;
 const STEP_RESULT_PREVIEW_ROWS = 5;
 const STEP_RESULT_PREVIEW_LIMIT = 1200;
+const QUERY_MAX_CHARS = 1000; // hard limit on user query length
 const RESULT_TABLE_ROW_HEIGHT: Record<ResultDensity, number> = {
   compact: 30,
   comfortable: 38,
@@ -560,7 +565,7 @@ function exportMarkdown(result: any, query: string, filename = "result.md") {
     const headers = Object.keys(result[0]);
     md += `| ${headers.join(" | ")} |\n| ${headers.map(() => "---").join(" | ")} |\n`;
     for (const row of result) {
-      md += `| ${headers.map((h) => String(row[h] ?? "")).join(" | ")} |\n`;
+      md += `| ${headers.map((h) => formatCellDisplay(row[h])).join(" | ")} |\n`;
     }
   } else if (result?.narrative) {
     md += result.narrative;
@@ -605,20 +610,59 @@ function exportCSV(result: any, filename = "result.csv") {
   URL.revokeObjectURL(url);
 }
 
-function rowsToCSV(rows: Record<string, any>[]) {
+// Round non-integer numbers to 2 decimals for display and copy (means, averages, etc.)
+function roundCellNumber(value: any): any {
+  return typeof value === "number" && Number.isFinite(value) && !Number.isInteger(value)
+    ? Math.round(value * 100) / 100
+    : value;
+}
+
+// Display formatting for table cells: 2-decimal rounding + thousands separators for numbers.
+function formatCellDisplay(value: any): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return String(value);
+}
+
+// Tab-separated text — Excel/Sheets split TSV into real columns on paste.
+function rowsToTSV(rows: Record<string, any>[]) {
   if (rows.length === 0) return "";
   const headers = Object.keys(rows[0]);
-  return [headers.join(","), ...rows.map((row) => headers.map((h) => JSON.stringify(row[h] ?? "")).join(","))].join("\n");
+  const esc = (v: any) => String(roundCellNumber(v) ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " ");
+  return [headers.join("\t"), ...rows.map((row) => headers.map((h) => esc(row[h])).join("\t"))].join("\n");
+}
+
+// HTML table for rich-paste targets (Excel, Sheets, Word, Gmail).
+function rowsToHTMLTable(rows: Record<string, any>[]) {
+  if (rows.length === 0) return "";
+  const headers = Object.keys(rows[0]);
+  const esc = (v: any) =>
+    String(roundCellNumber(v) ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const head = headers.map((h) => `<th>${esc(h)}</th>`).join("");
+  const body = rows.map((r) => `<tr>${headers.map((h) => `<td>${esc(r[h])}</td>`).join("")}</tr>`).join("");
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 async function copyRows(rows: Record<string, any>[]) {
-  const csv = rowsToCSV(rows);
-  if (!csv) {
+  if (rows.length === 0) {
     toast.info("No table rows to copy");
     return;
   }
-  await navigator.clipboard.writeText(csv);
-  toast.success("Table copied");
+  const tsv = rowsToTSV(rows);
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/plain": new Blob([tsv], { type: "text/plain" }),
+        "text/html": new Blob([rowsToHTMLTable(rows)], { type: "text/html" }),
+      }),
+    ]);
+  } catch {
+    // Older browsers: plain TSV still pastes as columns in Excel/Sheets
+    await navigator.clipboard.writeText(tsv);
+  }
+  toast.success("Table copied — paste into Excel or Sheets");
 }
 
 interface VirtualizedResultTableProps {
@@ -690,14 +734,15 @@ function ResultTableRow({
         </div>
       )}
       {headers.map((header, hi) => {
-        const value = String(row?.[header] ?? "");
-        const fmtBg = formatRules?.reduce((acc, r) => acc || (r.column === header ? getFormatBg(r, value) : ""), "") || "";
+        const rawValue = String(row?.[header] ?? "");
+        const value = formatCellDisplay(row?.[header]);
+        const fmtBg = formatRules?.reduce((acc, r) => acc || (r.column === header ? getFormatBg(r, rawValue) : ""), "") || "";
         const isFirst = hi === 0 && frozenFirst;
         return (
           <div
             key={header}
-            title={value}
-            onClick={() => onCellCopy?.(value)}
+            title={rawValue}
+            onClick={() => onCellCopy?.(rawValue)}
             className={`${density === "compact" ? "px-2 py-1.5" : "px-3 py-2"} min-w-0 truncate text-xs text-foreground cursor-pointer hover:bg-primary/10 transition-colors ${fmtBg}`}
             style={isFirst ? { position: "sticky", left: onToggleRow ? 40 : 0, zIndex: 1, background: "inherit" } : undefined}
           >
@@ -988,7 +1033,7 @@ function RowDetailPanel({ row, headers, rowIndex, onClose }: { row: any; headers
         </SheetHeader>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {headers.map((h) => {
-            const val = String(row[h] ?? "");
+            const val = formatCellDisplay(row[h]);
             return (
               <div key={h} className="flex flex-col gap-0.5 p-2.5 rounded-md bg-card border border-border">
                 <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">{h}</span>
@@ -1053,6 +1098,39 @@ function ColumnStatsPopover({ header, rows, density }: { header: string; rows: R
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// ─── UserMessageBubble ────────────────────────────────────────────────────────
+// Long questions collapse to a few lines with a Show more toggle (Claude/ChatGPT style).
+const USER_MSG_COLLAPSE_CHARS = 280;
+
+function UserMessageBubble({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > USER_MSG_COLLAPSE_CHARS;
+  const shown = !isLong || expanded ? content : `${content.slice(0, USER_MSG_COLLAPSE_CHARS).trimEnd()}…`;
+
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] min-w-0 rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
+        <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+          {shown}
+        </p>
+        {isLong && (
+          <button
+            type="button"
+            onClick={() => setExpanded((p) => !p)}
+            className="mt-1.5 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            {expanded ? (
+              <>Show less <ChevronUp size={12} /></>
+            ) : (
+              <>Show more <ChevronDown size={12} /></>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1432,7 +1510,7 @@ const MultiTableResult = memo(function MultiTableResult({ result, density = "com
                         <tr key={i} className="border-t border-border/50">
                           {headers.map((h, j) => (
                             <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
-                              {String(row[h] ?? "")}
+                              {formatCellDisplay(row[h])}
                             </td>
                           ))}
                         </tr>
@@ -1477,7 +1555,7 @@ const MultiTableResult = memo(function MultiTableResult({ result, density = "com
                     <tr className="border-t border-border/50">
                       {headers.map((h, j) => (
                         <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
-                          {String(val[h] ?? "")}
+                          {formatCellDisplay(val[h])}
                         </td>
                       ))}
                     </tr>
@@ -2096,7 +2174,7 @@ const ResultPanel = memo(function ResultPanel({
                     {visibleChartRows.map((row: any, i: number) => (
                       <tr key={i} className="border-t border-border/50">
                         {Object.keys(rows[0] || {}).map((h) => (
-                          <td key={h} className="px-3 py-1.5 text-foreground max-w-[120px] truncate">{String(row[h] ?? "")}</td>
+                          <td key={h} className="px-3 py-1.5 text-foreground max-w-[120px] truncate">{formatCellDisplay(row[h])}</td>
                         ))}
                       </tr>
                     ))}
@@ -2170,9 +2248,7 @@ const ResultPanel = memo(function ResultPanel({
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input value={resultSearch} onChange={(e) => setResultSearch(e.target.value)} placeholder="Search rows..." className="h-8 bg-card border-border pl-8 text-xs" />
               </div>
-              <Button variant="outline" size="sm" className="h-8 border-border text-xs px-2" onClick={() => setDensity((prev) => prev === "compact" ? "comfortable" : "compact")} title="Toggle density">
-                <Rows3 size={12} />
-              </Button>
+              <DensityToggle value={density} onValueChange={setDensity} showLabel={false} />
               <Button variant="outline" size="sm" className={`h-8 border-border text-xs px-2 ${frozenFirst ? "bg-primary/10 text-primary border-primary/30" : ""}`} onClick={() => setFrozenFirst((p) => !p)} title="Freeze first column">
                 <Pin size={12} />
               </Button>
@@ -2403,8 +2479,8 @@ const InlineFinalResult = memo(function InlineFinalResult({
     return <NarrativeResult result={result} onSubmitQuickReply={onSubmitQuickReply} />;
   }
 
-  const hasDetails = isArray && rows.length > 0;
-  const showDetailsButton = onOpenDetails && (isChartable || hasDetails);
+  // Always offer the details panel for any result type (tables, values, text, objects).
+  const showDetailsButton = Boolean(onOpenDetails);
 
   return (
     <div className="ml-3 sm:ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-3 space-y-3">
@@ -2547,7 +2623,7 @@ const InlineFinalResult = memo(function InlineFinalResult({
                     <tr key={i} className="border-t border-border/50">
                       {headers.map((h, j) => (
                         <td key={j} className="px-3 py-1.5 text-foreground min-w-[80px] max-w-[140px] truncate">
-                          {String(row[h] ?? "")}
+                          {formatCellDisplay(row[h])}
                         </td>
                       ))}
                     </tr>
@@ -2704,11 +2780,11 @@ function DataPreviewPanel({ dataset, sheet, onClose }: {
       )}
 
       {loadingData ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">Loading dataset from storage...</p>
-          </div>
+        <div className="flex-1 space-y-2 overflow-hidden p-4">
+          <Skeleton className="h-4 w-44" />
+          {Array.from({ length: 10 }).map((_, i) => (
+            <Skeleton key={i} className="h-7 w-full" />
+          ))}
         </div>
       ) : !sheetData ? (
         <div className="flex-1 flex items-center justify-center">
@@ -3111,11 +3187,11 @@ function DatabasePreviewPanel({ connectionId, schema, tableName, onSelectTable, 
           <p className="text-muted-foreground text-sm">No table preview is available for this connection</p>
         </div>
       ) : loadingRows ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">Loading live preview rows...</p>
-          </div>
+        <div className="flex-1 space-y-2 overflow-hidden p-4">
+          <Skeleton className="h-4 w-44" />
+          {Array.from({ length: 10 }).map((_, i) => (
+            <Skeleton key={i} className="h-7 w-full" />
+          ))}
         </div>
       ) : previewError ? (
         <div className="flex-1 flex items-center justify-center">
@@ -3575,7 +3651,8 @@ export default function QueryPage() {
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [finalResult, setFinalResult] = useState<any>(null);
   const [lastQuery, setLastQuery] = useState("");
-  const [showResult, setShowResult] = useState(true);
+  // Closed by default — the result panel only opens when the user clicks for it.
+  const [showResult, setShowResult] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -3838,6 +3915,8 @@ export default function QueryPage() {
     toast.success("Conversation context cleared");
   };
 
+  const [confirmClearChat, setConfirmClearChat] = useState(false);
+
   const handleClearChat = () => {
     setMessages([]);
     setConversationContext([]);
@@ -3846,20 +3925,22 @@ export default function QueryPage() {
     toast.success("Chat cleared");
   };
 
-  // ── Memory-loss warning ────────────────────────────────────────────────────
+  // ── Navigation guard — only block while a query is actively running ──────────
+  // Once the agent finishes, the user can freely navigate to other pages.
+  // We still warn on browser refresh/tab-close whenever there is unsaved context.
   const hasMemory = messages.length > 0 || conversationContext.length > 0;
-  const hasMemoryRef = useRef(hasMemory);
-  hasMemoryRef.current = hasMemory;
+  const isRunningRef = useRef(isRunning);
+  isRunningRef.current = isRunning;
 
   const [navBlocked, setNavBlocked] = useState<string | null>(null);
   const pendingNavRef = useRef<(() => void) | null>(null);
 
-  // Case 1: In-app route navigation — intercept pushState / popstate.
+  // Case 1: In-app route navigation — only intercept while the agent is running.
   useEffect(() => {
     const origPush = window.history.pushState.bind(window.history);
     window.history.pushState = function (state, title, url) {
       const next = url ? String(url) : "";
-      if (hasMemoryRef.current && next && !next.includes(window.location.pathname)) {
+      if (isRunningRef.current && next && !next.includes(window.location.pathname)) {
         pendingNavRef.current = () => origPush(state, title, url);
         setNavBlocked(next);
         return;
@@ -3867,7 +3948,7 @@ export default function QueryPage() {
       origPush(state, title, url);
     };
     const handlePop = (e: PopStateEvent) => {
-      if (hasMemoryRef.current) {
+      if (isRunningRef.current) {
         e.preventDefault();
         window.history.pushState(null, "", window.location.href);
         pendingNavRef.current = () => window.history.back();
@@ -3881,7 +3962,7 @@ export default function QueryPage() {
     };
   }, []);
 
-  // Case 2: Page refresh or browser tab close.
+  // Case 2: Browser refresh / tab close — warn if there is unsaved context.
   useEffect(() => {
     if (!hasMemory) return;
     const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
@@ -3993,7 +4074,7 @@ export default function QueryPage() {
       }];
       setCurrentSteps([]);
       setFinalResult(steps[0].result);
-      setShowResult(true);
+      // Result panel no longer auto-opens — user opens it via the floating button when needed.
       setMessages((prev) => [...prev, { role: "agent", content: "", steps, query: question }]);
       setConversationContext((prev) => [...prev, { question, answer: steps[0].result }]);
       setIsRunning(false);
@@ -4050,7 +4131,7 @@ export default function QueryPage() {
         setCurrentSteps([...steps]);
         if (step.isFinal) {
           setFinalResult(step.result);
-          setShowResult(true);
+          // Result panel no longer auto-opens — user opens it via the floating button when needed.
         }
       }
 
@@ -4098,6 +4179,10 @@ export default function QueryPage() {
   const handleSend = async (overrideQuestion?: string) => {
     const question = (overrideQuestion ?? input).trim();
     if (!question || isRunning) return;
+    if (question.length > QUERY_MAX_CHARS) {
+      toast.error(`Query is too long — maximum ${QUERY_MAX_CHARS.toLocaleString()} characters (currently ${question.length.toLocaleString()}).`);
+      return;
+    }
     if (!selectedDatasetId) { toast.error("Select a data source first"); return; }
 
     const isFreeNovaModelLocal = isFreeNovaModel && isFreeUser;
@@ -4314,7 +4399,7 @@ export default function QueryPage() {
         setCurrentSteps([...steps]);
         if (step.isFinal) {
           setFinalResult(step.result);
-          setShowResult(true);
+          // Result panel no longer auto-opens — user opens it via the floating button when needed.
         }
       }
 
@@ -4457,32 +4542,53 @@ export default function QueryPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <span>⚠️</span> Leave page?
+              <AlertTriangle size={16} className="shrink-0 text-warning" /> Query still running
             </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-3 text-sm">
-              <p>Your agent conversation memory will be permanently deleted if you leave this page. This includes:</p>
-              <ul className="list-disc pl-5 space-y-1 text-muted-foreground text-xs">
-                <li><strong>Chat history</strong> — all messages in this session</li>
-                <li><strong>Conversation context</strong> — {conversationContext.length} turn{conversationContext.length !== 1 ? "s" : ""} the agent is using to answer follow-up questions</li>
-                <li><strong>Agent memory</strong> — the agent will start completely fresh on the next question</li>
-              </ul>
-              <p className="text-xs text-muted-foreground">Use the <strong>New Chat</strong> button instead if you want to reset within this page.</p>
+            <AlertDialogDescription className="text-sm">
+              The agent is still processing your query. Leaving now will cancel it mid-execution and you will lose the partial result.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { pendingNavRef.current = null; setNavBlocked(null); }}>Stay on page</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => { pendingNavRef.current = null; setNavBlocked(null); }}>Stay & wait</AlertDialogCancel>
             <AlertDialogAction onClick={() => { const go = pendingNavRef.current; pendingNavRef.current = null; setNavBlocked(null); go?.(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Leave & clear memory
+              Leave anyway
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* ── Clear-chat confirmation ── */}
+      <ConfirmDialog
+        open={confirmClearChat}
+        onOpenChange={setConfirmClearChat}
+        title="Start a new chat?"
+        description="This clears all messages and the agent's conversation memory for this session. Saved insights and history entries are not affected."
+        confirmLabel="Clear and start new"
+        variant="destructive"
+        onConfirm={() => { handleClearChat(); setConfirmClearChat(false); }}
+      />
+
       {/* Top switcher/actions bar */}
       <div className="shrink-0 border-b border-border bg-background-secondary/85 backdrop-blur-md px-4 py-2.5 flex items-center justify-between z-40 gap-4">
-        <div className="flex items-center gap-2">
-          <Layers className="text-primary h-4 w-4" />
-          <span className="font-semibold text-sm text-foreground tracking-tight hidden sm:inline-block">Query Control Room</span>
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <Layers className="text-primary h-4 w-4" />
+            <span className="font-semibold text-sm text-foreground tracking-tight hidden sm:inline-block">Query Control Room</span>
+          </div>
+          {/* Active source context chip (desktop) */}
+          {(selectedDataset || selectedConnection) && (
+            <div className="hidden min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/70 px-2.5 py-1 lg:flex">
+              {isDbConnection ? (
+                <Database size={12} className="shrink-0 text-primary/70" />
+              ) : (
+                <Table2 size={12} className="shrink-0 text-primary/70" />
+              )}
+              <span className="max-w-[160px] truncate text-xs font-medium text-foreground">{sourceName}</span>
+              {selectedConnection && (
+                <StatusBadge status={selectedConnection.status === "connected" ? "connected" : selectedConnection.status === "error" ? "error" : "untested"} />
+              )}
+            </div>
+          )}
         </div>
 
         {/* HSL Tabs Switcher */}
@@ -4706,6 +4812,8 @@ export default function QueryPage() {
                   </div>
                 )}
 
+                <p className="section-label">Model settings</p>
+
                 <div>
                   <Label className="text-xs text-muted-foreground">LLM Provider</Label>
                   <div className="relative mt-1.5">
@@ -4824,12 +4932,13 @@ export default function QueryPage() {
                     <Settings2 size={12} /> Advanced {showAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2">
-                    <Textarea placeholder={`Override the ${defaultPromptLabel} prompt...`} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
-                    <p className="mt-1 text-[10px] text-muted-foreground">Default mode: {defaultPromptLabel}</p>
+                    <Textarea placeholder="Add custom instructions for the agent (tone, interpretation rules, answer format)…" value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} className="bg-card border-border text-xs min-h-[80px]" />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Applied on top of the {defaultPromptLabel} prompt — core query behavior is preserved.</p>
                   </CollapsibleContent>
                 </Collapsible>
 
                 {/* Quick tools */}
+                <p className="section-label">Quick tools</p>
                 <div className="space-y-1.5">
                   <button onClick={() => setShowTemplates(true)} className="w-full flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded border border-border bg-card hover:border-primary/30 text-muted-foreground hover:text-foreground transition-all">
                     <LayoutTemplate size={11} /> Templates
@@ -4907,13 +5016,7 @@ export default function QueryPage() {
                   return (
                     <div key={i}>
                       {msg.role === "user" ? (
-                        <div className="flex justify-end">
-                          <div className="max-w-[85%] min-w-0 rounded-lg border border-border bg-card px-4 py-2.5 sm:max-w-md">
-                            <p className="text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                              {msg.content}
-                            </p>
-                          </div>
-                        </div>
+                        <UserMessageBubble content={msg.content} />
                       ) : (
                         <div className="space-y-1">
                           {msg.steps && msg.steps.length > 0 ? (
@@ -4968,17 +5071,22 @@ export default function QueryPage() {
                               onSubmitQuickReply={(text) => {
                                 handleSend(text);
                               }}
-                              onOpenDetails={() => setShowResult(true)}
+                              onOpenDetails={() => {
+                                // Open the panel with THIS message's result, not just the latest one.
+                                setFinalResult(finalStep.result);
+                                setLastQuery(msg.query || "");
+                                setShowResult(true);
+                              }}
                             />
                           )}
-                          {/* Follow-up chips (last agent message only) */}
-                          {isLast && finalStep && msg.query && (
+                          {/* Follow-up suggestion chips — removed (took too much space below results) */}
+                          {/* {isLast && finalStep && msg.query && (
                             <FollowUpChips
                               query={msg.query}
                               result={finalStep.result}
                               onSelect={(q) => handleSend(q)}
                             />
-                          )}
+                          )} */}
                           {/* Smart retry (for failed queries only) */}
                           {isLast && msg.steps?.some((s) => s.command === "Error") && msg.query && (
                             <SmartRetryBar query={msg.query} onRetry={(q) => handleSend(q)} />
@@ -5131,8 +5239,9 @@ export default function QueryPage() {
                     <Textarea
                       ref={textareaRef}
                       value={input}
+                      maxLength={QUERY_MAX_CHARS}
                       onChange={(e) => {
-                        setInput(e.target.value);
+                        setInput(e.target.value.slice(0, QUERY_MAX_CHARS));
                         // Auto-grow
                         const el = e.target;
                         el.style.height = "auto";
@@ -5160,7 +5269,7 @@ export default function QueryPage() {
                     {messages.length > 0 && !isRunning && (
                       <Button
                         variant="outline"
-                        onClick={handleClearChat}
+                        onClick={() => setConfirmClearChat(true)}
                         size="icon"
                         title="New chat (clear history)"
                         className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border hover:text-destructive hover:border-destructive/40"
@@ -5193,7 +5302,10 @@ export default function QueryPage() {
                 </div>
                 {input.length > 0 && (
                   <p className="text-[10px] sm:text-xs text-muted-foreground text-center mt-1 flex items-center justify-center gap-2 flex-wrap">
-                    <span>~{Math.ceil(input.length / 4)} tokens · {input.length.toLocaleString()} chars · Ctrl+Enter to send</span>
+                    <span className={input.length >= QUERY_MAX_CHARS ? "text-warning font-medium" : undefined}>
+                      ~{Math.ceil(input.length / 4)} tokens · {input.length.toLocaleString()} / {QUERY_MAX_CHARS.toLocaleString()} chars
+                      {input.length >= QUERY_MAX_CHARS ? " (limit reached)" : " · Ctrl+Enter to send"}
+                    </span>
                     <CostEstimatorBadge input={input} model={activeModel} provider={activeProvider} />
                   </p>
                 )}
@@ -5234,15 +5346,6 @@ export default function QueryPage() {
               </SheetContent>
             </Sheet>
 
-            {finalResult !== null && !showResult && (
-              <button
-                onClick={() => setShowResult(true)}
-                className="fixed right-4 bottom-24 md:bottom-6 z-50 bg-primary text-primary-foreground p-2.5 rounded-full shadow-lg hover:bg-primary/90 transition-all active:scale-95"
-                title="Show result panel"
-              >
-                <PanelRightOpen size={16} />
-              </button>
-            )}
             </motion.div>
           ) : (
             <motion.div

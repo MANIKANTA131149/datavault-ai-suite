@@ -11,6 +11,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { FilterToolbar } from "@/components/shared/FilterToolbar";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { useInsightsStore, type Insight } from "@/stores/insights-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { toast } from "@/lib/toast";
@@ -43,7 +46,7 @@ function InsightCard({ insight, onEdit, onDelete, pinned, onTogglePin, onExportP
               <p className="text-xs text-muted-foreground truncate">{insight.query}</p>
             </div>
           </div>
-          <div className="flex shrink-0 gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
+          <div className="reveal-actions flex shrink-0 gap-1">
             <button onClick={onTogglePin} className={`p-1.5 rounded hover:bg-primary/10 ${pinned ? "text-primary" : "text-muted-foreground hover:text-primary"}`} title="Pin">
               <Pin size={12} fill={pinned ? "currentColor" : "none"} />
             </button>
@@ -180,7 +183,7 @@ export default function InsightsPage() {
   };
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Insights"
         titleIcon={Bookmark}
@@ -192,39 +195,57 @@ export default function InsightsPage() {
         ]}
       />
 
-      <div className="toolbar-panel">
-        <div className="flex gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search insights..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
-        </div>
-        <Select value={colorFilter} onValueChange={setColorFilter}>
-          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]">
-            <Filter size={12} className="mr-1" /><SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All colors</SelectItem>
-            {Object.keys(COLOR_MAP).map((c) => <SelectItem key={c} value={c} className="capitalize">{c}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={tagFilter} onValueChange={setTagFilter}>
-          <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[140px]">
-            <Tag size={12} className="mr-1" /><SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-popover border-border">
-            <SelectItem value="all">All tags</SelectItem>
-            {allTags.map((tag) => <SelectItem key={tag} value={tag}>{tag}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-      </div>
+      <FilterToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search insights…"
+        filters={[
+          {
+            key: "color",
+            label: "Color",
+            options: [
+              { value: "all", label: "All colors" },
+              ...Object.keys(COLOR_MAP).map((c) => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) })),
+            ],
+          },
+          {
+            key: "tag",
+            label: "Tag",
+            options: [
+              { value: "all", label: "All tags" },
+              ...allTags.map((tag) => ({ value: tag, label: tag })),
+            ],
+          },
+        ]}
+        values={{ color: colorFilter, tag: tagFilter }}
+        onValueChange={(key, value) => {
+          if (key === "color") setColorFilter(value);
+          else if (key === "tag") setTagFilter(value);
+        }}
+        onClearAll={() => { setColorFilter("all"); setTagFilter("all"); }}
+      />
 
       {filtered.length === 0 ? (
-        <div className="empty-panel">
-          <Bookmark size={48} className="mx-auto text-muted-foreground/30 mb-4" />
-          <p className="text-muted-foreground">{insights.length === 0 ? "No saved insights yet" : "No matching insights"}</p>
-          <p className="text-xs text-muted-foreground mt-1">Save query results as insights from the Query page</p>
-        </div>
+        <EmptyState
+          icon={Bookmark}
+          title={insights.length === 0 ? "No insights yet" : "No matching insights"}
+          description={
+            insights.length === 0
+              ? "Save notable query results as insights from the Query page and they will appear here."
+              : "Try a different search term or clear your active filters."
+          }
+          action={
+            insights.length === 0 ? (
+              <Button size="sm" onClick={() => navigate("/app/query")}>
+                Save your first insight
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => { setSearch(""); setColorFilter("all"); setTagFilter("all"); }}>
+                <X size={12} className="mr-1" /> Clear filters
+              </Button>
+            )
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((insight) => (
@@ -284,18 +305,15 @@ export default function InsightsPage() {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={!!deleteId} onOpenChange={(open) => { if (!open) setDeleteId(null); }}>
-        <DialogContent className="bg-background-secondary border-border">
-          <DialogHeader>
-            <DialogTitle>Delete Insight</DialogTitle>
-            <DialogDescription>This will permanently remove this saved insight.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteId(null)} className="border-border">Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete}>Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(open) => { if (!open) setDeleteId(null); }}
+        title="Delete insight"
+        description="This permanently removes this saved insight. This cannot be undone."
+        confirmLabel="Delete insight"
+        variant="destructive"
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

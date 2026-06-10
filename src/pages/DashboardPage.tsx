@@ -330,7 +330,7 @@ export default function DashboardPage() {
 
   // ── JSX ────────────────────────────────────────────────────────────────────
   return (
-    <div className="page-shell-wide space-y-6">
+    <div className="page-shell-wide page-enter space-y-6">
       <PageHeader
         title={`${greeting}, ${user?.name?.split(" ")[0]}`}
         info="See the health of your analytics workspace at a glance, from provider readiness to dataset coverage and recent query activity."
@@ -340,30 +340,13 @@ export default function DashboardPage() {
           { label: "Rows available", value: totalRows.toLocaleString(), tone: "info" },
         ]}
         actions={
-          <>
-            <Button
-              onClick={async () => {
-                try {
-                  await Promise.all([fetchHistory(), fetchDatasets(), fetchConnections()]);
-                  toast.success("Dashboard refreshed");
-                } catch {
-                  toast.error("Failed to refresh dashboard");
-                }
-              }}
-              variant="outline"
-              size="sm"
-              className="h-9 flex-1 gap-1.5 border-border/70 bg-background/70 hover:bg-background/90 sm:flex-none"
-            >
-              <RefreshCw size={14} /> Refresh
-            </Button>
-            <Button
-              onClick={() => navigate("/app/query")}
-              size="sm"
-              className="h-9 flex-1 gap-1.5 sm:flex-none"
-            >
-              <MessageSquare size={14} /> New Query
-            </Button>
-          </>
+          <Button
+            onClick={() => navigate("/app/query")}
+            size="sm"
+            className="h-9 flex-1 gap-1.5 sm:flex-none"
+          >
+            <MessageSquare size={14} /> New Query
+          </Button>
         }
       />
 
@@ -624,84 +607,6 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
-        {/* Bottom row */}
-        <motion.div variants={fadeUp} className="grid grid-cols-1 gap-6 pb-16 lg:grid-cols-2 lg:pb-10">
-          {/* Recent queries */}
-          <Card className="p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground">Recent Queries</h3>
-              {entries.length > 0 && (
-                <Button variant="link" className="h-auto p-0 text-xs text-primary" onClick={() => navigate("/app/history")}>
-                  View all
-                </Button>
-              )}
-            </div>
-            {entries.length === 0 ? (
-              <div className="flex flex-col items-center py-8">
-                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-muted/30">
-                  <MessageSquare size={20} className="text-muted-foreground/40" />
-                </div>
-                <p className="text-sm font-medium text-foreground">No queries yet</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Ask your first question in plain English</p>
-                <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate("/app/query")}>
-                  <MessageSquare size={13} className="mr-1.5" /> Start querying
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {entries.slice(0, 6).map((entry) => (
-                  <button
-                    key={entry.id}
-                    onClick={() => navigate("/app/query")}
-                    className="flex w-full cursor-pointer items-start gap-3 rounded-lg border-b border-border/40 px-2 py-2 text-left last:border-0 transition-colors hover:bg-primary/5"
-                  >
-                    <div className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${entry.status === "success" ? "bg-success" : "bg-destructive"}`} />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-foreground">{entry.query}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {entry.datasetName} · {PROVIDER_LABELS[entry.provider as Provider]}
-                      </p>
-                    </div>
-                    <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
-                      {new Date(entry.date).toLocaleDateString()}
-                    </span>
-                    <ChevronRight size={13} className="mt-1 shrink-0 text-muted-foreground/40" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {/* Quick actions */}
-          <Card className="p-6">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">Quick Actions</h3>
-            <div className="space-y-2">
-              {[
-                { icon: Upload,       label: "Upload a dataset",   sub: `${datasets.length} datasets stored`,       path: "/app/datasets" },
-                { icon: MessageSquare,label: "Start a new query",  sub: "Chat with your data",                      path: "/app/query" },
-                { icon: Clock,        label: "Browse history",     sub: `${entries.length} past queries`,           path: "/app/history" },
-                { icon: Shield,       label: "Configure API keys", sub: `${configuredProviders.length} providers ready`, path: "/app/settings" },
-              ].map(({ icon: Icon, label, sub, path }) => (
-                <button
-                  key={label}
-                  onClick={() => navigate(path)}
-                  className="group flex w-full items-center justify-between rounded-2xl border border-border/70 bg-card/75 p-3 text-left transition-all hover:border-primary/30 hover:bg-card"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-                      <Icon size={14} className="text-primary" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground">{label}</p>
-                      <p className="truncate text-[10px] text-muted-foreground">{sub}</p>
-                    </div>
-                  </div>
-                  <ArrowRight size={14} className="text-muted-foreground transition-colors group-hover:text-primary" />
-                </button>
-              ))}
-            </div>
-          </Card>
-        </motion.div>
       </motion.div>
     </div>
   );

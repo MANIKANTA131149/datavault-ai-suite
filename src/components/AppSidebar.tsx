@@ -73,7 +73,8 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
       items: [
         { to: "/app/query",    icon: MessageSquare, label: "Query"    },
         { to: "/app/history",  icon: Clock,         label: "History"  },
-        { to: "/app/insights", icon: Bookmark,      label: "Insights" },
+        // Insights — temporarily disabled, will release later
+        // { to: "/app/insights", icon: Bookmark,      label: "Insights" },
       ],
     },
     {
