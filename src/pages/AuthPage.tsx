@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
-import { motion, animate } from "framer-motion";
+import { motion } from "framer-motion";
 import { ArrowRight, BarChart2, Brain, Database, Eye, EyeOff, Layers, Loader2, Moon, Sun, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,31 +18,16 @@ const FEATURES = [
 ];
 
 function FeaturePills() {
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setActive((previous) => (previous + 1) % FEATURES.length);
-    }, 2500);
-    return () => window.clearInterval(interval);
-  }, []);
-
   return (
     <div className="mt-6 flex flex-wrap gap-2">
-      {FEATURES.map(({ label, icon: Icon }, index) => (
-        <motion.span
+      {FEATURES.map(({ label, icon: Icon }) => (
+        <span
           key={label}
-          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
-            index === active
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border text-muted-foreground"
-          }`}
-          animate={{ scale: index === active ? 1.04 : 1 }}
-          transition={{ duration: 0.3 }}
+          className="flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-3 py-1.5 text-sm font-medium text-muted-foreground"
         >
-          <Icon size={13} />
+          <Icon size={13} className="text-primary" />
           {label}
-        </motion.span>
+        </span>
       ))}
     </div>
   );
@@ -252,13 +237,6 @@ export default function AuthPage() {
         {/* ── Left marketing panel ──────────────────────────────────────────── */}
         <section className="relative flex flex-1 flex-col justify-between overflow-hidden border-b border-border/70 px-4 py-6 sm:px-6 lg:px-10 xl:border-b-0 xl:border-r">
 
-          {/* Floating decorative orbs — desktop only */}
-          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden xl:block hidden">
-            <div className="orb-1 absolute -top-16 -right-16 h-72 w-72 rounded-full bg-primary/8 blur-3xl" />
-            <div className="orb-2 absolute top-1/2 -left-24 h-56 w-56 rounded-full bg-accent/6 blur-3xl" />
-            <div className="orb-3 absolute bottom-24 right-24 h-40 w-40 rounded-full bg-primary/5 blur-2xl" />
-          </div>
-
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -266,7 +244,7 @@ export default function AuthPage() {
             className="relative flex-1"
           >
             <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 p-1.5 logo-pulse overflow-hidden">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 p-1.5 overflow-hidden">
                 <img src="/logo.png" alt="Querify Agent Logo" className="h-full w-full object-contain" />
               </div>
               <span className="text-lg font-semibold text-foreground sm:text-xl">Querify Agent</span>
@@ -476,8 +454,9 @@ export default function AuthPage() {
             </div>
 
             <p className="mt-6 text-center text-xs leading-5 text-muted-foreground">
-              By signing in you agree to our <button className="text-primary hover:underline">Terms</button> and{" "}
-              <button className="text-primary hover:underline">Privacy Policy</button>
+              By signing in you agree to our{" "}
+              <button type="button" className="text-primary hover:underline" onClick={() => navigate("/terms-and-conditions")}>Terms</button> and{" "}
+              <button type="button" className="text-primary hover:underline" onClick={() => navigate("/privacy-policy")}>Privacy Policy</button>
             </p>
           </motion.div>
         </section>
@@ -486,7 +465,7 @@ export default function AuthPage() {
   );
 }
 
-// ─── Animated stat block (Auth left panel) ──────────────────────────────────
+// ─── Stat block (Auth left panel) ────────────────────────────────────────────
 function AnimatedStat({
   end,
   label,
@@ -498,26 +477,14 @@ function AnimatedStat({
   icon: React.ElementType;
   suffix?: string;
 }) {
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    const controls = animate(0, end, {
-      duration: 1.4,
-      ease: "easeOut",
-      onUpdate(latest) {
-        if (ref.current) ref.current.textContent = `${Math.round(latest)}${suffix}`;
-      },
-    });
-    return controls.stop;
-  }, [end, suffix]);
-
   return (
-    <div className="stat-count-in rounded-2xl border border-border/60 bg-background/50 p-4 backdrop-blur">
+    <div className="rounded-2xl border border-border/60 bg-background/50 p-4 backdrop-blur">
       <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
         <Icon size={15} className="text-primary" />
       </div>
-      <span ref={ref} className="block text-2xl font-bold tabular-nums text-foreground">
-        0{suffix}
+      <span className="block text-2xl font-bold tabular-nums text-foreground">
+        {end}
+        {suffix}
       </span>
       <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
     </div>

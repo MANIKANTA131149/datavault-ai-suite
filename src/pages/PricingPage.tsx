@@ -27,6 +27,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { api } from "@/lib/api-client";
@@ -432,7 +433,7 @@ export default function PricingPage() {
   const comparisonRows = buildComparisonRows();
 
   return (
-    <div className="page-shell-narrow space-y-12 pb-16 text-left">
+    <div className="page-shell-narrow page-enter space-y-12 pb-16 text-left">
       <PageHeader
         title="Plans & Pricing"
         titleIcon={CreditCard}
@@ -484,9 +485,14 @@ export default function PricingPage() {
         <motion.div variants={fadeUp}>
           <Card className="rounded-[18px] p-6">
             {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                <span className="ml-3 text-sm text-muted-foreground">Loading usage data…</span>
+              <div className="grid gap-6 py-2 md:grid-cols-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="space-y-2">
+                    <Skeleton className="h-3.5 w-36" />
+                    <Skeleton className="h-2 w-full rounded-full" />
+                    <Skeleton className="h-3 w-24" />
+                  </div>
+                ))}
               </div>
             ) : context ? (
               <div className="grid gap-6 md:grid-cols-2">

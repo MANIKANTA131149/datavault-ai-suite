@@ -469,7 +469,7 @@ function GetStartedPageContent() {
   }, []);
 
   return (
-    <div className="page-shell-narrow space-y-10 pb-12 text-left">
+    <div className="page-shell-narrow page-enter space-y-10 pb-12 text-left">
 
       {/* ── Page Header ─────────────────────────────────────────────────────── */}
       <PageHeader

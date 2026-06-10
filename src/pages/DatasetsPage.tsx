@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info, Search, Copy, Grid3X3, List, ArrowUpDown, Star, Pin, Pencil, StickyNote, Rows3, Columns3, SlidersHorizontal, CheckSquare, Square, RotateCcw, Database, Clock, Filter } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, X, Eye, Trash2, MessageSquare, ChevronRight, Hash, TrendingUp, Tag, Calendar, ToggleLeft, AlertTriangle, CheckCircle2, Info, Search, Copy, Grid3X3, List, ArrowUpDown, Star, Pin, Pencil, StickyNote, Rows3, Columns3, CheckSquare, Square, RotateCcw, HardDrive, Clock } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,8 +11,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { CardGridSkeleton } from "@/components/shared/Skeletons";
+import { FilterToolbar } from "@/components/shared/FilterToolbar";
+import { DensityToggle } from "@/components/shared/DensityToggle";
 import { Progress } from "@/components/ui/progress";
 import { parseFile } from "@/lib/file-parser";
 import type { ColumnInfo, ParsedFile } from "@/lib/file-parser";
@@ -779,7 +782,7 @@ export default function DatasetsPage() {
     datasets.filter(isRecentlyUsed).length, [datasets, entries]);
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Datasets"
         titleIcon={FileSpreadsheet}
@@ -794,9 +797,9 @@ export default function DatasetsPage() {
       {datasets.filter((ds) => !ds.archived).length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Total datasets", value: datasets.filter((ds) => !ds.archived).length.toLocaleString(), icon: Database },
+            { label: "Total datasets", value: datasets.filter((ds) => !ds.archived).length.toLocaleString(), icon: FileSpreadsheet },
             { label: "Total rows", value: totalRows.toLocaleString(), icon: Rows3 },
-            { label: "Total size", value: formatBytes(totalSize), icon: Filter },
+            { label: "Total size", value: formatBytes(totalSize), icon: HardDrive },
             { label: "Recently used", value: recentlyUsedCount.toLocaleString(), icon: Clock },
           ].map(({ label, value, icon: Icon }) => (
             <Card key={label} className="flex items-center gap-3 p-3 bg-background-secondary border-border">
@@ -881,118 +884,94 @@ export default function DatasetsPage() {
       )}
 
       {datasets.length > 0 && (
-        <div className="toolbar-panel">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search datasets, sheets, or file types..."
-              className="pl-9 pr-9 bg-background-secondary border-border"
-            />
-            {searchTerm && (
-              <button type="button" aria-label="Clear search" title="Clear search" onClick={() => setSearchTerm("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                <X size={14} />
-              </button>
-            )}
-          </div>
-            <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
-            <Select value={sortBy} onValueChange={(value) => setSortBy(value as DatasetSort)}>
-              <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[160px]">
-                <ArrowUpDown size={13} className="mr-2" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                <SelectItem value="newest">Newest first</SelectItem>
-                <SelectItem value="oldest">Oldest first</SelectItem>
-                <SelectItem value="name">Name A-Z</SelectItem>
-                <SelectItem value="type">File type</SelectItem>
-                <SelectItem value="rows">Most rows</SelectItem>
-              </SelectContent>
-            </Select>
-            <button
-              type="button"
-              aria-label="Toggle density"
-              title="Toggle density"
-              onClick={() => setDensity((prev) => prev === "compact" ? "comfortable" : "compact")}
-              className="h-9 rounded-md border border-border bg-background-secondary px-2 text-muted-foreground hover:text-foreground"
-            >
-              <SlidersHorizontal size={14} />
-            </button>
-            <div className="flex rounded-md border border-border bg-background-secondary p-1">
+        <FilterToolbar
+          search={searchTerm}
+          onSearchChange={setSearchTerm}
+          searchPlaceholder="Search datasets, sheets, or file types…"
+          filters={[
+            {
+              key: "type",
+              label: "Type",
+              options: [
+                { value: "all", label: "All types" },
+                { value: "csv", label: "CSV" },
+                { value: "xlsx", label: "XLSX" },
+                { value: "xls", label: "XLS" },
+              ],
+            },
+          ]}
+          values={{ type: typeFilter }}
+          onValueChange={(key, value) => {
+            if (key === "type") setTypeFilter(value);
+          }}
+          onClearAll={() => {
+            setTypeFilter("all");
+            setShowFavoritesOnly(false);
+            setShowRecentOnly(false);
+          }}
+          trailing={
+            <>
+              <Select value={sortBy} onValueChange={(value) => setSortBy(value as DatasetSort)}>
+                <SelectTrigger className="h-9 w-[150px] bg-background-secondary border-border text-xs">
+                  <ArrowUpDown size={13} className="mr-1.5" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                  <SelectItem value="name">Name A-Z</SelectItem>
+                  <SelectItem value="type">File type</SelectItem>
+                  <SelectItem value="rows">Most rows</SelectItem>
+                </SelectContent>
+              </Select>
               <button
                 type="button"
-                aria-label="Grid view"
-                title="Grid view"
-                onClick={() => setViewMode("grid")}
-                className={`p-1.5 rounded ${viewMode === "grid" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setShowFavoritesOnly((p) => !p)}
+                className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                  showFavoritesOnly
+                    ? "border-warning/40 bg-warning/10 text-warning"
+                    : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground"
+                }`}
               >
-                <Grid3X3 size={14} />
+                <Star size={12} fill={showFavoritesOnly ? "currentColor" : "none"} />
+                <span className="hidden lg:inline">Favorites</span>
               </button>
               <button
                 type="button"
-                aria-label="List view"
-                title="List view"
-                onClick={() => setViewMode("list")}
-                className={`p-1.5 rounded ${viewMode === "list" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setShowRecentOnly((p) => !p)}
+                className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                  showRecentOnly
+                    ? "border-success/40 bg-success/10 text-success"
+                    : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground"
+                }`}
               >
-                <List size={14} />
+                <Clock size={12} />
+                <span className="hidden lg:inline">Recent</span>
               </button>
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          {(["all", "csv", "xlsx", "xls"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTypeFilter(t)}
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                typeFilter === t
-                  ? "border-primary/30 bg-primary/15 text-primary"
-                  : "border-border text-muted-foreground hover:border-border/80 hover:text-foreground"
-              }`}
-            >
-              {t === "all" ? "All types" : t.toUpperCase()}
-            </button>
-          ))}
-          <div className="mx-1 h-4 w-px bg-border" />
-          <button
-            type="button"
-            onClick={() => setShowFavoritesOnly((p) => !p)}
-            className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-              showFavoritesOnly
-                ? "border-warning/30 bg-warning/10 text-warning"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Star size={11} fill={showFavoritesOnly ? "currentColor" : "none"} />
-            Favorites
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowRecentOnly((p) => !p)}
-            className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-              showRecentOnly
-                ? "border-success/30 bg-success/10 text-success"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Clock size={11} />
-            Recently used
-          </button>
-          {(typeFilter !== "all" || showFavoritesOnly || showRecentOnly) && (
-            <button
-              type="button"
-              onClick={() => { setTypeFilter("all"); setShowFavoritesOnly(false); setShowRecentOnly(false); }}
-              className="ml-auto flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <X size={10} /> Clear filters
-            </button>
-          )}
-        </div>
-        </div>
+              <DensityToggle value={density} onValueChange={setDensity} showLabel={false} />
+              <div className="flex rounded-lg border border-border bg-background-secondary p-0.5">
+                <button
+                  type="button"
+                  aria-label="Grid view"
+                  title="Grid view"
+                  onClick={() => setViewMode("grid")}
+                  className={`rounded-md p-1.5 transition-colors ${viewMode === "grid" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <Grid3X3 size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="List view"
+                  title="List view"
+                  onClick={() => setViewMode("list")}
+                  className={`rounded-md p-1.5 transition-colors ${viewMode === "list" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <List size={14} />
+                </button>
+              </div>
+            </>
+          }
+        />
       )}
 
       {selectedIds.length > 0 && (
@@ -1025,40 +1004,30 @@ export default function DatasetsPage() {
       )}
 
       {loading && datasets.length === 0 ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Card key={index} className="p-4 space-y-3">
-              <Skeleton className="h-5 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-4 w-full" />
-            </Card>
-          ))}
-        </div>
+        <CardGridSkeleton cards={6} />
       ) : datasets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">
-            <FileSpreadsheet size={26} className="text-primary/50" />
-          </div>
-          <p className="text-sm font-medium text-foreground">No datasets yet</p>
-          <p className="mt-1 max-w-xs text-xs text-muted-foreground">Upload a CSV or Excel file above to get started. Your data stays private and secure.</p>
-        </div>
+        <EmptyState
+          icon={FileSpreadsheet}
+          title="No datasets yet"
+          description="Upload a CSV or Excel file above to get started. Your data stays private and secure."
+        />
       ) : visibleDatasets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/30">
-            <Search size={22} className="text-muted-foreground/50" />
-          </div>
-          <p className="text-sm font-medium text-foreground">No matching datasets</p>
-          <p className="mt-1 text-xs text-muted-foreground">Try a different search term or clear your active filters.</p>
-          <button
-            type="button"
-            onClick={() => { setSearchTerm(""); setTypeFilter("all"); setShowFavoritesOnly(false); setShowRecentOnly(false); }}
-            className="mt-3 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Clear all filters
-          </button>
-        </div>
+        <EmptyState
+          icon={Search}
+          title="No matching datasets"
+          description="Try a different search term or clear your active filters."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setSearchTerm(""); setTypeFilter("all"); setShowFavoritesOnly(false); setShowRecentOnly(false); }}
+            >
+              <X size={12} className="mr-1" /> Clear filters
+            </Button>
+          }
+        />
       ) : viewMode === "list" ? (
-        <div className="page-table-wrap">
+        <div className="page-table-wrap data-table-sticky">
           <table className="min-w-[760px] w-full text-sm">
             <thead className="bg-background-secondary">
               <tr>
@@ -1212,7 +1181,7 @@ export default function DatasetsPage() {
                         aria-label="Copy dataset name"
                         title="Copy dataset name"
                         onClick={(event) => { event.stopPropagation(); copyDatasetName(ds.fileName); }}
-                        className="p-1 text-muted-foreground transition-opacity hover:bg-card hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
+                        className="reveal-actions p-1 text-muted-foreground hover:bg-card hover:text-foreground"
                       >
                         <Copy size={12} />
                       </button>
@@ -1221,7 +1190,7 @@ export default function DatasetsPage() {
                         aria-label="Duplicate dataset"
                         title="Duplicate dataset"
                         onClick={(event) => { event.stopPropagation(); handleDuplicateDataset(ds); }}
-                        className="p-1 text-muted-foreground transition-opacity hover:bg-card hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
+                        className="reveal-actions p-1 text-muted-foreground hover:bg-card hover:text-foreground"
                       >
                         <Copy size={12} />
                       </button>
@@ -1230,7 +1199,7 @@ export default function DatasetsPage() {
                         aria-label="Edit dataset details"
                         title="Edit dataset details"
                         onClick={(event) => { event.stopPropagation(); openEditDataset(ds); }}
-                        className="p-1 text-muted-foreground transition-opacity hover:bg-card hover:text-foreground md:opacity-0 md:group-hover:opacity-100"
+                        className="reveal-actions p-1 text-muted-foreground hover:bg-card hover:text-foreground"
                       >
                         <Pencil size={12} />
                       </button>
@@ -1239,7 +1208,7 @@ export default function DatasetsPage() {
                         aria-label="Pin dataset"
                         title="Pin dataset"
                         onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { pinned: !meta.pinned }); }}
-                        className={`p-1 transition-opacity hover:bg-card md:opacity-0 md:group-hover:opacity-100 ${meta.pinned ? "text-primary opacity-100" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`reveal-actions p-1 hover:bg-card ${meta.pinned ? "text-primary opacity-100" : "text-muted-foreground hover:text-foreground"}`}
                       >
                         <Pin size={12} fill={meta.pinned ? "currentColor" : "none"} />
                       </button>
@@ -1248,7 +1217,7 @@ export default function DatasetsPage() {
                         aria-label="Favorite dataset"
                         title="Favorite dataset"
                         onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { favorite: !meta.favorite }); }}
-                        className={`p-1 transition-opacity hover:bg-card md:opacity-0 md:group-hover:opacity-100 ${meta.favorite ? "text-warning opacity-100" : "text-muted-foreground hover:text-foreground"}`}
+                        className={`reveal-actions p-1 hover:bg-card ${meta.favorite ? "text-warning opacity-100" : "text-muted-foreground hover:text-foreground"}`}
                       >
                         <Star size={12} fill={meta.favorite ? "currentColor" : "none"} />
                       </button>
@@ -1257,7 +1226,7 @@ export default function DatasetsPage() {
                         aria-label="Delete dataset"
                         title="Delete dataset"
                         onClick={(event) => { event.stopPropagation(); handleAttemptDeleteDataset(ds); }}
-                        className="p-1 text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive md:opacity-0 md:group-hover:opacity-100"
+                        className="reveal-actions p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -1298,7 +1267,7 @@ export default function DatasetsPage() {
                         </span>
                       )}
                     </div>
-                    <span className="flex items-center gap-1 text-xs text-primary transition-opacity md:opacity-0 md:group-hover:opacity-100">
+                    <span className="reveal-actions flex items-center gap-1 text-xs text-primary">
                       View <ChevronRight size={12} />
                     </span>
                   </div>

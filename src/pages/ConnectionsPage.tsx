@@ -47,6 +47,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge as SharedStatusBadge } from "@/components/shared/StatusBadge";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { CardGridSkeleton } from "@/components/shared/Skeletons";
+import { FilterToolbar } from "@/components/shared/FilterToolbar";
+import { DensityToggle } from "@/components/shared/DensityToggle";
 import { DbTypeIcon } from "@/components/DbTypeIcon";
 import { toast } from "@/lib/toast";
 import { api } from "@/lib/api-client";
@@ -583,15 +588,7 @@ function DeleteDialog({
 }
 
 function StatusBadge({ status }: { status: ConnectionStatus }) {
-  const cfg = STATUS_CFG[status] || STATUS_CFG.untested;
-  const StatusIcon = cfg.icon;
-
-  return (
-    <Badge className={`${cfg.bg} ${cfg.color} ${cfg.border} gap-1 border text-[10px]`}>
-      <StatusIcon size={10} />
-      {cfg.label}
-    </Badge>
-  );
+  return <SharedStatusBadge status={status} />;
 }
 
 function ConnectionActions({
@@ -720,7 +717,7 @@ function ConnectionCard({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1 opacity-100 md:opacity-0 md:transition-opacity md:group-hover:opacity-100">
+          <div className="reveal-actions flex shrink-0 items-center gap-1">
             <button
               type="button"
               aria-label="Copy connection name"
@@ -1048,7 +1045,7 @@ export default function ConnectionsPage() {
   };
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Database connections"
         titleIcon={Cable}
@@ -1089,40 +1086,41 @@ export default function ConnectionsPage() {
       )}
 
       {connections.length > 0 && (
-        <div className="toolbar-panel">
-          <div className="space-y-3">
-            <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-              <div className="relative min-w-0">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search names, hosts, databases, tags..."
-                  className="h-10 border-border bg-background-secondary pl-9 pr-9"
-                />
-                {search && (
-                  <button
-                    type="button"
-                    aria-label="Clear search"
-                    title="Clear search"
-                    onClick={() => setSearch("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-
-              <Button className="h-10 w-full lg:w-auto" onClick={() => { setEditConn(null); setFormOpen(true); }}>
-                <Plus size={14} className="mr-2" />
-                Add connection
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(9rem,10rem)_minmax(10rem,11rem)_minmax(9rem,10rem)_auto_auto] xl:items-center">
+        <FilterToolbar
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search names, hosts, databases, tags…"
+          filters={[
+            {
+              key: "type",
+              label: "Type",
+              options: [
+                { value: "all", label: "All types" },
+                ...Object.entries(DB_TYPE_LABELS).map(([key, label]) => ({ value: key, label })),
+              ],
+            },
+            {
+              key: "status",
+              label: "Status",
+              options: [
+                { value: "all", label: `All (${connections.length})` },
+                { value: "connected", label: `Connected (${stats.connected})` },
+                { value: "error", label: `Error (${stats.error})` },
+                { value: "untested", label: `Untested (${stats.untested})` },
+              ],
+            },
+          ]}
+          values={{ type: typeFilter, status: statusFilter }}
+          onValueChange={(key, value) => {
+            if (key === "type") setTypeFilter(value);
+            else if (key === "status") setStatusFilter(value);
+          }}
+          onClearAll={clearFilters}
+          trailing={
+            <>
               <Select value={sortBy} onValueChange={(value) => setSortBy(value as ConnectionSort)}>
-                <SelectTrigger className="h-10 w-full border-border bg-background-secondary">
-                  <ArrowUpDown size={12} className="mr-1" />
+                <SelectTrigger className="h-9 w-[140px] border-border bg-background-secondary text-xs">
+                  <ArrowUpDown size={12} className="mr-1.5" />
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-border bg-popover">
@@ -1131,42 +1129,14 @@ export default function ConnectionsPage() {
                   ))}
                 </SelectContent>
               </Select>
-
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="h-10 w-full border-border bg-background-secondary">
-                  <Database size={12} className="mr-1" />
-                  <SelectValue placeholder="All types" />
-                </SelectTrigger>
-                <SelectContent className="max-h-72 border-border bg-popover">
-                  <SelectItem value="all">All types</SelectItem>
-                  {Object.entries(DB_TYPE_LABELS).map(([key, label]) => (
-                    <SelectItem key={key} value={key}>
-                      <span className="flex items-center gap-2"><DbTypeIcon dbType={key as DbType} size={14} className="text-muted-foreground" /> {label}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-10 w-full border-border bg-background-secondary">
-                  <ShieldCheck size={12} className="mr-1" />
-                  <SelectValue placeholder="All statuses" />
-                </SelectTrigger>
-                <SelectContent className="border-border bg-popover">
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="connected">Connected</SelectItem>
-                  <SelectItem value="error">Error</SelectItem>
-                  <SelectItem value="untested">Untested</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <div className="flex h-10 w-full rounded-lg border border-border bg-background-secondary p-1 sm:w-auto xl:justify-self-start">
+              <DensityToggle value={density} onValueChange={setDensity} showLabel={false} />
+              <div className="flex rounded-lg border border-border bg-background-secondary p-0.5">
                 <button
                   type="button"
                   aria-label="Grid view"
                   title="Grid view"
                   onClick={() => setViewMode("grid")}
-                  className={`flex flex-1 items-center justify-center rounded-md px-3 transition-colors sm:flex-none ${viewMode === "grid" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`rounded-md p-1.5 transition-colors ${viewMode === "grid" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   <Grid3X3 size={14} />
                 </button>
@@ -1175,105 +1145,59 @@ export default function ConnectionsPage() {
                   aria-label="Table view"
                   title="Table view"
                   onClick={() => setViewMode("list")}
-                  className={`flex flex-1 items-center justify-center rounded-md px-3 transition-colors sm:flex-none ${viewMode === "list" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`rounded-md p-1.5 transition-colors ${viewMode === "list" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   <List size={14} />
                 </button>
               </div>
-
-              <Button
-                variant="outline"
-                className="h-10 w-full border-border xl:w-auto"
-                onClick={() => setDensity((current) => current === "comfortable" ? "compact" : "comfortable")}
-              >
-                <SlidersHorizontal size={14} className="mr-2" />
-                {density === "comfortable" ? "Compact" : "Comfortable"}
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              {([
-                { key: "all", label: "All", count: connections.length },
-                { key: "connected", label: "Connected", count: stats.connected },
-                { key: "error", label: "Error", count: stats.error },
-                { key: "untested", label: "Untested", count: stats.untested },
-              ] as const).map(({ key, label, count }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setStatusFilter(key)}
-                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                    statusFilter === key
-                      ? "border-primary/30 bg-primary/15 text-primary"
-                      : "border-border text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {label}
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                    statusFilter === key ? "bg-primary/20" : "bg-muted/60"
-                  }`}>{count}</span>
-                </button>
-              ))}
-              {(search || typeFilter !== "all" || statusFilter !== "all") && (
-                <button
-                  type="button"
-                  onClick={clearFilters}
-                  className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <X size={10} /> Clear
-                </button>
-              )}
               {connections.some((c) => c.status !== "connected") && (
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 border-border text-xs"
                   onClick={testAll}
                   disabled={testingAll}
-                  className="ml-auto flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
                 >
-                  <RefreshCw size={10} className={testingAll ? "animate-spin" : ""} />
-                  {testingAll ? "Testing..." : "Test all"}
-                </button>
+                  <RefreshCw size={12} className={`mr-1.5 ${testingAll ? "animate-spin" : ""}`} />
+                  {testingAll ? "Testing…" : "Test all"}
+                </Button>
               )}
-            </div>
-          </div>
-        </div>
+              <Button size="sm" className="h-9 text-xs" onClick={() => { setEditConn(null); setFormOpen(true); }}>
+                <Plus size={13} className="mr-1.5" />
+                Add connection
+              </Button>
+            </>
+          }
+        />
       )}
 
       {loading && connections.length === 0 ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Card key={index} className="space-y-3 p-4">
-              <Skeleton className="h-5 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-20 w-full" />
-            </Card>
-          ))}
-        </div>
+        <CardGridSkeleton cards={6} />
       ) : connections.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/8">
-            <Cable size={26} className="text-primary/50" />
-          </div>
-          <p className="text-sm font-medium text-foreground">No database connections yet</p>
-          <p className="mt-1 max-w-xs text-xs text-muted-foreground">Connect PostgreSQL, MySQL, Snowflake, BigQuery, and more to start querying your data with AI.</p>
-          <Button className="mt-5" onClick={() => { setEditConn(null); setFormOpen(true); }}>
-            <Plus size={14} className="mr-2" />
-            Add your first connection
-          </Button>
-        </div>
+        <EmptyState
+          icon={Cable}
+          title="No database connections yet"
+          description="Connect PostgreSQL, MySQL, Snowflake, BigQuery, and more to start querying your data with AI."
+          action={
+            <Button onClick={() => { setEditConn(null); setFormOpen(true); }}>
+              <Plus size={14} className="mr-2" />
+              Add your first connection
+            </Button>
+          }
+        />
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card/40 py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/30">
-            <Search size={22} className="text-muted-foreground/50" />
-          </div>
-          <p className="text-sm font-medium text-foreground">No matching connections</p>
-          <p className="mt-1 text-xs text-muted-foreground">Try a different search term, type, or status filter.</p>
-          <Button variant="outline" className="mt-4 border-border" onClick={clearFilters}>
-            Clear all filters
-          </Button>
-        </div>
+        <EmptyState
+          icon={Search}
+          title="No matching connections"
+          description="Try a different search term, type, or status filter."
+          action={
+            <Button variant="outline" size="sm" onClick={clearFilters}>
+              <X size={12} className="mr-1" /> Clear filters
+            </Button>
+          }
+        />
       ) : viewMode === "list" ? (
-        <div className="page-table-wrap">
+        <div className="page-table-wrap data-table-sticky">
           <table className="min-w-[900px] w-full text-sm">
             <thead className="bg-background-secondary">
               <tr>

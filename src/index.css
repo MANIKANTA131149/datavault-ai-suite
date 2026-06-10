@@ -423,6 +423,70 @@
     @apply rounded-[24px] border border-dashed border-border/50 bg-background/30 px-6 py-14 text-center;
   }
 
+  /* ── Revamp foundation: card padding scale ─────────────────────────────── */
+  .card-pad {
+    @apply p-5;
+  }
+
+  .card-pad-sm {
+    @apply p-4;
+  }
+
+  .card-pad-lg {
+    @apply p-5 sm:p-7;
+  }
+
+  /* ── Revamp foundation: focus ring ─────────────────────────────────────── */
+  .focus-ring {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+
+  /* ── Revamp foundation: sticky table header ────────────────────────────── */
+  .data-table-sticky thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: hsl(var(--background-secondary) / 0.95);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* ── Revamp foundation: active filter chip ─────────────────────────────── */
+  .filter-chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 py-1 pl-2.5 pr-1.5 text-xs font-medium text-foreground;
+    transition: border-color 150ms ease, background-color 150ms ease;
+  }
+
+  .filter-chip:hover {
+    @apply border-border bg-muted/60;
+  }
+
+  .filter-chip button {
+    @apply flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground;
+    transition: color 150ms ease, background-color 150ms ease;
+  }
+
+  .filter-chip button:hover {
+    @apply bg-foreground/10 text-foreground;
+  }
+
+  /* ── Revamp foundation: hover-revealed card actions ─────────────────────
+     Hidden until hover/focus on pointer devices, ALWAYS visible on touch. */
+  .reveal-actions {
+    @apply opacity-100 transition-opacity duration-150;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .reveal-actions {
+      @apply opacity-0;
+    }
+
+    .group:hover .reveal-actions,
+    .group:focus-within .reveal-actions {
+      @apply opacity-100;
+    }
+  }
+
   /* ── Smooth page entry animation ───────────────────────────────────────── */
   .page-enter {
     animation: page-fade-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -1116,44 +1180,18 @@
 
   /* ── Premium CTA button (gradient + sheen sweep) ───────────────────────── */
   .site-cta {
-    position: relative;
-    overflow: hidden;
-    background: var(--site-grad);
-    background-size: 160% 160%;
-    color: #fff;
+    /* Neat, professional CTA: solid primary, no gradient animation, no sheen, no glow. */
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     border: 0;
-    box-shadow:
-      0 8px 24px -10px hsl(var(--brand-1) / 0.55),
-      0 0 0 1px hsl(var(--brand-2) / 0.35) inset;
-    animation: site-cta-flow 9s ease infinite;
-    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease;
-    will-change: transform;
+    box-shadow: 0 1px 2px hsl(var(--foreground) / 0.08);
+    transition: background-color 0.15s ease;
   }
   .site-cta:hover {
-    transform: translateY(-2px);
-    box-shadow:
-      0 14px 34px -10px hsl(var(--brand-1) / 0.65),
-      0 0 0 1px hsl(var(--brand-2) / 0.5) inset;
+    background: hsl(var(--primary) / 0.9);
   }
   .site-cta:active {
-    transform: translateY(0);
-  }
-  .site-cta::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -120%;
-    height: 100%;
-    width: 60%;
-    background: linear-gradient(110deg, transparent, hsl(0 0% 100% / 0.35), transparent);
-    transform: skewX(-18deg);
-    transition: left 0.7s ease;
-  }
-  .site-cta:hover::after { left: 130%; }
-
-  @keyframes site-cta-flow {
-    0%, 100% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
+    background: hsl(var(--primary) / 0.85);
   }
 
   /* ── Floating animation for hero accents ───────────────────────────────── */

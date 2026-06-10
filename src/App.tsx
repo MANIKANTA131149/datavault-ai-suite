@@ -19,8 +19,9 @@ const QueryPage = lazy(() => import("@/pages/QueryPage"));
 const HistoryPage = lazy(() => import("@/pages/HistoryPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const PricingPage = lazy(() => import("@/pages/PricingPage"));
-const InsightsPage = lazy(() => import("@/pages/InsightsPage"));
+// const InsightsPage = lazy(() => import("@/pages/InsightsPage")); // temporarily disabled, will release later
 const AdminPage = lazy(() => import("@/pages/AdminPage"));
+const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
 const ConnectionsPage = lazy(() => import("@/pages/ConnectionsPage"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const DeployedChatPage = lazy(() => import("@/pages/DeployedChatPage"));
@@ -58,11 +59,13 @@ const App = () => (
               <Route path="connections" element={<ConnectionsPage />} />
               <Route path="query" element={<QueryPage />} />
               <Route path="history" element={<HistoryPage />} />
-              <Route path="insights" element={<InsightsPage />} />
+              {/* Insights — temporarily disabled, will release later */}
+              {/* <Route path="insights" element={<InsightsPage />} /> */}
               <Route path="admin" element={<AdminPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="pricing" element={<PricingPage />} />
             </Route>
+            <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/deploy/:deployId" element={<DeployedChatPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

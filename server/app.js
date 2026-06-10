@@ -16,6 +16,7 @@ const connectionsRoutes = require("./routes/connections");
 const dbQueryRoutes = require("./routes/db-query");
 const chatMemoryRoutes = require("./routes/chat-memory");
 const deploymentsRoutes = require("./routes/deployments");
+const analyticsRoutes = require("./routes/analytics");
 
 const app = express();
 
@@ -63,6 +64,7 @@ function mountApiRoutes(basePath) {
   app.use(`${basePath}/db-query`, dbQueryRoutes);
   app.use(`${basePath}/chat-memory`, chatMemoryRoutes);
   app.use(`${basePath}/deployments`, deploymentsRoutes);
+  app.use(`${basePath}/analytics`, analyticsRoutes);
 }
 
 // Primary API routes.

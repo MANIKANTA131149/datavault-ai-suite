@@ -13,6 +13,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PageHeader } from "@/components/PageHeader";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { FilterToolbar } from "@/components/shared/FilterToolbar";
+import { TableSkeleton } from "@/components/shared/Skeletons";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { api } from "@/lib/api-client";
 import { getApiBaseUrl } from "@/lib/api-base";
 import { useAuthStore } from "@/stores/auth-store";
@@ -265,7 +269,7 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div className="page-shell space-y-6">
+      <div className="page-shell page-enter space-y-6">
         <section className="relative overflow-hidden border-b border-border/60 pb-5 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-primary/30 before:to-transparent">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-3">
@@ -339,7 +343,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Admin Panel"
         titleIcon={Shield}
@@ -451,32 +455,37 @@ export default function AdminPage() {
           )}
 
           {/* User Filters */}
-        <div className="toolbar-panel">
-          <div className="flex gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-background-secondary border-border" />
-          </div>
-          <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                <SelectItem value="all">All roles</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="analyst">Analyst</SelectItem>
-                <SelectItem value="viewer">Viewer</SelectItem>
-              </SelectContent>
-          </Select>
-          <Select value={planFilter} onValueChange={setPlanFilter}>
-            <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[150px]"><SelectValue /></SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                <SelectItem value="all">All plans</SelectItem>
-                {PLAN_TIERS.map((tier) => (
-                  <SelectItem key={tier} value={tier}>{PLAN_DEFINITIONS[tier].name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+          <FilterToolbar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search users…"
+            filters={[
+              {
+                key: "role",
+                label: "Role",
+                options: [
+                  { value: "all", label: "All roles" },
+                  { value: "admin", label: "Admin" },
+                  { value: "analyst", label: "Analyst" },
+                  { value: "viewer", label: "Viewer" },
+                ],
+              },
+              {
+                key: "plan",
+                label: "Plan",
+                options: [
+                  { value: "all", label: "All plans" },
+                  ...PLAN_TIERS.map((tier) => ({ value: tier, label: PLAN_DEFINITIONS[tier].name })),
+                ],
+              },
+            ]}
+            values={{ role: roleFilter, plan: planFilter }}
+            onValueChange={(key, value) => {
+              if (key === "role") setRoleFilter(value);
+              else if (key === "plan") setPlanFilter(value);
+            }}
+            onClearAll={() => { setRoleFilter("all"); setPlanFilter("all"); }}
+          />
 
           {planContext && fullAdminAccess && (
             <Card className="p-3">
@@ -487,7 +496,7 @@ export default function AdminPage() {
           )}
 
           {/* Users Table */}
-          <div className="page-table-wrap">
+          <div className="page-table-wrap data-table-sticky">
             <table className="min-w-[980px] w-full text-sm">
               <thead>
                 <tr className="border-b border-border/60">
@@ -536,9 +545,10 @@ export default function AdminPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 hidden md:table-cell">
-                        <Badge className={`border-0 text-xs ${u.status === "active" ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"}`}>
-                          {u.status}
-                        </Badge>
+                        <StatusBadge
+                          status={u.status === "active" ? "active" : "failed"}
+                          label={u.status.charAt(0).toUpperCase() + u.status.slice(1)}
+                        />
                       </td>
                       <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{u.datasetCount}</td>
                       <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{u.queryCount}</td>
@@ -596,44 +606,38 @@ export default function AdminPage() {
 
         {/* ─ Audit Log Tab ─ */}
         <TabsContent value="audit" className="space-y-4 mt-4">
-          <div className="toolbar-panel">
-            <div className="flex gap-3 flex-wrap items-center">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Filter by action..."
-                value={auditSearch}
-                onChange={(e) => setAuditSearch(e.target.value)}
-                className="pl-9 bg-background-secondary border-border"
-              />
-            </div>
-            <Select value={auditSeverity} onValueChange={setAuditSeverity}>
-              <SelectTrigger className="w-full bg-background-secondary border-border sm:w-[130px]">
-                <Filter size={12} className="mr-1" /><SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-popover border-border">
-                <SelectItem value="all">All severity</SelectItem>
-                <SelectItem value="info">Info</SelectItem>
-                <SelectItem value="warn">Warning</SelectItem>
-                <SelectItem value="critical">Critical</SelectItem>
-              </SelectContent>
-            </Select>
-            <button
-              type="button"
-              onClick={handleAuditExport}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors border border-border rounded-md px-3 py-2"
-            >
-              <FileDown size={13} /> Export CSV
-            </button>
-          </div>
-          </div>
+          <FilterToolbar
+            search={auditSearch}
+            onSearchChange={setAuditSearch}
+            searchPlaceholder="Filter by action…"
+            filters={[
+              {
+                key: "severity",
+                label: "Severity",
+                options: [
+                  { value: "all", label: "All severity" },
+                  { value: "info", label: "Info" },
+                  { value: "warn", label: "Warning" },
+                  { value: "critical", label: "Critical" },
+                ],
+              },
+            ]}
+            values={{ severity: auditSeverity }}
+            onValueChange={(key, value) => {
+              if (key === "severity") setAuditSeverity(value);
+            }}
+            onClearAll={() => setAuditSeverity("all")}
+            trailing={
+              <Button variant="outline" size="sm" className="h-9 border-border text-xs" onClick={handleAuditExport}>
+                <FileDown size={13} className="mr-1.5" /> Export CSV
+              </Button>
+            }
+          />
 
           {auditLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            </div>
+            <TableSkeleton rows={8} columns={5} />
           ) : (
-            <div className="page-table-wrap">
+            <div className="page-table-wrap data-table-sticky">
               <table className="min-w-[820px] w-full text-xs">
                 <thead>
                   <tr className="border-b border-border/60">
@@ -656,9 +660,10 @@ export default function AdminPage() {
                         <td className="px-4 py-2.5 text-foreground max-w-[150px] truncate">{log.userEmail || log.userId}</td>
                         <td className="px-4 py-2.5 font-mono text-foreground">{log.action}</td>
                         <td className="px-4 py-2.5">
-                          <Badge className={`${SEVERITY_COLORS[log.severity] || SEVERITY_COLORS.info} border-0 text-[10px] capitalize`}>
-                            {log.severity}
-                          </Badge>
+                          <StatusBadge
+                            status={log.severity === "critical" ? "error" : log.severity === "warn" ? "warning" : "neutral"}
+                            label={log.severity.charAt(0).toUpperCase() + log.severity.slice(1)}
+                          />
                         </td>
                         <td className="px-4 py-2.5 text-muted-foreground max-w-[200px] truncate font-mono">
                           {JSON.stringify(log.details)}
@@ -733,20 +738,15 @@ export default function AdminPage() {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={!!deleteUser} onOpenChange={(open) => { if (!open) setDeleteUser(null); }}>
-        <DialogContent className="bg-background-secondary border-border">
-          <DialogHeader>
-            <DialogTitle>Delete User</DialogTitle>
-            <DialogDescription>
-              This will permanently delete "{deleteUser?.name}" ({deleteUser?.email}) and all their data including datasets, history, and insights.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteUser(null)} className="border-border">Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete}>Delete User & All Data</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!deleteUser}
+        onOpenChange={(open) => { if (!open) setDeleteUser(null); }}
+        title="Delete user"
+        description={`This permanently deletes "${deleteUser?.name}" (${deleteUser?.email}) along with all their datasets, history, and insights. This cannot be undone.`}
+        confirmLabel="Delete user and all data"
+        variant="destructive"
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

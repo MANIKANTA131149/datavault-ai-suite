@@ -4,7 +4,6 @@ import {
   Activity,
   Bot,
   CalendarDays,
-  CheckCircle2,
   CheckSquare,
   ChevronDown,
   ChevronLeft,
@@ -15,17 +14,14 @@ import {
   Database,
   Download,
   FileText,
-  Filter,
   GitCompare,
   MessageSquare,
   RotateCcw,
-  Search,
   Square,
   Star,
   TerminalSquare,
   TrendingUp,
   X,
-  XCircle,
   Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -33,8 +29,10 @@ import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { FilterToolbar } from "@/components/shared/FilterToolbar";
 import { useHistoryStore, type HistoryEntry, type HistoryStep } from "@/stores/history-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { useDatasetStore } from "@/stores/dataset-store";
@@ -313,10 +311,6 @@ function HistoryEntryCard({
   onReplay: () => void;
   onDatasetClick: () => void;
 }) {
-  const statusClass = entry.status === "success"
-    ? "bg-success/10 text-success"
-    : "bg-destructive/10 text-destructive";
-
   const hasSavedTrace = entry.steps.length > 0;
 
   return (
@@ -326,10 +320,7 @@ function HistoryEntryCard({
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className={`border-0 text-xs ${statusClass}`}>
-                {entry.status === "success" ? <CheckCircle2 size={10} className="mr-1" /> : <XCircle size={10} className="mr-1" />}
-                {entry.status}
-              </Badge>
+              <StatusBadge status={entry.status === "success" ? "success" : "error"} />
               <Badge variant="outline" className="border-border text-xs">
                 {hasSavedTrace ? "Trace saved" : "Replay to save trace"}
               </Badge>
@@ -602,7 +593,7 @@ export default function HistoryPage() {
   };
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Query history"
         titleIcon={Clock3}
@@ -691,109 +682,76 @@ export default function HistoryPage() {
         </motion.div>
       )}
 
-      <div className="toolbar-panel space-y-3">
-        <div className="flex flex-wrap gap-3">
-          <div className="relative min-w-[220px] flex-1">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search queries, datasets, or models..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="border-border bg-background-secondary pl-9"
-            />
-          </div>
-
-          <Select value={datasetFilter} onValueChange={setDatasetFilter}>
-            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[180px]">
-              <Filter size={12} className="mr-1" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-border bg-popover">
-              <SelectItem value="all">All datasets</SelectItem>
-              {datasetNames.map((name) => (
-                <SelectItem key={name} value={name}>{name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={providerFilter} onValueChange={setProviderFilter}>
-            <SelectTrigger className="w-full border-border bg-background-secondary sm:w-[170px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-border bg-popover">
-              <SelectItem value="all">All providers</SelectItem>
-              {Object.entries(PROVIDER_LABELS).map(([key, value]) => (
-                <SelectItem key={key} value={key}>{value}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Status</span>
-          {(["all", "success", "error"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setStatusFilter(s)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs transition-colors",
-                statusFilter === s
-                  ? "border-primary/40 bg-primary/10 text-primary"
-                  : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground",
-              )}
-            >
-              {s === "all" ? "All" : s === "success" ? `Success${entries.length > 0 ? ` · ${stats.successCount}` : ""}` : `Error${entries.length > 0 ? ` · ${stats.errorCount}` : ""}`}
-            </button>
-          ))}
-
-          <span className="ml-3 mr-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Date</span>
-          {([
-            { value: "all", label: "All time" },
-            { value: "today", label: "Today" },
-            { value: "week", label: "Last 7d" },
-            { value: "month", label: "Last 30d" },
-          ] as const).map((d) => (
-            <button
-              key={d.value}
-              type="button"
-              onClick={() => setDateFilter(d.value)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs transition-colors",
-                dateFilter === d.value
-                  ? "border-primary/40 bg-primary/10 text-primary"
-                  : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground",
-              )}
-            >
-              {d.label}
-            </button>
-          ))}
-
+      <FilterToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search queries, datasets, or models…"
+        filters={[
+          {
+            key: "status",
+            label: "Status",
+            options: [
+              { value: "all", label: "All" },
+              { value: "success", label: entries.length > 0 ? `Success (${stats.successCount})` : "Success" },
+              { value: "error", label: entries.length > 0 ? `Error (${stats.errorCount})` : "Error" },
+            ],
+          },
+          {
+            key: "dataset",
+            label: "Dataset",
+            options: [
+              { value: "all", label: "All datasets" },
+              ...datasetNames.map((name) => ({ value: name, label: name })),
+            ],
+          },
+          {
+            key: "provider",
+            label: "Provider",
+            options: [
+              { value: "all", label: "All providers" },
+              ...Object.entries(PROVIDER_LABELS).map(([key, value]) => ({ value: key, label: value })),
+            ],
+          },
+          {
+            key: "date",
+            label: "Date",
+            options: [
+              { value: "all", label: "All time" },
+              { value: "today", label: "Today" },
+              { value: "week", label: "Last 7 days" },
+              { value: "month", label: "Last 30 days" },
+            ],
+          },
+        ]}
+        values={{
+          status: statusFilter,
+          dataset: datasetFilter,
+          provider: providerFilter,
+          date: dateFilter,
+        }}
+        onValueChange={(key, value) => {
+          if (key === "status") setStatusFilter(value);
+          else if (key === "dataset") setDatasetFilter(value);
+          else if (key === "provider") setProviderFilter(value);
+          else if (key === "date") setDateFilter(value);
+        }}
+        onClearAll={clearAllFilters}
+        trailing={
           <button
             type="button"
             onClick={() => setFavoritesOnly((c) => !c)}
             className={cn(
-              "ml-3 rounded-full border px-3 py-1 text-xs transition-colors",
+              "flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors",
               favoritesOnly
                 ? "border-warning/40 bg-warning/10 text-warning"
                 : "border-border/60 bg-background/60 text-muted-foreground hover:border-border hover:text-foreground",
             )}
           >
-            <Star size={10} className="mr-1 inline-block" />
+            <Star size={12} fill={favoritesOnly ? "currentColor" : "none"} />
             Favorites
           </button>
-
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="ml-auto flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
-            >
-              <X size={10} /> Clear filters
-            </button>
-          )}
-        </div>
-      </div>
+        }
+      />
 
       {filtered.length > 0 && (
         <div className="toolbar-panel">
@@ -843,30 +801,26 @@ export default function HistoryPage() {
       <ComparePanel entries={entries} compareIds={compareIds} />
 
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-[22px] border border-dashed border-border/60 bg-card/40 px-6 py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-border/60 bg-background/60">
-            <MessageSquare size={24} className="text-muted-foreground/50" />
-          </div>
-          <p className="text-base font-semibold text-foreground">
-            {entries.length === 0 ? "No queries yet" : "No matching queries"}
-          </p>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            {entries.length === 0
+        <EmptyState
+          icon={MessageSquare}
+          title={entries.length === 0 ? "No queries yet" : "No matching queries"}
+          description={
+            entries.length === 0
               ? "Run your first natural language query and it will appear here with the full agent trace."
-              : "Try adjusting your filters or search term to find what you're looking for."}
-          </p>
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
-            {entries.length === 0 ? (
+              : "Try adjusting your filters or search term to find what you're looking for."
+          }
+          action={
+            entries.length === 0 ? (
               <Button size="sm" onClick={() => navigate("/app/query")}>
-                Go to Query
+                Run a query
               </Button>
             ) : (
               <Button variant="outline" size="sm" onClick={clearAllFilters}>
-                <X size={12} className="mr-1" /> Clear all filters
+                <X size={12} className="mr-1" /> Clear filters
               </Button>
-            )}
-          </div>
-        </div>
+            )
+          }
+        />
       ) : (
         <motion.div
           variants={stagger}

@@ -115,6 +115,39 @@ const CHART_LABEL_KEY_PATTERN = /(name|title|label|category|type|group|bucket|se
 const CHART_TEMPORAL_KEY_PATTERN = /(date|day|week|month|quarter|year|time|period|hour)/i;
 const CHART_ID_KEY_PATTERN = /(^id$|_id$|^id_|identifier|index|serial|code)/i;
 
+// Long questions collapse to a few lines with a Show more toggle (Claude/ChatGPT style).
+const USER_MSG_COLLAPSE_CHARS = 280;
+
+function CollapsibleUserText({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > USER_MSG_COLLAPSE_CHARS;
+  const shown = !isLong || expanded ? content : `${content.slice(0, USER_MSG_COLLAPSE_CHARS).trimEnd()}…`;
+
+  return (
+    <>
+      <p className="text-xs sm:text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{shown}</p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((p) => !p)}
+          className="mt-1.5 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        >
+          {expanded ? <>Show less <ChevronDown size={12} className="rotate-180" /></> : <>Show more <ChevronDown size={12} /></>}
+        </button>
+      )}
+    </>
+  );
+}
+
+// Round non-integer numbers to 2 decimals with thousands separators for table cells.
+function formatCellDisplay(value: any): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return String(value);
+}
+
 function toChartNumber(value: any): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -460,7 +493,7 @@ function ResultTableRow({
       className={`border-t border-zinc-200/50 dark:border-zinc-800/50 ${index % 2 === 0 ? "bg-zinc-50/30 dark:bg-zinc-900/30" : "bg-card"}`}
     >
       {headers.map((header) => {
-        const value = String(row?.[header] ?? "");
+        const value = formatCellDisplay(row?.[header]);
         return (
           <div
             key={header}
@@ -715,7 +748,7 @@ const MultiTableResult = memo(function MultiTableResult({ result }: { result: an
                         <tr key={i} className="border-t border-zinc-200/50 dark:border-zinc-800/50">
                           {headers.map((h, j) => (
                             <td key={j} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 min-w-[80px] max-w-[140px] truncate">
-                              {String(row[h] ?? "")}
+                              {formatCellDisplay(row[h])}
                             </td>
                           ))}
                         </tr>
@@ -760,7 +793,7 @@ const MultiTableResult = memo(function MultiTableResult({ result }: { result: an
                     <tr className="border-t border-zinc-200/50 dark:border-zinc-800/50">
                       {headers.map((h, j) => (
                         <td key={j} className="px-3 py-2 text-zinc-700 dark:text-zinc-300 min-w-[80px] max-w-[140px] truncate">
-                          {String(val[h] ?? "")}
+                          {formatCellDisplay(val[h])}
                         </td>
                       ))}
                     </tr>
@@ -948,6 +981,7 @@ export default function DeployedChatPage() {
   const [error, setError] = useState("");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<any[]>([]);
+  const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -1045,7 +1079,6 @@ export default function DeployedChatPage() {
   }, [hasMemory]);
 
   // Multi-turn conversation memory
-  const [conversationContext, setConversationContext] = useState<ConversationContext[]>([]);
   const [workbookSheets, setWorkbookSheets] = useState<any>(null);
   const [sheetsLoading, setSheetsLoading] = useState(false);
 
@@ -1387,7 +1420,7 @@ export default function DeployedChatPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <span>⚠️</span> Leave page?
+              <AlertTriangle size={16} className="shrink-0 text-warning" /> Leave page?
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-3 text-sm">
               <p>Your agent conversation memory will be permanently deleted if you leave this page. This includes:</p>
@@ -1665,7 +1698,7 @@ export default function DeployedChatPage() {
                   <div className="flex justify-end">
                     <div className="group relative max-w-[85%] min-w-0 sm:max-w-md">
                       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-card px-4 py-3 shadow-sm">
-                        <p className="text-xs sm:text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</p>
+                        <CollapsibleUserText content={msg.content} />
                       </div>
                       <div className="mt-1 flex items-center justify-end gap-2">
                         {msg.ts && <span className="text-[10px] text-zinc-400 font-mono">{new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}

@@ -165,6 +165,23 @@ TIME SERIES / TREND
   "by day/week/month/year"   → date_trunc {period: matching}
   "growth / change"          → date_trunc then interpret trend
 
+FORECASTING / FUTURE ANALYSIS (never refuse these)
+  "forecast / predict / projection / next month / next year / future / expected / estimate ahead" →
+    Step 1: date_trunc to aggregate the metric per period (month/quarter/year) — this builds the historical series.
+    Step 2: universal_compute with a JS snippet that fits a simple linear regression (least squares) over the
+            period index vs metric value and extrapolates the requested number of future periods.
+    Example code body:
+      "const pts = data.map((r,i)=>({x:i, y:Number(r.value ?? Object.values(r)[1])})).filter(p=>Number.isFinite(p.y));
+       const n = pts.length; const sx = pts.reduce((s,p)=>s+p.x,0), sy = pts.reduce((s,p)=>s+p.y,0);
+       const sxy = pts.reduce((s,p)=>s+p.x*p.y,0), sxx = pts.reduce((s,p)=>s+p.x*p.x,0);
+       const slope = (n*sxy - sx*sy) / (n*sxx - sx*sx || 1); const intercept = (sy - slope*sx) / n;
+       const k = 3; // number of future periods requested
+       return Array.from({length:k},(_,j)=>({ period: 'future+' + (j+1), forecast: Math.round((intercept + slope*(n+j))*100)/100 }));"
+    Step 3: In the final answer, clearly label the values as a linear-trend projection based on historical data —
+            not a guarantee. Mention the trend direction (growing/declining) and the per-period rate of change.
+  RULE: For "will X grow?", "what will Y be in 2027?", "expected sales next quarter" — same recipe.
+        If the data has no usable date column, use the row order as the time axis and say so in the answer.
+
 STATISTICAL
   "percentile / quartile"    → percentile
   "correlation / relationship between" → correlation
@@ -3017,6 +3034,20 @@ function detectQueryComplexity(question: string, sheets: WorkbookSheets): { isCo
   return { isComplex: signals.length >= 2, reason: signals.join("; ") };
 }
 
+// ─── Custom prompt layering ────────────────────────────────────────────────────
+// The user's "Advanced" prompt is ADDITIONAL instructions layered on top of the
+// default agent prompt — never a full replacement. Replacing the prompt strips
+// the JSON command protocol and schema rules, which breaks the agent loop.
+function applyPromptOverride(basePrompt: string, override?: string): string {
+  const custom = override?.trim();
+  if (!custom) return basePrompt;
+  return (
+    basePrompt +
+    "\n\n## USER CUSTOM INSTRUCTIONS (apply these to interpretation, tone, and answer formatting — but NEVER abandon the JSON command protocol defined above)\n" +
+    custom
+  );
+}
+
 // ─── Main Agent Runner ─────────────────────────────────────────────────────────
 export async function* runAgent(
   question: string,
@@ -3034,10 +3065,10 @@ export async function* runAgent(
   // Use the runtime-enriched prompt (adds live ops list + dataset-specific examples).
   // For small/weak models we still use the same prompt but inject the schema directly
   // into the first user message so they don't need to waste a turn on GetColumns.
-  const basePrompt = systemPromptOverride || SYSTEM_PROMPT;
-  const prompt = systemPromptOverride
-    ? basePrompt
-    : buildRuntimeSystemPrompt(sheetData, basePrompt);
+  const prompt = applyPromptOverride(
+    buildRuntimeSystemPrompt(sheetData, SYSTEM_PROMPT),
+    systemPromptOverride,
+  );
   let turn = 0;
   // ── Step budget: LLM is told so it plans efficiently ──
   const maxTurns = 12;
@@ -3086,7 +3117,7 @@ export async function* runAgent(
   // This saves a GetColumns round-trip (critical for small models).
   // We embed the schema in the user message so even models that skim
   // the system prompt will see the exact column names right before the question.
-  const schemaBlock = !systemPromptOverride ? `\n\n${buildSchemaContextBlock(sheetData)}` : "";
+  const schemaBlock = `\n\n${buildSchemaContextBlock(sheetData)}`;
 
   // ── Build the enriched first user message ──
   const firstMessage = [
@@ -3103,7 +3134,7 @@ export async function* runAgent(
   messages.push({ role: "user", content: firstMessage });
   // Schema is pre-injected above — mark as inspected so we don't force a GetColumns
   // round-trip on turn 1. The repair guards still run if column names don't match.
-  let schemaInspected = !systemPromptOverride;
+  let schemaInspected = true; // schema is always pre-injected above
   let currentData = sheetData.rows; // Track current data state for intermediate operations
   let healAttempts = 0; // Bounded self-healing budget for execution errors
 
@@ -3389,6 +3420,10 @@ Rules:
      Turn 3: ExecuteFinalQuery groupby_multi on "cross_sheet"
   4. NEVER issue QuerySheet with sheet_name:"cross_sheet" for a plain join on a fresh "cross_sheet" that doesn't exist yet — always name a real sheet (e.g. "Customers") as the starting point for the first join.
 - CRITICAL: When you need to compute multiple aggregations per group (e.g. count distinct categories AND sum revenue, grouped by the same column), you MUST use groupby_multi in a SINGLE step — NEVER chain two groupby steps in a pipeline. After the first groupby, all original columns are destroyed, so the second groupby will always return 0 rows. groupby_multi computes all aggregations in one pass with no column loss. Example: "customers who bought from >1 category and their total revenue" → {"operation":"groupby_multi","params":{"groupColumn":"CustomerID","aggregations":[{"column":"Category","function":"count_distinct","alias":"cat_count"},{"column":"TotalAmount","function":"sum","alias":"total_revenue"}],"having":{"alias":"cat_count","operator":">","value":1}}}
+- FORECASTING / FUTURE ANALYSIS — never refuse "forecast", "predict", "next month/year", "future", "expected", "projection" questions:
+  1. First aggregate the metric per time period with date_trunc (or use row order if no date column exists — say so in the answer).
+  2. Then run universal_compute with a least-squares linear regression over (period index, metric value) and extrapolate the requested number of future periods, rounding to 2 decimals.
+  3. Label the result clearly as a linear-trend projection from historical data (not a guarantee) and state the trend direction and per-period rate of change.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
@@ -3506,6 +3541,10 @@ Rules:
 - If the request needs a join across multiple tables and the target table is unclear, ask one concise clarification question.
 - Use QuerySQL for intermediate SQL checks and ExecuteSQL for the final database answer when ONE query suffices.
 - ALWAYS produce an answer. If you have gathered partial data but are running low on turns, synthesize the best answer you can from available results rather than continuing to query.
+- FORECASTING / FUTURE ANALYSIS — never refuse "forecast", "predict", "next month/year", "future", "expected", "projection" questions:
+  1. Run one SQL query that aggregates the metric per time period (GROUP BY month/quarter/year using the dialect's date functions), ordered chronologically.
+  2. From the returned period series, fit a simple linear trend (least squares over period index vs value) and extrapolate the requested future periods yourself, rounding to 2 decimals.
+  3. Answer with the projected values clearly labeled as a linear-trend projection from historical data (not a guarantee), including trend direction and per-period rate of change.
 - Respond with exactly one JSON object and no extra text.
 
 Examples:
@@ -3572,6 +3611,11 @@ CRITICAL RULES FOR MULTI-TABLE QUERIES:
 - When the user provides an identifier (ID, code, name) without specifying a collection, ALWAYS call GetSchema first.
 - Search the most relevant collections in order of likelihood.
 - Call GetColumns for each candidate collection before querying.
+
+FORECASTING / FUTURE ANALYSIS — never refuse "forecast", "predict", "next month/year", "future", "expected", "projection" questions:
+1. Aggregate the metric per time period with date_trunc, ordered chronologically.
+2. From the returned series, fit a simple linear trend (least squares over period index vs value) and extrapolate the requested future periods yourself, rounding to 2 decimals.
+3. Answer with values clearly labeled as a linear-trend projection from historical data (not a guarantee), including trend direction and per-period rate of change.
 
 Respond with exactly one JSON object and no extra text.
 
@@ -4976,9 +5020,10 @@ export async function* runDatabaseAgent(
   }
 
   const history: { role: string; content: string }[] = [];
-  const prompt = systemPromptOverride
-    ? systemPromptOverride
-    : withAutoOps(isNoSqlDb(dbTypeLabel) ? DEFAULT_NOSQL_DATABASE_AGENT_PROMPT : DEFAULT_DATABASE_AGENT_PROMPT);
+  const prompt = applyPromptOverride(
+    withAutoOps(isNoSqlDb(dbTypeLabel) ? DEFAULT_NOSQL_DATABASE_AGENT_PROMPT : DEFAULT_DATABASE_AGENT_PROMPT),
+    systemPromptOverride,
+  );
   const maxTurns = 15;
   const inspectedTables = new Set<string>();
   const lastIntermediateFilterByTable = new Map<string, { operation: string; params: Record<string, any> }>();
@@ -5085,7 +5130,7 @@ export async function* runDatabaseAgent(
         : answerPayload;
 
     // Inspect-first: if model jumps straight to SQL without seeing the schema, force GetSchema first.
-    if ((command === "QuerySQL" || command === "ExecuteSQL") && !schemaShown && !systemPromptOverride) {
+    if ((command === "QuerySQL" || command === "ExecuteSQL") && !schemaShown) {
       command = "GetSchema";
       args = {};
       rawArgs = args as Record<string, any>;
@@ -5506,7 +5551,7 @@ export async function* runLegacyAgent(
   }
 
   const history: { role: string; content: string }[] = [];
-  const prompt = systemPromptOverride ? systemPromptOverride : withAutoOps(DEFAULT_AGENT_PROMPT);
+  const prompt = applyPromptOverride(withAutoOps(DEFAULT_AGENT_PROMPT), systemPromptOverride);
   const maxTurns = 12;
   const lastIntermediateRowsBySheet = new Map<string, Record<string, any>[]>();
   const lastIntermediateFilterBySheet = new Map<string, { operation: string; params: Record<string, any> }>();
@@ -5610,7 +5655,7 @@ export async function* runLegacyAgent(
     // ── Inspect-first gate: force GetColumns before the first ExecuteFinalQuery on
     //    any real sheet that hasn't been inspected yet. This grounds the query in the
     //    actual schema and enables the model to self-correct column names/sheet routing.
-    if (command === "ExecuteFinalQuery" && !systemPromptOverride) {
+    if (command === "ExecuteFinalQuery") {
       const targetSheet =
         typeof rawArgs.sheet_name === "string" && rawArgs.sheet_name.trim()
           ? rawArgs.sheet_name.trim()
