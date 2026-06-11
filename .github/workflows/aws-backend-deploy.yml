@@ -64,3 +64,5 @@ jobs:
           ANALYTICS_USERNAME: ${{ secrets.ANALYTICS_USERNAME }}
           ANALYTICS_PASSWORD: ${{ secrets.ANALYTICS_PASSWORD }}
           ANALYTICS_TOKEN_SECRET: ${{ secrets.ANALYTICS_TOKEN_SECRET }}
+          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+          AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
