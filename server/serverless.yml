@@ -24,6 +24,10 @@ provider:
 
 package:
   patterns:
+    # CRITICAL: never package the "file:.." self-reference. It symlinks back to the
+    # repo root, so serverless recurses the entire monorepo (root node_modules,
+    # frontend, serverless itself) and runs the packager out of memory.
+    - '!node_modules/vite_react_shadcn_ts/**'
     # Exclude dev/build artifacts that don't belong in Lambda
     - '!node_modules/**/test/**'
     - '!node_modules/**/tests/**'
