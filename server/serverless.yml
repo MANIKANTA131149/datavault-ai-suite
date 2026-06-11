@@ -12,6 +12,10 @@ provider:
     MONGODB_URI: ${env:MONGODB_URI}
     JWT_SECRET: ${env:JWT_SECRET}
     FRONTEND_URL: ${env:FRONTEND_URL}
+    # MUST exactly match the frontend's VITE_API_ENCRYPTION_KEY used at build time.
+    # If it doesn't, the backend can't decrypt request bodies → "Invalid encrypted payload".
+    # If left empty, both sides fall back to the same default key (works, but the key is public).
+    API_ENCRYPTION_KEY: ${env:API_ENCRYPTION_KEY, ""}
     # Analytics dashboard (audit-team login). If unset, the analytics login
     # endpoint returns 503 "credentials not configured" — the rest of the app
     # is unaffected. ANALYTICS_TOKEN_SECRET is optional; it falls back to JWT_SECRET.
