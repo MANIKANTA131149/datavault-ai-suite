@@ -12,6 +12,12 @@ provider:
     MONGODB_URI: ${env:MONGODB_URI}
     JWT_SECRET: ${env:JWT_SECRET}
     FRONTEND_URL: ${env:FRONTEND_URL}
+    # Analytics dashboard (audit-team login). If unset, the analytics login
+    # endpoint returns 503 "credentials not configured" — the rest of the app
+    # is unaffected. ANALYTICS_TOKEN_SECRET is optional; it falls back to JWT_SECRET.
+    ANALYTICS_USERNAME: ${env:ANALYTICS_USERNAME, ""}
+    ANALYTICS_PASSWORD: ${env:ANALYTICS_PASSWORD, ""}
+    ANALYTICS_TOKEN_SECRET: ${env:ANALYTICS_TOKEN_SECRET, ""}
     # Optional (only needed if Auth0 is enabled/configured)
     AUTH0_DOMAIN: ${env:AUTH0_DOMAIN, ""}
     AUTH0_CLIENT_SECRET: ${env:AUTH0_CLIENT_SECRET, ""}
