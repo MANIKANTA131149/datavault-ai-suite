@@ -57,7 +57,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
     {
       label: "Overview",
       items: [
-        { to: "/app/get-started", icon: Compass,        label: "Get Started" },
+        // { to: "/app/get-started", icon: Compass, label: "Get Started" }, // temporarily disabled, will release later
         { to: "/app/dashboard",   icon: LayoutDashboard, label: "Dashboard"   },
       ],
     },

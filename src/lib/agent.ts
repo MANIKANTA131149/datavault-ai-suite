@@ -1,4 +1,6 @@
 import { callLLM, type Provider, type LLMProviderOptions, type LLMResponse } from "./llm-client";
+import { loadWorkbook, runSQL, buildSqlSchemaBlock, type RegisteredTable, type SqlResult } from "./sql-engine";
+import { buildMemoryBlock, recordClarification, recordSolvedExample } from "./agent-memory";
 import type { SheetData } from "./file-parser";
 import { isClarificationAnswer, mergeClarificationOptions, isGreetingQuery } from "./clarification-options";
 
@@ -412,6 +414,14 @@ The code runs as: function(data) { "use strict"; <your code here> }
 where data = the full array of row objects (each row is {colName: value, ...}).
 Return any serializable value — a number, string, array, or object.
 
+Built-in helpers are available inside the sandbox — PREFER them over hand-written math:
+  num(v)            → parses a number out of any value ("230 Nm" → 230, "$1,200" → 1200, NaN if none)
+  mean(arr)         → average of an array (auto-parses values via num, skips non-numeric)
+  median(arr)       → median of an array (auto-parses, skips non-numeric)
+  quantile(arr, p)  → interpolated quantile, p in [0,1] (e.g. quantile(values, 0.75))
+  groupBy(rows,key) → {groupValue: rows[]} map
+Example: return data.filter(r => num(r.torque) > mean(data.map(x => x.torque)))
+
 Examples:
   Count rows matching a custom condition:
     {"code":"return data.filter(r => r.status === 'active' && r.score > 90).length"}
@@ -425,7 +435,13 @@ Examples:
   Text frequency across cells:
     {"code":"const freq={}; data.forEach(r=>{String(r.tags||'').split(',').forEach(t=>{t=t.trim();if(t)freq[t]=(freq[t]||0)+1;})}); return Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([k,v])=>({tag:k,count:v}))"}
 
+  Filter rows against the dataset's own aggregate (above average / below median / top quartile):
+    Do it ALL in ONE universal_compute — compute the stat inline, then filter. Do NOT split this
+    into separate aggregate + filter pipeline steps (the aggregate replaces the rows).
+    {"code":"const t=data.map(r=>parseFloat(r.torque_output)).filter(Number.isFinite); const avg=t.reduce((s,v)=>s+v,0)/t.length; const l=data.map(r=>parseFloat(r.engine_lifespan)).filter(Number.isFinite).sort((a,b)=>a-b); const med=l[Math.floor(l.length/2)]; return data.filter(r=>parseFloat(r.torque_output)>avg && parseFloat(r.engine_lifespan)<med)"}
+
 RULE: NEVER say "I cannot compute this." If no named operation fits, use universal_compute.
+RULE: In a pipeline, if a previous step produced scalar results (aggregate/multi_analysis/describe), universal_compute still receives the ROWS as 'data'; the scalar results are available in a separate 'prior' variable.
 RULE: universal_compute is blocked from network/filesystem access — it only operates on the in-memory data array.
 
 ═══════════════════════════════════════════════════════
@@ -1475,7 +1491,7 @@ function executeOperation(data: Record<string, any>[], operation: string, params
     const preview = typeof data === "object" && data !== null
       ? JSON.stringify(data).slice(0, 200)
       : String(data);
-    return { error: `Operation "${operation}" expects an array of rows but received: ${preview}. Check that previous pipeline steps returned tabular data.` };
+    return { error: `Operation "${operation}" expects an array of rows but received: ${preview}. If you need an aggregate (mean/median/etc.) to filter rows, do it ALL inside ONE universal_compute step — compute the stat from 'data' inline, then return the filtered rows. Example: {"operation":"universal_compute","params":{"code":"const vals=data.map(r=>+r.col).filter(Number.isFinite); const avg=vals.reduce((s,v)=>s+v,0)/vals.length; return data.filter(r=>+r.col>avg)"}}` };
   }
 
   switch (operation) {
@@ -2161,9 +2177,21 @@ function executeOperation(data: Record<string, any>[], operation: string, params
 
       const VIRTUAL = "cross_sheet";
       let currentData: any = Array.isArray(data) ? data : [];
+      // Rows survive scalar-producing steps (aggregate/multi_analysis/describe).
+      // The scalar output is exposed to a later universal_compute step as `prior`,
+      // so patterns like [aggregate avg → universal_compute filter rows] work.
+      let lastTabular: Record<string, any>[] = Array.isArray(data) ? data : [];
+      let scalarContext: any = null;
       for (let stepIdx = 0; stepIdx < rawOps.length; stepIdx++) {
         const rawOp = rawOps[stepIdx];
         const op = normalizeStepOp(rawOp);
+        if (!Array.isArray(currentData) && !(currentData && currentData.error)) {
+          scalarContext = currentData;
+          currentData = lastTabular;
+        }
+        if (op.operation === "universal_compute" && scalarContext != null) {
+          op.params = { ...op.params, __prior: scalarContext };
+        }
         let stepResult: any;
         if (CROSS_SHEET_OPS.has(op.operation) && sheets) {
           const joinParams = op.params as any;
@@ -2189,6 +2217,7 @@ function executeOperation(data: Record<string, any>[], operation: string, params
           return stepResult;
         }
         currentData = stepResult;
+        if (Array.isArray(stepResult)) lastTabular = stepResult;
       }
       return currentData;
     }
@@ -2230,13 +2259,39 @@ function executeOperation(data: Record<string, any>[], operation: string, params
       // "await is only valid in async functions". Strip those keywords so the
       // computation still runs.
       const syncCode = code.replace(/\basync\b/g, " ").replace(/\bawait\b/g, " ");
+      // Helper stdlib injected into the sandbox — short, boring generated code
+      // has fewer bugs than re-derived stats math.
+      const num = (v: any): number => {
+        if (typeof v === "number") return v;
+        const m = String(v ?? "").replace(/,/g, "").match(/-?\d+\.?\d*/);
+        return m ? parseFloat(m[0]) : NaN;
+      };
+      const quantile = (arr: any[], p: number): number => {
+        const s = arr.map(num).filter(Number.isFinite).sort((a, b) => a - b);
+        if (s.length === 0) return NaN;
+        const idx = (s.length - 1) * p;
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (idx - lo);
+      };
+      const median = (arr: any[]): number => quantile(arr, 0.5);
+      const mean = (arr: any[]): number => {
+        const s = arr.map(num).filter(Number.isFinite);
+        return s.length ? s.reduce((a, b) => a + b, 0) / s.length : NaN;
+      };
+      const groupByFn = (rows: any[], key: string): Record<string, any[]> => {
+        const out: Record<string, any[]> = {};
+        for (const r of rows) { const k = String(r?.[key] ?? ""); (out[k] ||= []).push(r); }
+        return out;
+      };
       try {
+        // `prior` carries scalar output (aggregate/multi_analysis/describe results)
+        // from an earlier pipeline step, while `data` stays the row array.
         // eslint-disable-next-line no-new-func
-        const fn = new Function("data", `"use strict";\n${syncCode}`);
-        const result = fn(data);
+        const fn = new Function("data", "prior", "num", "median", "mean", "quantile", "groupBy", `"use strict";\n${syncCode}`);
+        const result = fn(data, params.__prior ?? null, num, median, mean, quantile, groupByFn);
         return result ?? null;
       } catch (err: any) {
-        return { error: `universal_compute execution error: ${err?.message || String(err)}` };
+        return { error: `universal_compute execution error: ${err?.message || String(err)}. Note: 'data' is always the row array; scalar results from earlier pipeline steps (aggregate/multi_analysis) are in the 'prior' variable, NOT in 'data'.` };
       }
     }
 
@@ -2652,7 +2707,13 @@ SELF-CORRECTION PROTOCOL (follow whenever a result is an error)
 
 LAST-RESORT RULE: If no named operation fits what you need, use universal_compute:
   {"command":"ExecuteFinalQuery","args":{"operation":"universal_compute","params":{"code":"return data.filter(r => ...).map(r => ...)"}}}
-The code receives data (array of row objects) and must return a serializable value. Network and filesystem access are blocked.`;
+The code receives data (array of row objects) and must return a serializable value. Network and filesystem access are blocked.
+
+RECIPE — filter rows against the dataset's own aggregate ("above average", "below median", "top quartile"):
+Do the WHOLE thing in ONE universal_compute step. Compute the stat inline from 'data', then return the filtered rows.
+Do NOT split it into separate aggregate/multi_analysis + filter steps — the aggregate output replaces the rows.
+  {"code":"const v=data.map(r=>parseFloat(r.price)).filter(Number.isFinite); const avg=v.reduce((s,x)=>s+x,0)/v.length; return data.filter(r=>parseFloat(r.price)>avg)"}
+If a pipeline DID run aggregate/multi_analysis before universal_compute, the rows are still in 'data' and the scalar results are in a separate 'prior' variable.`;
 
 // ─── Zero-Rows Smart Probe ─────────────────────────────────────────────────────
 // Runs inline data stats (no extra LLM calls) to diagnose WHY a query returned
@@ -6039,6 +6100,427 @@ export async function* runLegacyAgent(
     } catch { /* Not valid JSON, fall through */ }
   }
 
+  yield {
+    turn,
+    command: "MaxTurnsReached",
+    args: {},
+    result: "Agent reached maximum turns without a final answer. Try breaking your question into smaller, simpler parts.",
+    tokens: { input: 0, output: 0 },
+    durationMs: 0,
+    isFinal: true,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SQL-FIRST SHEET AGENT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deterministic execution path for uploaded files/sheets. Sheets are loaded into
+// an in-browser DuckDB (see sql-engine.ts) and the LLM writes plain DuckDB SQL —
+// a language it knows from training — instead of the bespoke operation DSL.
+// Every successful final query goes through a VERIFICATION turn (the model
+// re-reads question + SQL + result sample and must confirm or correct) before
+// the result is shown to the user. If the SQL engine cannot initialize (CSP,
+// offline, old browser), the runner transparently falls back to runLegacyAgent,
+// so no existing functionality is ever lost.
+
+const SQL_SHEET_AGENT_PROMPT = `You are a senior data analyst agent. You answer questions about the user's uploaded spreadsheet data by writing SQL against an in-browser DuckDB database. DuckDB SQL is your ONLY computation tool.
+
+COMMANDS — reply with exactly ONE JSON object per turn, no prose, no markdown fences:
+1. {"command":"RunSQL","args":{"sql":"SELECT ..."}}
+   Exploratory query: peek at value formats, distinct values, sanity checks. Always include a small LIMIT.
+2. {"command":"ExecuteFinalSQL","args":{"sql":"SELECT ..."}}
+   THE single query whose complete result answers the user's question. Its rows are shown to the user as a table.
+3. {"command":"AskUser","args":{"question":"...","options":["option A","option B"]}}
+   Pause and ask the user ONE short clarifying question. The user's reply comes back and you continue in the same run. Use when the question is genuinely ambiguous: subjective words (best, good, top performer) with several plausible metrics, an unclear time range, or a filter value that does not match anything in the data. List 2-6 concrete options taken from the schema.
+4. {"command":"Answer","args":{"value":"..."}}
+   Plain-text final answer — for greetings or answers that need no table.
+
+ACCURACY RULES (these are absolute):
+- NEVER state a number, name, or fact about the data that did not come from an executed SQL result in this conversation. If you have not run the query yet, run it — do not estimate.
+- If you are unsure which column or metric the user means, use AskUser — a 5-second question beats a wrong answer.
+- Filter values must come from the schema's listed values or from a RunSQL probe — never invent category spellings.
+- If a result column comes back NULL for every row, your cast/extraction failed — fix it, never present all-NULL data as an answer.
+- If a LEARNED MEMORY block is provided: trust its definitions (never re-ask them) and reuse the cast/filter patterns from its verified SQL examples.
+
+DUCKDB SQL RULES:
+- Read-only: SELECT / WITH only. No DDL or DML.
+- Use the EXACT table and column names from the schema. Always double-quote identifiers: "Column Name".
+- Text columns that hold numbers: TRY_CAST("col" AS DOUBLE).
+- Numbers embedded in text like "230 Nm" or "$1,200": TRY_CAST(regexp_replace(regexp_extract("col", '-?[0-9][0-9,]*\\.?[0-9]*'), ',', '', 'g') AS DOUBLE).
+- Statistics are built in: avg(x), median(x), quantile_cont(x, 0.25), mode(x), stddev(x), corr(x, y), count(DISTINCT x).
+- Self-referential filters use subqueries: WHERE TRY_CAST("t" AS DOUBLE) > (SELECT avg(TRY_CAST("t" AS DOUBLE)) FROM "table").
+- Window functions are available: row_number(), rank(), lag(), lead(), sum() OVER (...).
+- DATES: columns shown as DATE/TIMESTAMP in the schema are ALREADY proper dates — use date_trunc/extract on them DIRECTLY. NEVER substring-parse a date column. If a date is stored as VARCHAR, look at its sample value in the schema FIRST and parse with strptime using that exact format.
+- When grouping by a time period, output a READABLE label, not a raw timestamp: strftime(date_trunc('month', d), '%Y-%m') AS month.
+- Case-insensitive text matching: "col" ILIKE '%value%'.
+
+FORECASTING / PREDICTION RECIPE — for "what will X be", "predict", "next year/month", "future trend":
+Fit a linear trend with regr_slope/regr_intercept over an ordered period index, then extrapolate with generate_series. Label history vs forecast so the user can see both:
+  WITH series AS (
+    SELECT row_number() OVER (ORDER BY "period_col") AS t, "period_col" AS period, avg(TRY_CAST("metric" AS DOUBLE)) AS y
+    FROM "table" GROUP BY "period_col" ORDER BY "period_col"
+  ), fit AS (
+    SELECT regr_slope(y, t) AS m, regr_intercept(y, t) AS b, max(t) AS tmax FROM series
+  )
+  SELECT period::VARCHAR AS period, round(y, 2) AS value, 'actual' AS kind FROM series
+  UNION ALL
+  SELECT 'forecast +' || g, round(m * (tmax + g) + b, 2), 'forecast'
+  FROM fit, generate_series(1, 3) AS gs(g)
+  ORDER BY kind, period
+Seasonal/grouped forecasts: fit per group with regr_slope(y, t) ... GROUP BY group_col. Always round forecasts to 2 decimals. Never refuse a prediction question — a linear trend over the available history is always computable.
+- Round display numbers with round(x, 2). Give aggregate columns clear aliases.
+
+WORKFLOW:
+1. The full schema (tables, column types, sample values, and ALL values for categorical columns) is provided below — do NOT ask for it.
+2. If the question is ambiguous (subjective metric, unclear column), AskUser FIRST — before running anything.
+3. If a column's format is unclear (mixed units, odd encodings), run ONE small RunSQL probe first.
+4. Then issue ONE complete ExecuteFinalSQL that fully answers the question. Prefer a single comprehensive query (CTEs are encouraged) over many steps.
+5. After it runs you will receive a VERIFICATION request — re-check the SQL against the question and either confirm or send a corrected ExecuteFinalSQL.
+
+SELF-CORRECTION: a SQL error is recoverable feedback, not a dead end. Diagnose the exact cause (misspelled identifier? missing quote? bad cast? wrong function?) and immediately reissue ONE corrected command. Never apologize, never give up, never tell the user you cannot do it.`;
+
+function findAllNullColumns(result: SqlResult): string[] {
+  if (result.rows.length === 0) return [];
+  return result.columns.filter((c) => result.rows.every((r) => r[c] === null || r[c] === undefined));
+}
+
+function buildSqlVerificationMessage(question: string, sql: string, result: SqlResult): string {
+  const sample = result.rows.slice(0, 5);
+  const allNull = findAllNullColumns(result);
+  return [
+    `VERIFICATION STEP — the query succeeded but has NOT been shown to the user yet. Re-check it.`,
+    `Question: ${question}`,
+    `SQL executed: ${sql}`,
+    `Result: ${result.totalRowCount.toLocaleString()} row(s), columns: ${result.columns.join(", ")}.`,
+    `First rows: ${JSON.stringify(sample).slice(0, 1200)}`,
+    allNull.length > 0
+      ? `⛔ WARNING: these columns are NULL in EVERY row: ${allNull.map((c) => `"${c}"`).join(", ")}. If the question needs them, this result is WRONG — usually a failed date parse, a bad cast, or a join key mismatch. Probe the RAW source column with RunSQL (SELECT "col" FROM "table" LIMIT 5), fix the SQL, and resend ExecuteFinalSQL. Do NOT confirm.`
+      : ``,
+    `Checklist: right table? right columns? filters match the question exactly (direction of comparisons, AND vs OR)? aggregates computed over the intended values (casts applied)? nothing important excluded by NULLs?`,
+    `If the result correctly answers the question, reply {"command":"ConfirmAnswer"}.`,
+    `If anything is wrong, reply with a corrected {"command":"ExecuteFinalSQL","args":{"sql":"..."}}.`,
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * SQL-first runner for workbook sheets. Same signature as runLegacyAgent so
+ * call sites can swap directly; falls back to runLegacyAgent when the SQL
+ * engine is unavailable.
+ */
+export async function* runSheetAgent(
+  question: string,
+  sheets: WorkbookSheets,
+  selectedSheetName: string,
+  provider: Provider,
+  model: string,
+  apiKey: string,
+  temperature: number,
+  maxTokens: number,
+  systemPromptOverride?: string,
+  conversationHistory?: ConversationContext[],
+  providerOptions: LLMProviderOptions = {},
+  hitlController?: HitlController
+): AsyncGenerator<AgentStep> {
+  // ── Engine init (lazy WASM load). Failure → legacy DSL agent, never a dead end.
+  const workbookKey =
+    Object.keys(sheets).sort().join("|") + "::" +
+    Object.values(sheets).map((s) => s?.rows?.length ?? 0).join(",");
+  let tables: RegisteredTable[];
+  try {
+    tables = await loadWorkbook(sheets, workbookKey);
+  } catch (err) {
+    console.warn("[SQL agent] engine unavailable, falling back to legacy operations agent:", err);
+    yield* runLegacyAgent(
+      question, sheets, selectedSheetName, provider, model, apiKey, temperature, maxTokens,
+      systemPromptOverride, conversationHistory, providerOptions, hitlController
+    );
+    return;
+  }
+
+  const prompt = applyPromptOverride(SQL_SHEET_AGENT_PROMPT, systemPromptOverride);
+  const schemaBlock = buildSqlSchemaBlock(tables, sheets);
+  const selectedTable = tables.find((t) => t.sheetName === selectedSheetName)?.tableName ?? tables[0].tableName;
+
+  const introParts = [
+    `Question: ${question}`,
+    `Currently selected table: "${selectedTable}"`,
+    `DATABASE SCHEMA:\n${schemaBlock}`,
+  ];
+  // Long-term memory: glossary of answered clarifications + verified SQL for
+  // similar past questions on this dataset (see agent-memory.ts).
+  const memoryBlock = buildMemoryBlock(workbookKey, question);
+  if (memoryBlock) introParts.push(memoryBlock);
+  if (conversationHistory && conversationHistory.length > 0) {
+    const recent = conversationHistory.slice(-3).map((entry, index) =>
+      `Q${index + 1}: ${entry.question}\nA${index + 1}: ${typeof entry.answer === "string" ? entry.answer : JSON.stringify(entry.answer).slice(0, 300)}`
+    );
+    introParts.push(`Recent conversation:\n${recent.join("\n")}`);
+  }
+  introParts.push("Respond with one JSON command only.");
+
+  const history: { role: string; content: string }[] = [];
+  let llmInput = introParts.join("\n\n");
+  const maxTurns = 12;
+  let turn = 0;
+  let healAttempts = 0;
+  let zeroRowsNudged = false;
+  let nullColsNudges = 0; // up to 2 structured re-checks for all-NULL columns
+  // Verification state: the candidate final result awaiting model confirmation.
+  let pendingFinal: { sql: string; result: SqlResult } | null = null;
+  let verificationUsed = false;
+
+  const finalStepFrom = (sql: string, result: SqlResult, tokens: { input: number; output: number }, durationMs: number, narrative?: string): AgentStep => {
+    // Every result that reaches the user passed verification — remember it as
+    // a few-shot example for future questions on this dataset.
+    recordSolvedExample(workbookKey, question, sql);
+    return {
+      turn,
+      command: "ExecuteFinalQuery",
+      args: { operation: "sql", sql },
+      // Hybrid result: rows render as table/chart, narrative renders as the
+      // analyst insight above them. Plain rows when no insight was generated.
+      result: narrative ? { rows: result.rows, narrative } : result.rows,
+      sql,
+      tokens,
+      durationMs,
+      isFinal: true,
+    };
+  };
+
+  // One cheap post-verification call that turns a bare table into an analyst
+  // answer: headline finding, notable comparison/outlier, caveat. Best-effort —
+  // any failure just means the table ships without the summary.
+  const generateInsight = async (sql: string, res: SqlResult): Promise<string> => {
+    if (res.rows.length === 0) return "";
+    try {
+      const sample = JSON.stringify(res.rows.slice(0, 30)).slice(0, 2500);
+      const msg = [{
+        role: "user",
+        content: `The user asked: "${question}"\nSQL executed: ${sql}\nResult: ${res.totalRowCount} row(s). Sample: ${sample}\n\nWrite a concise analyst insight in markdown: ONE headline sentence with the key finding (bold the key numbers), then 2-3 short "- " bullets (notable comparison, outlier, distribution detail, or caveat). HARD RULES: every number, date, and name MUST be literally visible in the sample above — never invent or infer one. If a value is null, say that data is missing; NEVER replace a null with a guessed value (no guessed months, rates, or totals). If the data looks incomplete, say so plainly instead of speculating about causes. If this is a forecast, say it is a linear-trend estimate. Maximum 80 words. No preamble, no JSON, no code fences.`,
+      }];
+      const resp = await callLLMWithRetry(
+        provider, model, apiKey, msg,
+        "You are a sharp, numeric data analyst. Be specific, never generic.",
+        temperature, Math.min(maxTokens, 500), providerOptions
+      );
+      const text = (resp.content || "").trim();
+      // A JSON command here means the model ignored instructions — drop it.
+      return text.startsWith("{") ? "" : text;
+    } catch {
+      return "";
+    }
+  };
+
+  while (turn < maxTurns) {
+    turn++;
+    const startTime = Date.now();
+    history.push({ role: "user", content: llmInput });
+
+    let llmResponse: LLMResponse;
+    try {
+      llmResponse = await callLLMWithRetry(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
+    } catch (err: any) {
+      yield { turn, command: "Error", args: {}, result: err.message, tokens: { input: 0, output: 0 }, durationMs: Date.now() - startTime, isFinal: true };
+      return;
+    }
+    history.push({ role: "assistant", content: llmResponse.content });
+    const tokens = { input: llmResponse.inputTokens, output: llmResponse.outputTokens };
+
+    try {
+      const parsed = parseCommand(llmResponse.content);
+      if (!parsed) {
+        yield { turn, command: "PARSE_ERROR", args: {}, result: "Could not parse command, retrying...", tokens, durationMs: Date.now() - startTime, isFinal: false };
+        llmInput = "Invalid response. Reply ONLY with a single JSON command object — no prose, no markdown.";
+        continue;
+      }
+      const { command, args = {} } = parsed;
+      const rawArgs = (args || {}) as Record<string, any>;
+
+      // ── Confirmation of a verified result ────────────────────────────────
+      if (pendingFinal && (command === "ConfirmAnswer" || command === "Confirm" || command === "Answer")) {
+        yield {
+          turn,
+          command: "VerifyResult",
+          args: {},
+          result: "Result verified against the question.",
+          tokens,
+          durationMs: Date.now() - startTime,
+          isFinal: false,
+        };
+        const insight = await generateInsight(pendingFinal.sql, pendingFinal.result);
+        yield finalStepFrom(pendingFinal.sql, pendingFinal.result, { input: 0, output: 0 }, 0, insight);
+        return;
+      }
+
+      switch (command) {
+        case "GetSchema":
+        case "GetColumns":
+        case "GetSheetDescription": {
+          yield { turn, command: "GetSchema", args: rawArgs, result: schemaBlock, tokens, durationMs: Date.now() - startTime, isFinal: false };
+          llmInput = `Schema:\n${schemaBlock}\n\nNow answer the question with RunSQL or ExecuteFinalSQL.`;
+          continue;
+        }
+
+        case "RunSQL": {
+          const sql = String(rawArgs.sql ?? rawArgs.query ?? "");
+          const res = await runSQL(sql, 1000);
+          if ("error" in res) {
+            yield { turn, command: "RunSQL", args: { sql }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+            healAttempts++;
+            llmInput = `SQL error: ${res.error}\nDiagnose the cause and reissue ONE corrected JSON command. Schema reminder:\n${schemaBlock.slice(0, 1500)}`;
+            continue;
+          }
+          yield { turn, command: "RunSQL", args: { sql }, result: res.rows.slice(0, 50), sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+          llmInput = `Result: ${res.totalRowCount} row(s). First rows: ${JSON.stringify(res.rows.slice(0, 20)).slice(0, 2000)}\n\nIf you now know enough, issue ExecuteFinalSQL with the complete answer query.`;
+          continue;
+        }
+
+        case "ExecuteFinalSQL":
+        case "ExecuteFinalQuery": {
+          const sql = String(rawArgs.sql ?? rawArgs.query ?? "");
+          const res = await runSQL(sql, 20000);
+          if ("error" in res) {
+            yield { turn, command: "ExecuteFinalSQL", args: { sql }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+            healAttempts++;
+            if (healAttempts > 6) {
+              yield { turn, command: "Error", args: {}, result: `Could not produce a working SQL query after ${healAttempts} attempts. Last error: ${res.error}`, tokens: { input: 0, output: 0 }, durationMs: 0, isFinal: true };
+              return;
+            }
+            llmInput = `SQL error: ${res.error}\nThis is recoverable — diagnose the exact cause and reissue ONE corrected ExecuteFinalSQL. Schema reminder:\n${schemaBlock.slice(0, 1500)}`;
+            continue;
+          }
+          // Deterministic validator: empty result gets one structured re-check.
+          if (res.totalRowCount === 0 && !zeroRowsNudged) {
+            zeroRowsNudged = true;
+            yield { turn, command: "ExecuteFinalSQL", args: { sql }, result: { rows: 0 }, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+            llmInput = `The query ran but returned 0 rows. Double-check: exact column spelling, TRY_CAST on text-typed numeric columns, comparison directions, ILIKE instead of = for text, AND vs OR. If after re-checking you believe 0 rows is genuinely the correct answer, re-issue the SAME ExecuteFinalSQL and it will be accepted.`;
+            continue;
+          }
+          // Deterministic validator: a column that came back 100% NULL almost
+          // always means a failed cast/extraction — never show that silently.
+          {
+            const allNullCols = findAllNullColumns(res);
+            if (allNullCols.length > 0 && nullColsNudges < 2) {
+              nullColsNudges++;
+              yield { turn, command: "ExecuteFinalSQL", args: { sql }, result: { warning: `All-NULL columns: ${allNullCols.join(", ")}` }, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+              llmInput = `The query ran, but these result columns are NULL in EVERY row: ${allNullCols.map((c) => `"${c}"`).join(", ")}. Your cast/parse failed for ALL values — do NOT retry a variation of the same expression. REQUIRED next step: probe the RAW source values first with RunSQL (e.g. SELECT "source_col" FROM "table" LIMIT 5), look at the actual format, then write the correct expression and reissue ExecuteFinalSQL. (Attempt ${nullColsNudges} of 2 — after that the result goes to verification with a warning.)`;
+              continue;
+            }
+          }
+          // LLM verification pass (once): confirm or correct before showing the user.
+          if (!verificationUsed) {
+            verificationUsed = true;
+            pendingFinal = { sql, result: res };
+            yield {
+              turn,
+              command: "ExecuteFinalSQL",
+              args: { sql },
+              result: res.rows.slice(0, 50),
+              sql,
+              tokens,
+              durationMs: Date.now() - startTime,
+              isFinal: false,
+            };
+            llmInput = buildSqlVerificationMessage(question, sql, res);
+            continue;
+          }
+          // Already verified once (this is the corrected query) → final.
+          {
+            const insight = await generateInsight(sql, res);
+            yield finalStepFrom(sql, res, tokens, Date.now() - startTime, insight);
+          }
+          return;
+        }
+
+        // Explicit mid-run question to the user: pauses the agent, shows the
+        // clarification UI, and resumes with the user's reply in context.
+        case "AskUser":
+        case "Clarify":
+        case "AskClarification": {
+          const questionText = String(rawArgs.question ?? rawArgs.prompt ?? rawArgs.value ?? "Could you clarify your question?");
+          const options = Array.isArray(rawArgs.options) ? rawArgs.options.map(String).filter(Boolean).slice(0, 6) : undefined;
+          if (!hitlController) {
+            // No interactive channel (e.g. deployed chat) — surface as a final text answer.
+            yield { turn, command: "Answer", args: rawArgs, result: questionText, tokens, durationMs: Date.now() - startTime, isFinal: true };
+            return;
+          }
+          yield {
+            turn,
+            command: "HumanClarification",
+            args: { prompt: questionText, options },
+            result: "Waiting for user clarification...",
+            tokens,
+            durationMs: Date.now() - startTime,
+            isFinal: false,
+            hitlKind: "clarification",
+            hitlPrompt: questionText,
+          };
+          const userReply = await hitlController.waitForHuman(questionText, "clarification", { options });
+          if (userReply && userReply.trim() && userReply !== "reject" && userReply !== "cancel") {
+            recordClarification(workbookKey, questionText, userReply);
+            llmInput = `User clarification: "${userReply}". Use it to write the correct SQL and proceed — do not ask again.`;
+            continue;
+          }
+          yield { turn, command: "Error", args: {}, result: "Query was cancelled by the user.", tokens, durationMs: Date.now() - startTime, isFinal: true };
+          return;
+        }
+
+        case "Answer":
+        case "FinalAnswer":
+        case "NarrativeAnswer": {
+          const value = rawArgs.value ?? rawArgs.text ?? rawArgs.narrative ?? llmResponse.content;
+          // An Answer that is really a question gets routed through the
+          // interactive clarification flow instead of ending the run.
+          const answerText = typeof value === "string" ? value : JSON.stringify(value);
+          const clarificationOptions = mergeClarificationOptions(answerText, rawArgs);
+          const isClarification = !isGreetingQuery(question) && isClarificationAnswer(command, answerText, rawArgs);
+          if (isClarification && hitlController) {
+            yield {
+              turn,
+              command: "HumanClarification",
+              args: { prompt: answerText, options: clarificationOptions },
+              result: "Waiting for user clarification...",
+              tokens,
+              durationMs: Date.now() - startTime,
+              isFinal: false,
+              hitlKind: "clarification",
+              hitlPrompt: answerText,
+            };
+            const userReply = await hitlController.waitForHuman(answerText, "clarification", { options: clarificationOptions });
+            if (userReply && userReply.trim() && userReply !== "reject" && userReply !== "cancel") {
+              recordClarification(workbookKey, answerText, userReply);
+              llmInput = `User clarification: "${userReply}". Use it to write the correct SQL and proceed — do not ask again.`;
+              continue;
+            }
+            yield { turn, command: "Error", args: {}, result: "Query was cancelled by the user.", tokens, durationMs: Date.now() - startTime, isFinal: true };
+            return;
+          }
+          yield { turn, command: "Answer", args: rawArgs, result: value, tokens, durationMs: Date.now() - startTime, isFinal: true };
+          return;
+        }
+
+        default: {
+          yield { turn, command: String(command), args: rawArgs, result: `Unknown command "${command}".`, tokens, durationMs: Date.now() - startTime, isFinal: false };
+          llmInput = `Unknown command "${command}". Use exactly one of: RunSQL, ExecuteFinalSQL, AskUser, Answer. Respond with one JSON command only.`;
+          continue;
+        }
+      }
+    } catch (turnErr: any) {
+      console.error(`[SQL agent] turn ${turn} crashed:`, turnErr);
+      yield { turn, command: "Error", args: {}, result: `Internal error: ${turnErr?.message || String(turnErr)}`, tokens: { input: 0, output: 0 }, durationMs: Date.now() - startTime, isFinal: false };
+      llmInput = `An internal error occurred (${turnErr?.message || String(turnErr)}). Try a different approach to answer: "${question}"`;
+      if (++healAttempts > 6) {
+        yield { turn: turn + 1, command: "Error", args: {}, result: "Too many errors — could not complete the query.", tokens: { input: 0, output: 0 }, durationMs: 0, isFinal: true };
+        return;
+      }
+    }
+  }
+
+  // Max turns exhausted: if a verified-pending result exists, show it rather than failing.
+  if (pendingFinal) {
+    yield finalStepFrom(pendingFinal.sql, pendingFinal.result, { input: 0, output: 0 }, 0);
+    return;
+  }
   yield {
     turn,
     command: "MaxTurnsReached",
