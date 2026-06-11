@@ -125,7 +125,7 @@ export function CommandPalette() {
             // { label: "Insights",    Icon: Bookmark,        path: "/app/insights" },
             { label: "Datasets",    Icon: Database,        path: "/app/datasets" },
             { label: "Connections", Icon: Cable,           path: "/app/connections" },
-            { label: "Get Started", Icon: Compass,         path: "/app/get-started" },
+            // { label: "Get Started", Icon: Compass, path: "/app/get-started" }, // temporarily disabled, will release later
             { label: "Pricing",     Icon: CreditCard,      path: "/app/pricing" },
             { label: "Settings",    Icon: Settings,        path: "/app/settings" },
             ...(isAdmin ? [{ label: "Admin Panel", Icon: Shield, path: "/app/admin" }] : []),

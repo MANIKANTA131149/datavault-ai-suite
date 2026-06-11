@@ -9,7 +9,7 @@ import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
 import { Seo } from "@/components/Seo";
 
-const GetStartedPage = lazy(() => import("@/pages/GetStartedPage"));
+// const GetStartedPage = lazy(() => import("@/pages/GetStartedPage")); // temporarily disabled, will release later
 const WebsitePage = lazy(() => import("@/pages/WebsitePage"));
 const PrivacyPolicyPage = lazy(() => import("@/pages/PrivacyPolicyPage"));
 const TermsPage = lazy(() => import("@/pages/TermsPage"));
@@ -53,7 +53,8 @@ const App = () => (
             <Route path="/auth" element={<AuthPage />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
-              <Route path="get-started" element={<GetStartedPage />} />
+              {/* Get Started — temporarily disabled, will release later */}
+              {/* <Route path="get-started" element={<GetStartedPage />} /> */}
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="datasets" element={<DatasetsPage />} />
               <Route path="connections" element={<ConnectionsPage />} />

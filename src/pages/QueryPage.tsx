@@ -57,7 +57,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { DbTypeIcon } from "@/components/DbTypeIcon";
 
-import { runDatabaseAgent, runLegacyAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import { runDatabaseAgent, runSheetAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
 import { parseOptionsFromText, cleanPromptText } from "@/lib/clarification-options";
 import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
@@ -561,6 +561,11 @@ function exportJSON(result: any, filename = "result.json") {
 
 function exportMarkdown(result: any, query: string, filename = "result.md") {
   let md = `# Query Result\n\n**Query:** ${query}\n\n**Date:** ${new Date().toLocaleString()}\n\n`;
+  // Hybrid {rows, narrative}: insight text first, then the table.
+  if (result && !Array.isArray(result) && typeof result === "object" && Array.isArray(result.rows) && result.narrative !== undefined) {
+    md += `${String(result.narrative)}\n\n`;
+    result = result.rows;
+  }
   if (Array.isArray(result) && result.length > 0 && typeof result[0] === "object") {
     const headers = Object.keys(result[0]);
     md += `| ${headers.join(" | ")} |\n| ${headers.map(() => "---").join(" | ")} |\n`;
@@ -569,7 +574,7 @@ function exportMarkdown(result: any, query: string, filename = "result.md") {
     }
   } else if (result?.narrative) {
     md += result.narrative;
-  } else {
+  } else if (!Array.isArray(result)) {
     md += "```json\n" + JSON.stringify(result, null, 2) + "\n```";
   }
   const blob = new Blob([md], { type: "text/markdown" });
@@ -580,14 +585,19 @@ function exportMarkdown(result: any, query: string, filename = "result.md") {
 
 function exportHTML(result: any, query: string, filename = "result.html") {
   let tableHtml = "";
+  // Hybrid {rows, narrative}: insight paragraph above the table.
+  if (result && !Array.isArray(result) && typeof result === "object" && Array.isArray(result.rows) && result.narrative !== undefined) {
+    tableHtml += `<p style="font-family:sans-serif;font-size:14px;line-height:1.5">${String(result.narrative).replace(/</g, "&lt;")}</p>`;
+    result = result.rows;
+  }
   if (Array.isArray(result) && result.length > 0 && typeof result[0] === "object") {
     const headers = Object.keys(result[0]);
-    tableHtml = `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-family:sans-serif;font-size:13px">
+    tableHtml += `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-family:sans-serif;font-size:13px">
       <thead style="background:#f0f0f0"><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
       <tbody>${result.map((row: any) => `<tr>${headers.map((h) => `<td>${row[h] ?? ""}</td>`).join("")}</tr>`).join("")}</tbody>
     </table>`;
   } else {
-    tableHtml = `<pre style="font-family:monospace">${JSON.stringify(result, null, 2)}</pre>`;
+    tableHtml += `<pre style="font-family:monospace">${JSON.stringify(result, null, 2)}</pre>`;
   }
   const html = `<!DOCTYPE html><html><head><title>Querify Export</title></head><body>
     <h2 style="font-family:sans-serif">Query: ${query}</h2>
@@ -621,7 +631,16 @@ function roundCellNumber(value: any): any {
 function formatCellDisplay(value: any): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "number" && Number.isFinite(value)) {
-    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    // Plain numbers, exactly as the data has them (max 2 decimals) — no locale
+    // grouping, which reformatted values (e.g. Indian 8,58,800.46 grouping).
+    return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
+  }
+  if (typeof value === "string") {
+    // Strip JSON-style wrapping quotes that leak from mixed-type columns ("7").
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      return value.slice(1, -1);
+    }
+    return value;
   }
   return String(value);
 }
@@ -1597,7 +1616,11 @@ const ResultPanel = memo(function ResultPanel({
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
-  const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
+  // Hybrid result {rows, narrative}: analyst insight rendered above the table.
+  const hybridNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined && Array.isArray(result?.rows)
+    ? String(result.narrative)
+    : "";
+  const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined && !hybridNarrative;
   const isMultiTable = useMemo(() => {
     if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
     const keys = Object.keys(result);
@@ -1899,6 +1922,15 @@ const ResultPanel = memo(function ResultPanel({
       )}
 
       <div className="min-w-0 min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
+        {hybridNarrative && (
+          <div className="space-y-2 border-b border-border/50 pb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={13} className="text-purple-400" />
+              <span className="text-xs text-purple-400 font-medium">AI Analysis</span>
+            </div>
+            <div className="text-sm leading-relaxed">{renderMarkdown(hybridNarrative)}</div>
+          </div>
+        )}
         {isNarrative && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -2426,7 +2458,11 @@ const InlineFinalResult = memo(function InlineFinalResult({
   const isArray = Array.isArray(result);
   const isSingleValue = !isArray && typeof result === "object" && result?.result !== undefined;
   const isPrimitiveValue = !isArray && (typeof result === "number" || typeof result === "boolean");
-  const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined;
+  // Hybrid result {rows, narrative}: analyst insight rendered above the table.
+  const hybridNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined && Array.isArray(result?.rows)
+    ? String(result.narrative)
+    : "";
+  const isNarrative = !isArray && typeof result === "object" && result?.narrative !== undefined && !hybridNarrative;
   const isMultiTable = useMemo(() => {
     if (typeof result !== "object" || result === null || Array.isArray(result)) return false;
     const keys = Object.keys(result);
@@ -2485,6 +2521,12 @@ const InlineFinalResult = memo(function InlineFinalResult({
   return (
     <div className="ml-3 sm:ml-10 mt-1 mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-3 space-y-3">
       <p className="text-xs text-muted-foreground font-medium">Result</p>
+
+      {hybridNarrative && (
+        <div className="text-sm text-foreground leading-relaxed border-b border-border/50 pb-3">
+          {renderMarkdown(hybridNarrative)}
+        </div>
+      )}
 
       {isSingleValue && (
         <p className="text-2xl font-semibold text-foreground font-mono">
@@ -3337,10 +3379,7 @@ export default function QueryPage() {
   const { user } = useAuthStore();
   const isFreeUser = user?.planTier === "free";
   const isFreeNovaModel = (activeProvider === "bedrock" || activeProvider === "querify") && [
-    "amazon.nova-pro-v1:0", "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-    "google.gemma-3-12b-it", "openai.gpt-oss-120b-1:0", "meta.llama3-3-70b-instruct-v1:0",
-    "amazon.nova-premier-v1:0", "deepseek.v3.2", "deepseek.r1-v1:0",
-    "qwen.qwen3-next-80b-a3b", "nvidia.nemotron-super-3-120b", "moonshot.kimi-k2-thinking",
+    "deepseek.v3.2",
   ].includes(activeModel);
 
   const [isLargeScreen, setIsLargeScreen] = useState(false);
@@ -3466,7 +3505,7 @@ export default function QueryPage() {
       );
       if (!hasConfiguredOther) {
         setActiveProvider("querify");
-        setActiveModel("amazon.nova-pro-v1:0");
+        setActiveModel("deepseek.v3.2");
       }
     }
     // Only run this initialization on mount or when plan tier changes
@@ -4111,7 +4150,7 @@ export default function QueryPage() {
     };
 
     try {
-      for await (const step of runLegacyAgent(
+      for await (const step of runSheetAgent(
         question, workbookSheets, selectedSheet, activeProvider, activeModel, actualApiKey, temperature, maxTokens,
         systemPrompt || undefined, conversationContext, actualProviderOptions, hitlController
       )) {
@@ -4364,7 +4403,7 @@ export default function QueryPage() {
         return;
       }
 
-      runner = runLegacyAgent(
+      runner = runSheetAgent(
         question,
         workbookSheets,
         selectedSheet,
@@ -5102,7 +5141,9 @@ export default function QueryPage() {
                     {currentSteps.length > 0 && !hitlState && (
                       <StepsTimeline steps={currentSteps} live />
                     )}
-                    {currentFinalStep && !hitlState && (
+                    {/* During a live run, never render the clarification fallback as a
+                        "Result" — the question is already shown by the HITL panel. */}
+                    {currentFinalStep && currentFinalStep.command !== "HumanClarification" && !hitlState && (
                       <InlineFinalResult
                         result={currentFinalStep.result}
                         onSubmitQuickReply={(text) => {

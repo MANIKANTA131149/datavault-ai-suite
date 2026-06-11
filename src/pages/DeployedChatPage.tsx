@@ -139,11 +139,15 @@ function CollapsibleUserText({ content }: { content: string }) {
   );
 }
 
-// Round non-integer numbers to 2 decimals with thousands separators for table cells.
+// Plain cell display: numbers exactly as the data has them (max 2 decimals,
+// no locale grouping), JSON-style wrapping quotes stripped from strings.
 function formatCellDisplay(value: any): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "number" && Number.isFinite(value)) {
-    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
+  }
+  if (typeof value === "string" && value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1);
   }
   return String(value);
 }
