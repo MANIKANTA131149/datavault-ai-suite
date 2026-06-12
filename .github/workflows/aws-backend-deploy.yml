@@ -51,7 +51,6 @@ jobs:
       - name: Deploy Backend via Serverless Framework
         run: npm run aws-deploy:backend
         env:
-          VITE_AWS_REGION: ${{ env.VITE_AWS_REGION || 'us-east-1' }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           # FRONTEND_URL can be added to secrets and mapped here if CORS is strict
@@ -68,3 +67,6 @@ jobs:
           ANALYTICS_TOKEN_SECRET: ${{ secrets.ANALYTICS_TOKEN_SECRET }}
           AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+          VITE_AWS_ACCESS_KEY_ID: ${{ secrets.VITE_AWS_ACCESS_KEY_ID }}
+          VITE_AWS_SECRET_ACCESS_KEY: ${{ secrets.VITE_AWS_SECRET_ACCESS_KEY }}
+          VITE_AWS_REGION: ${{ secrets.VITE_AWS_REGION }}
