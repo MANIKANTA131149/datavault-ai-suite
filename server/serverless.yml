@@ -77,9 +77,12 @@ package:
 functions:
   api:
     handler: lambda.handler
-    # Cost guardrail: a traffic flood can never run more than this many
-    # concurrent Lambda executions (and so can't run up an unbounded bill).
-    reservedConcurrency: 50
+    # NOTE: reservedConcurrency was removed — this AWS account's total
+    # concurrency quota is too low to carve out a reservation (deploy fails
+    # with "decreases UnreservedConcurrentExecution below minimum"). The
+    # account-wide cap itself bounds the bill; the API Gateway throttle below
+    # is the flood protection. Re-add (e.g. 50) after requesting a quota
+    # increase to the default 1000.
     events:
       - httpApi:
           path: /api/{proxy+}
