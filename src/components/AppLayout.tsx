@@ -22,7 +22,7 @@ import { AccountMenu } from "@/components/AccountMenu";
 import { NotificationBell } from "@/components/NotificationBell";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuthStore } from "@/stores/auth-store";
-import { useLLMStore, PROVIDER_LABELS } from "@/stores/llm-store";
+import { useLLMStore } from "@/stores/llm-store";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -33,7 +33,6 @@ import { useConnectionStore } from "@/stores/connection-store";
 import { useCommandStore } from "@/stores/command-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ProviderLogo } from "@/components/ProviderLogo";
 import { toast } from "@/lib/toast";
 
 const BREADCRUMBS: Record<string, string> = {
@@ -200,7 +199,6 @@ export default function AppLayout() {
   const { user, hasHydrated, hydrateRole, logout } = useAuthStore();
   const location                       = useLocation();
   const navigate                       = useNavigate();
-  const { activeProvider, activeModel } = useLLMStore();
   const { fetchDatasets }              = useDatasetStore();
   const { fetchHistory }               = useHistoryStore();
   const { fetchSettings, applyTheme, theme, setTheme, saveSettings } = useSettingsStore();
@@ -333,9 +331,6 @@ export default function AppLayout() {
                     {BREADCRUMBS[location.pathname] || "Page"}
                   </span>
                 </div>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground sm:hidden">
-                  {PROVIDER_LABELS[activeProvider]} · {activeModel}
-                </p>
               </div>
             </div>
 
@@ -355,15 +350,6 @@ export default function AppLayout() {
                 </span>
               </button>
 
-              <Badge
-                variant="outline"
-                className="hidden max-w-[20rem] items-center gap-1.5 rounded-lg border-border/60 bg-background/60 px-2.5 py-1 font-mono text-[11px] text-muted-foreground backdrop-blur-sm sm:inline-flex"
-              >
-                <ProviderLogo provider={activeProvider} size="sm" />
-                <span className="truncate">
-                  {PROVIDER_LABELS[activeProvider]} · {activeModel}
-                </span>
-              </Badge>
               <Button
                 type="button"
                 variant="ghost"
@@ -396,7 +382,7 @@ export default function AppLayout() {
           </div>
         </header>
 
-        <main className="relative min-h-0 flex-1 overflow-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">
+        <main className="relative min-h-0 flex-1 overflow-hidden flex flex-col">
           <RouteErrorBoundary resetKey={location.pathname}>
             <Suspense fallback={<PageContentLoader />}>
               <AnimatePresence mode="wait">
@@ -406,7 +392,7 @@ export default function AppLayout() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.16 }}
-                  className="min-h-full"
+                  className="flex-1 min-h-0 overflow-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0 [&:has(>[data-page=query])]:overflow-hidden [&:has(>[data-page=query])]:pb-0"
                 >
                   <Outlet />
                 </motion.div>

@@ -1458,14 +1458,6 @@
   animation: logo-pulse 3s ease-in-out infinite;
 }
 
-/* ── Textarea auto-grow focus glow ───────────────────────────────────────── */
-.query-input-glow:focus-within {
-  box-shadow:
-    0 0 0 1px hsl(var(--primary) / 0.35),
-    0 4px 24px -8px hsl(var(--primary) / 0.25);
-  border-color: hsl(var(--primary) / 0.5) !important;
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
-}
 
 /* ── Human-in-the-loop panel ─────────────────────────────────────────────── */
 .hitl-panel-root {
