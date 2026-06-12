@@ -16,11 +16,11 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { List, type RowComponentProps } from "react-window";
 import {
-  Send, Check, ChevronDown, ChevronRight, ChevronsUpDown, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
+  Send, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
   LayoutTemplate, RefreshCw, FileJson, FileText, Code2, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
-  Share2, Mic, Globe, Loader2, Layers, AlertTriangle,
+  Share2, Mic, AudioWaveform, Globe, Loader2, Layers, AlertTriangle,
   GripVertical, Filter, Bell, BellOff, Pin, Columns, ChevronUp,
   SlidersHorizontal, ListFilter, BarChart2, Crosshair, Flame, FunctionSquare, CheckSquare, Square,
   FlipHorizontal, Sigma, Hash, Info,
@@ -105,7 +105,7 @@ const CHART_PIE_LABEL_LIMIT = 6;
 const CHART_PIE_SLICE_LIMIT = 8;
 const STEP_RESULT_PREVIEW_ROWS = 5;
 const STEP_RESULT_PREVIEW_LIMIT = 1200;
-const QUERY_MAX_CHARS = 1000; // hard limit on user query length
+const QUERY_MAX_CHARS = 1000;
 const RESULT_TABLE_ROW_HEIGHT: Record<ResultDensity, number> = {
   compact: 30,
   comfortable: 38,
@@ -3702,7 +3702,7 @@ export default function QueryPage() {
   const [showMobileSettings, setShowMobileSettings] = useState(false);
   const [showMobileAdvanced, setShowMobileAdvanced] = useState(false);
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
-  const [queryExpanded, setQueryExpanded] = useState(false);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [hitlState, setHitlState] = useState<{
     kind: "clarification" | "approval";
@@ -4574,7 +4574,7 @@ export default function QueryPage() {
   const bedrockRegionForProvider = activeProviderConfig.region || "us-east-1";
 
   return (
-    <div className="relative flex h-[calc(100dvh-3.5rem-4.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)] md:h-[calc(100dvh-3.5rem)]">
+    <div data-page="query" className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_34%)]">
 
       {/* ── Memory-loss warning dialog (route navigation) ── */}
       <AlertDialog open={navBlocked !== null}>
@@ -4711,25 +4711,36 @@ export default function QueryPage() {
               className="flex-1 flex min-h-0 min-w-0 overflow-hidden relative xl:flex-row flex-col w-full h-full"
             >
             {/* Left: Context Panel */}
-            <div className="hidden w-[clamp(16rem,20vw,18rem)] shrink-0 flex-col overflow-hidden border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex">
+            <div className={`hidden shrink-0 flex-col overflow-hidden border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex transition-all duration-200 ${leftPanelCollapsed ? "w-10" : "w-[clamp(16rem,20vw,18rem)]"}`}>
               {/* Sidebar Tab Switcher */}
-              <div className="shrink-0 flex items-center border-b border-border/60 bg-background-secondary px-3 py-2 gap-1">
+              <div className="shrink-0 flex items-center border-b border-border/60 bg-background-secondary px-2 py-2 gap-1">
+                {!leftPanelCollapsed && (
+                  <>
+                    <button
+                      onClick={() => setShowSchemaExplorer(false)}
+                      className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs rounded-md transition-colors ${!showSchemaExplorer ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      <Settings2 size={11} /> Configure
+                    </button>
+                    <button
+                      onClick={() => setShowSchemaExplorer(true)}
+                      className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs rounded-md transition-colors ${showSchemaExplorer ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      <Database size={11} /> Schema
+                    </button>
+                  </>
+                )}
                 <button
-                  onClick={() => setShowSchemaExplorer(false)}
-                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs rounded-md transition-colors ${!showSchemaExplorer ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setLeftPanelCollapsed((p) => !p)}
+                  className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
+                  title={leftPanelCollapsed ? "Expand panel" : "Collapse panel"}
                 >
-                  <Settings2 size={11} /> Configure
-                </button>
-                <button
-                  onClick={() => setShowSchemaExplorer(true)}
-                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs rounded-md transition-colors ${showSchemaExplorer ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  <Database size={11} /> Schema
+                  {leftPanelCollapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
                 </button>
               </div>
 
               {/* Schema Explorer Tab */}
-              {showSchemaExplorer ? (
+              {!leftPanelCollapsed && showSchemaExplorer ? (
                 <div className="flex-1 overflow-hidden p-3">
                   <SchemaExplorer
                     schema={dbSchema}
@@ -4737,7 +4748,7 @@ export default function QueryPage() {
                     isDbMode={isDbConnection}
                   />
                 </div>
-              ) : (
+              ) : !leftPanelCollapsed ? (
               <div className="flex-1 overflow-auto p-4 space-y-4">
                 <div>
                   <Label className="text-xs text-muted-foreground">Data Source</Label>
@@ -4992,7 +5003,7 @@ export default function QueryPage() {
                   </button>
                 </div>
               </div>
-              )} {/* end schema toggle */}
+              ) : null} {/* end schema toggle */}
             </div>
 
             {/* Center: Chat */}
@@ -5005,15 +5016,17 @@ export default function QueryPage() {
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-foreground truncate">{sourceName}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">
-                        {PROVIDER_LABELS[activeProvider]} · {getModelDisplayName(activeModel)}
-                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     {(selectedDataset || selectedConnection) && (
                       <Button variant="outline" size="sm" className="h-8 w-8 p-0 border-border" onClick={() => setShowPreview(true)} title="Preview Data">
                         <Eye size={14} />
+                      </Button>
+                    )}
+                    {messages.length > 0 && !isRunning && (
+                      <Button variant="outline" size="sm" className="h-8 w-8 p-0 border-border" onClick={() => setConfirmClearChat(true)} title="New chat">
+                        <MessageSquarePlus size={14} />
                       </Button>
                     )}
                     <Button variant="outline" size="sm" className="h-8 w-8 p-0 border-border" onClick={() => setShowMobileSettings(true)} title="Configure Settings">
@@ -5025,30 +5038,43 @@ export default function QueryPage() {
                   </div>
                 </div>
               </div>
-              <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-4 scrollbar-thin sm:p-4">
-                {messages.length === 0 && !isRunning && (
-                  <div className="flex h-full flex-col items-center justify-center gap-6 px-6 py-12 text-center max-w-xl mx-auto">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm animate-pulse">
-                      <Sparkles size={28} />
-                    </div>
-                    <div className="space-y-2">
-                      <h1 className="text-2xl sm:text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-primary/80 bg-clip-text text-transparent">
-                        {dynamicGreeting}
-                      </h1>
-                      <p className="text-sm text-muted-foreground leading-relaxed">
-                        How can I help you analyze, visualize, or query your data today? Feel free to ask any question to get started.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowTemplates(true)}
-                      className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-                    >
-                      <LayoutTemplate size={13} />
-                      <span>Browse template library</span>
-                    </button>
+              {messages.length > 0 && !isRunning && (
+                <div className="hidden lg:flex shrink-0 items-center justify-end px-4 py-1.5 border-b border-border/40">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearChat(true)}
+                    title="New chat"
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted/40"
+                  >
+                    <MessageSquarePlus size={13} />
+                    New chat
+                  </button>
+                </div>
+              )}
+              {messages.length === 0 && !isRunning && (
+                <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-6 px-6 py-12 text-center max-w-xl mx-auto">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm animate-pulse">
+                    <Sparkles size={28} />
                   </div>
-                )}
+                  <div className="space-y-2">
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-primary/80 bg-clip-text text-transparent">
+                      {dynamicGreeting}
+                    </h1>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      How can I help you analyze, visualize, or query your data today? Feel free to ask any question to get started.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowTemplates(true)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                  >
+                    <LayoutTemplate size={13} />
+                    <span>Browse template library</span>
+                  </button>
+                </div>
+              )}
 
+              <div ref={chatScrollRef} className={`overflow-x-hidden p-3 space-y-4 scrollbar-thin sm:p-4 ${messages.length === 0 && !isRunning ? "hidden" : "flex-1 min-h-0 overflow-y-auto"}`}>
                 {messages.map((msg, i) => {
                   const finalStep = getFinalStep(msg.steps);
                   const isLast = i === messages.length - 1;
@@ -5193,7 +5219,7 @@ export default function QueryPage() {
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="shrink-0 border-t border-border/70 bg-background/90 p-3 backdrop-blur-sm sm:p-4">
+              <div className="shrink-0 border-t border-border/70 bg-background/90 px-2 py-2 backdrop-blur-sm sm:px-4 sm:py-3" style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}>
                 {isFreeUser && dailyTokens && (dailyTokens.tokensUsed >= 150000 || dailyTokens.queriesUsed >= 18) && (
                   <div className={`mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between ${
                     dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
@@ -5234,111 +5260,74 @@ export default function QueryPage() {
                     </Button>
                   </div>
                 )}
-                <div className="mx-auto flex max-w-3xl items-end gap-1.5 sm:gap-2 rounded-[20px] sm:rounded-[24px] border border-border/55 bg-card/80 p-1.5 sm:p-2 shadow-[0_4px_20px_-8px_hsl(var(--foreground)/0.12)] backdrop-blur-sm query-input-glow">
-                  <div className="relative min-w-0 flex-1">
-                    {/* Ghost text backdrop overlay */}
+                <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border/70 bg-card shadow-sm">
+                  {/* Listening waveforms overlay */}
+                  {isListening && (
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
+                          <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
+                          <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
+                          <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
+                          <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
+                          <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
+                        </div>
+                        <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={handleSpeech} className="h-7 px-3 text-xs">Done</Button>
+                    </div>
+                  )}
+
+                  {/* Ghost text + Textarea */}
+                  <div className="relative px-4 pt-3 pb-0">
                     {activeSuggestion && !isRunning && !isListening && (
                       <div
-                        className="absolute inset-0 bg-transparent text-transparent pointer-events-none whitespace-pre-wrap break-all select-none px-3 py-2 text-sm leading-normal border border-transparent font-normal font-sans"
-                        style={{
-                          fontFamily: "inherit",
-                          fontSize: "0.875rem",
-                          lineHeight: "1.25rem",
-                          padding: "0.5rem 0.75rem",
-                          pointerEvents: "none",
-                        }}
+                        aria-hidden
+                        className="pointer-events-none absolute inset-0 select-none whitespace-pre-wrap break-words px-4 pt-3 text-sm leading-[1.5] font-normal"
+                        style={{ fontFamily: "inherit" }}
                       >
-                        <span>{input}</span>
-                        <span className="text-muted-foreground/30 dark:text-muted-foreground/35">{activeSuggestion}</span>
+                        <span className="text-transparent">{input}</span>
+                        <span className="text-muted-foreground/30">{activeSuggestion}</span>
                       </div>
                     )}
-
-                    {/* Listening waveforms overlay */}
-                    {isListening && (
-                      <div className="absolute inset-0 flex items-center justify-between bg-background-secondary/95 backdrop-blur-sm rounded-[24px] px-4 py-2 border border-primary/20 z-20">
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-end gap-1.5 h-6 w-12 justify-center">
-                            <div className="voice-bar voice-bounce-1 bg-primary w-1.5 h-3 rounded-full" />
-                            <div className="voice-bar voice-bounce-2 bg-primary w-1.5 h-5 rounded-full" />
-                            <div className="voice-bar voice-bounce-3 bg-primary w-1.5 h-2 rounded-full" />
-                            <div className="voice-bar voice-bounce-4 bg-primary w-1.5 h-6 rounded-full" />
-                            <div className="voice-bar voice-bounce-5 bg-primary w-1.5 h-4 rounded-full" />
-                          </div>
-                          <span className="text-xs text-foreground font-medium animate-pulse">Listening...</span>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleSpeech}
-                          className="h-7 px-3 text-xs border-border bg-card hover:bg-background"
-                        >
-                          Done
-                        </Button>
-                      </div>
-                    )}
-
-                    <Textarea
+                    <textarea
                       ref={textareaRef}
                       value={input}
                       maxLength={QUERY_MAX_CHARS}
                       onChange={(e) => {
                         setInput(e.target.value.slice(0, QUERY_MAX_CHARS));
-                        // Auto-grow
                         const el = e.target;
                         el.style.height = "auto";
-                        el.style.height = `${Math.min(el.scrollHeight, queryExpanded ? 260 : 120)}px`;
+                        el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
                       }}
                       onKeyDown={handleKeyDown}
-                      placeholder={isRunning ? "Query is running... stop it or wait to ask another question" : "Ask a question about your data... (Shift+Enter for new line)"}
+                      placeholder={isRunning ? "Query is running..." : "Ask a question about your data..."}
                       disabled={isRunning}
-                      className={`bg-background-secondary border-border resize-none min-h-[36px] sm:min-h-[44px] py-2 sm:py-2.5 disabled:cursor-not-allowed disabled:opacity-70 ${queryExpanded ? "min-h-[140px] max-h-[260px]" : "max-h-[120px]"} pr-10`}
-                      rows={queryExpanded ? 5 : 1}
+                      rows={1}
+                      style={{ wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "pre-wrap", border: "none", outline: "none", boxShadow: "none", appearance: "none" }}
+                      className="w-full bg-transparent resize-none min-h-[28px] max-h-[200px] overflow-y-auto py-0 px-0 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-60"
                     />
-                    {input && !isListening && (
-                      <button
-                        type="button"
-                        aria-label="Clear query"
-                        title="Clear query"
-                        onClick={() => { setInput(""); textareaRef.current?.focus(); }}
-                        className="absolute right-2 top-2 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-card"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
                   </div>
-                  <div className="flex shrink-0 gap-1.5 sm:gap-2">
-                    {messages.length > 0 && !isRunning && (
-                      <Button
-                        variant="outline"
-                        onClick={() => setConfirmClearChat(true)}
-                        size="icon"
-                        title="New chat (clear history)"
-                        className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border hover:text-destructive hover:border-destructive/40"
-                      >
-                        <MessageSquarePlus size={16} />
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
+
+                  {/* Bottom action bar — mic + send grouped right */}
+                  <div className="flex items-center justify-end gap-2 px-3 pb-3 pt-2">
+                    <button
+                      type="button"
                       onClick={handleSpeech}
-                      size="icon"
-                      title={isListening ? "Stop listening" : "Voice search"}
-                      className={`h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border transition-all duration-300 ${isListening ? "bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/30 ring-2 ring-red-500/20" : "hover:text-primary hover:border-primary/45"}`}
+                      title={isListening ? "Stop listening" : "Voice input"}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${isListening ? "text-red-500 bg-red-500/10" : "text-foreground hover:bg-muted/50"}`}
                     >
-                      <Mic size={16} className={isListening ? "animate-pulse" : ""} />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => setQueryExpanded((prev) => !prev)}
-                      size="icon"
-                      title={queryExpanded ? "Collapse query box" : "Expand query box"}
-                      className="h-9 w-9 sm:h-11 sm:w-11 shrink-0 border-border"
+                      <Mic size={17} className={isListening ? "animate-pulse" : ""} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={isRunning ? handleStopQuery : () => handleSend()}
+                      disabled={!isRunning && !input.trim()}
+                      title={isRunning ? "Stop" : "Send"}
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-opacity disabled:opacity-20 hover:opacity-80"
                     >
-                      {queryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                    </Button>
-                    <Button onClick={isRunning ? handleStopQuery : () => handleSend()} disabled={!isRunning && !input.trim()} size="icon" className="h-9 w-9 sm:h-11 sm:w-11 shrink-0">
-                      {isRunning ? <X size={16} /> : <Send size={16} />}
-                    </Button>
+                      {isRunning ? <X size={15} /> : <ArrowUp size={16} />}
+                    </button>
                   </div>
                 </div>
                 {input.length > 0 && (

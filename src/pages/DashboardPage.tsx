@@ -10,6 +10,7 @@ import {
   Database,
   MessageSquare,
   Minus,
+  Plus,
   RefreshCw,
   Shield,
   TrendingDown,
@@ -345,7 +346,7 @@ export default function DashboardPage() {
             size="sm"
             className="h-9 flex-1 gap-1.5 sm:flex-none"
           >
-            <MessageSquare size={14} /> New Query
+            <Plus size={14} /> New Query
           </Button>
         }
       />
