@@ -96,7 +96,7 @@ router.post("/signin", async (req, res) => {
     if (!valid)
       return res.status(401).json({ error: "Invalid credentials" });
 
-    const hydratedUser = await ensureUserPlan(db, user._id.toString());
+    const hydratedUser = (await ensureUserPlan(db, user._id.toString())) || user;
     const planContext = await getPlanContext(db, user._id.toString());
     const role = hydratedUser.role || "viewer";
 
@@ -112,20 +112,21 @@ router.post("/signin", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    const userId = user._id.toString();
     res.json({
       token,
       user: {
         name: hydratedUser.name,
         email: hydratedUser.email,
-        id: hydratedUser._id.toString(),
+        id: userId,
         role,
-        planTier: planContext.plan.tier,
-        planStatus: planContext.planOwner.planStatus || "active",
+        planTier: planContext?.plan?.tier || "free",
+        planStatus: planContext?.planOwner?.planStatus || "active",
         ownPlanTier: hydratedUser.planTier || "free",
-        organizationId: hydratedUser.organizationId,
-        organizationOwnerId: hydratedUser.organizationOwnerId,
-        planOwnerId: planContext.planOwner._id.toString(),
-        isPlanOwner: planContext.planOwner._id.toString() === hydratedUser._id.toString(),
+        organizationId: hydratedUser.organizationId || userId,
+        organizationOwnerId: hydratedUser.organizationOwnerId || userId,
+        planOwnerId: planContext?.planOwner?._id?.toString() || userId,
+        isPlanOwner: (planContext?.planOwner?._id?.toString() || userId) === userId,
       },
     });
     logAudit(user._id.toString(), user.email, "auth.login", { method: "password" }, "info");
@@ -249,7 +250,7 @@ router.post("/auth0-login", async (req, res) => {
       );
     }
 
-    const hydratedUser = await ensureUserPlan(db, user._id.toString());
+    const hydratedUser = (await ensureUserPlan(db, user._id.toString())) || user;
     const planContext = await getPlanContext(db, user._id.toString());
     const role = hydratedUser.role || "viewer";
 
@@ -259,27 +260,28 @@ router.post("/auth0-login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    const userId = user._id.toString();
     res.json({
       token,
       user: {
         name: hydratedUser.name,
         email: hydratedUser.email,
-        id: hydratedUser._id.toString(),
+        id: userId,
         role,
-        planTier: planContext.plan.tier,
-        planStatus: planContext.planOwner.planStatus || "active",
+        planTier: planContext?.plan?.tier || "free",
+        planStatus: planContext?.planOwner?.planStatus || "active",
         ownPlanTier: hydratedUser.planTier || "free",
-        organizationId: hydratedUser.organizationId,
-        organizationOwnerId: hydratedUser.organizationOwnerId,
-        planOwnerId: planContext.planOwner._id.toString(),
-        isPlanOwner: planContext.planOwner._id.toString() === hydratedUser._id.toString(),
+        organizationId: hydratedUser.organizationId || userId,
+        organizationOwnerId: hydratedUser.organizationOwnerId || userId,
+        planOwnerId: planContext?.planOwner?._id?.toString() || userId,
+        isPlanOwner: (planContext?.planOwner?._id?.toString() || userId) === userId,
       },
     });
     logAudit(user._id.toString(), user.email, "auth.login", { method: "auth0", provider: auth0User.sub?.split("|")[0] }, "info");
   } catch (err) {
     // The token already verified above; anything here is a server-side
     // (DB / plan / signing) failure and must NOT be reported as a token error.
-    console.error("auth0 login (post-verification) error:", err);
+    console.error("auth0 login (post-verification) error:", err?.message || err, err?.stack);
     res.status(500).json({ error: "Login failed. Please try again." });
   }
 });
