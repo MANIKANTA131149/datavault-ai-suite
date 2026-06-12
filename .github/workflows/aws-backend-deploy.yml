@@ -56,6 +56,8 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           # FRONTEND_URL can be added to secrets and mapped here if CORS is strict
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          # Optional: extra allowed CORS origins, comma-separated
+          CORS_EXTRA_ORIGINS: ${{ secrets.CORS_EXTRA_ORIGINS }}
           # Must equal the frontend's VITE_API_ENCRYPTION_KEY (used at build time)
           # or request-body decryption fails with "Invalid encrypted payload".
           API_ENCRYPTION_KEY: ${{ secrets.API_ENCRYPTION_KEY }}

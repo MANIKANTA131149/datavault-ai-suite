@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const mongoSanitize = require("express-mongo-sanitize");
 
 const authRoutes = require("./routes/auth");
 const datasetRoutes = require("./routes/datasets");
@@ -20,51 +23,117 @@ const analyticsRoutes = require("./routes/analytics");
 
 const app = express();
 
+// Behind API Gateway / Lambda the client IP arrives via X-Forwarded-For.
+// Required for rate limiting to key on the real IP, not the proxy's.
+app.set("trust proxy", 1);
+
+// ─── Security headers ─────────────────────────────────────────────────────────
+// CSP is disabled here because this Express app can also serve the SPA in
+// self-hosted mode; the API responses themselves are JSON.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
-// Allow localhost (dev) and any *.vercel.app domain (production)
+// Strict allowlist: production domains + FRONTEND_URL + localhost (dev).
+// Extra origins (e.g. an Amplify preview URL) via CORS_EXTRA_ORIGINS, comma-sep.
+const STATIC_ALLOWED_ORIGINS = new Set([
+  "https://querify.in",
+  "https://www.querify.in",
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/+$/, "")] : []),
+  ...(process.env.CORS_EXTRA_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
+]);
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true; // same-origin / curl / server-to-server (no CORS applies)
+  if (STATIC_ALLOWED_ORIGINS.has(origin.replace(/\/+$/, ""))) return true;
+  try {
+    const { hostname } = new URL(origin);
+    if (hostname === "localhost" || hostname === "127.0.0.1") return true; // dev
+  } catch { /* malformed origin header */ }
+  return false;
+}
+
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (
-        !origin ||
-        origin.includes("localhost") ||
-        origin.includes("127.0.0.1") ||
-        origin.includes(".vercel.app") ||
-        origin.includes(".amplifyapp.com") ||
-        (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL)
-      ) {
-        callback(null, true);
-      } else {
-        callback(null, true); // permissive — tighten if needed
-      }
-    },
+    origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
     credentials: true,
     exposedHeaders: ["x-encrypted-response"],
   })
 );
 
-app.use(express.json({ limit: "50mb" }));
+// ─── Body parsing ──────────────────────────────────────────────────────────────
+// 5mb default; only dataset uploads (workbook JSON) get the large limit.
+const stdJson = express.json({ limit: "5mb" });
+const bigJson = express.json({ limit: "50mb" });
+app.use((req, res, next) =>
+  /^\/(api\/)?datasets(\/|$)/.test(req.path) ? bigJson(req, res, next) : stdJson(req, res, next)
+);
 
 const encryptionMiddleware = require("./middleware/encryption");
 app.use(encryptionMiddleware);
 
+// Strip Mongo operators ($, .) from user input — blocks NoSQL operator
+// injection like {"email": {"$ne": null}} across every route.
+// MUST run after encryptionMiddleware: that's what produces the real
+// (decrypted) req.body; before it there is only the opaque payload blob.
+app.use(mongoSanitize());
+
+// ─── Rate limiting ─────────────────────────────────────────────────────────────
+// In-memory per Lambda container: not perfectly global, but it blunts
+// brute-force and floods at zero cost. Move to a Mongo/Redis store later.
+const rateLimitCommon = {
+  standardHeaders: true,
+  legacyHeaders: false,
+  // trust proxy is intentionally enabled (API Gateway); silence the validator.
+  validate: { trustProxy: false, xForwardedForHeader: false },
+};
+// Login/signup brute-force defense.
+const authLimiter = rateLimit({
+  ...rateLimitCommon,
+  windowMs: 60 * 1000,
+  limit: 10,
+  message: { error: "Too many attempts. Please wait a minute and try again." },
+});
+// Public deployed-chat endpoints spend the deployer's LLM quota unauthenticated.
+const publicChatLimiter = rateLimit({
+  ...rateLimitCommon,
+  windowMs: 60 * 1000,
+  limit: 30,
+  message: { error: "Too many requests. Please slow down." },
+});
+// Catch-all for the rest of the API.
+const apiLimiter = rateLimit({
+  ...rateLimitCommon,
+  windowMs: 60 * 1000,
+  limit: 300,
+  message: { error: "Too many requests. Please slow down." },
+});
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 function mountApiRoutes(basePath) {
-  app.use(`${basePath}/auth`, authRoutes);
-  app.use(`${basePath}/datasets`, datasetRoutes);
-  app.use(`${basePath}/history`, historyRoutes);
-  app.use(`${basePath}/settings`, settingsRoutes);
-  app.use(`${basePath}/insights`, insightsRoutes);
-  app.use(`${basePath}/plans`, planRoutes);
-  app.use(`${basePath}/admin`, adminRoutes);
-  app.use(`${basePath}/audit`, auditRoutes);
-  app.use(`${basePath}/notifications`, notificationsRoutes);
-  app.use(`${basePath}/llm`, llmRoutes);
-  app.use(`${basePath}/connections`, connectionsRoutes);
-  app.use(`${basePath}/db-query`, dbQueryRoutes);
-  app.use(`${basePath}/chat-memory`, chatMemoryRoutes);
-  app.use(`${basePath}/deployments`, deploymentsRoutes);
-  app.use(`${basePath}/analytics`, analyticsRoutes);
+  app.use(`${basePath}/auth`, authLimiter, authRoutes);
+  app.use(`${basePath}/datasets`, apiLimiter, datasetRoutes);
+  app.use(`${basePath}/history`, apiLimiter, historyRoutes);
+  app.use(`${basePath}/settings`, apiLimiter, settingsRoutes);
+  app.use(`${basePath}/insights`, apiLimiter, insightsRoutes);
+  app.use(`${basePath}/plans`, apiLimiter, planRoutes);
+  app.use(`${basePath}/admin`, apiLimiter, adminRoutes);
+  app.use(`${basePath}/audit`, apiLimiter, auditRoutes);
+  app.use(`${basePath}/notifications`, apiLimiter, notificationsRoutes);
+  app.use(`${basePath}/llm`, apiLimiter, llmRoutes);
+  app.use(`${basePath}/connections`, apiLimiter, connectionsRoutes);
+  app.use(`${basePath}/db-query`, apiLimiter, dbQueryRoutes);
+  app.use(`${basePath}/chat-memory`, apiLimiter, chatMemoryRoutes);
+  app.use(`${basePath}/deployments`, publicChatLimiter, deploymentsRoutes);
+  app.use(`${basePath}/analytics`, apiLimiter, analyticsRoutes);
 }
 
 // Primary API routes.

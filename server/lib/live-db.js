@@ -1,4 +1,5 @@
 const { MongoClient, ObjectId } = require("mongodb");
+const { assertPublicHost } = require("./net-guard");
 
 const MAX_DB_SCAN_ROWS = 10000;
 const configuredSchemaTableLimit = Number(process.env.DB_SCHEMA_TABLE_LIMIT || 1000);
@@ -1506,6 +1507,15 @@ async function createDuckDbAdapter(config) {
 }
 
 async function createAdapter(conn) {
+  // SSRF guard: user-supplied hosts must not point at private/internal
+  // addresses (AWS metadata endpoint, localhost, VPC ranges). Checks every
+  // host-bearing config field; no-op in local dev (see net-guard.js).
+  const cfg = conn.config || {};
+  for (const key of ["host", "hostname", "server", "url", "uri", "endpoint", "connectionString", "httpPath", "proxyHost"]) {
+    if (cfg[key] && typeof cfg[key] === "string") {
+      await assertPublicHost(cfg[key]);
+    }
+  }
   switch (conn.dbType) {
     case "postgresql":
     case "redshift":
