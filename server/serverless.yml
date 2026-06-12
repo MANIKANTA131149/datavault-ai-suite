@@ -28,6 +28,11 @@ provider:
     # Optional (only needed if Auth0 is enabled/configured)
     AUTH0_DOMAIN: ${env:AUTH0_DOMAIN, ""}
     AUTH0_CLIENT_SECRET: ${env:AUTH0_CLIENT_SECRET, ""}
+    # Admin AWS Bedrock credentials — used server-side for free-tier default models.
+    # Must be an IAM user with bedrock:InvokeModel on us-east-1.
+    VITE_AWS_ACCESS_KEY_ID: ${env:VITE_AWS_ACCESS_KEY_ID, ""}
+    VITE_AWS_SECRET_ACCESS_KEY: ${env:VITE_AWS_SECRET_ACCESS_KEY, ""}
+    VITE_AWS_REGION: ${env:VITE_AWS_REGION, "us-east-1"}
 
 package:
   patterns:
