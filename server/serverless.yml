@@ -12,6 +12,9 @@ provider:
     MONGODB_URI: ${env:MONGODB_URI}
     JWT_SECRET: ${env:JWT_SECRET}
     FRONTEND_URL: ${env:FRONTEND_URL}
+    # Optional: extra allowed CORS origins, comma-separated (e.g. an
+    # *.amplifyapp.com URL). querify.in + FRONTEND_URL are always allowed.
+    CORS_EXTRA_ORIGINS: ${env:CORS_EXTRA_ORIGINS, ""}
     # MUST exactly match the frontend's VITE_API_ENCRYPTION_KEY used at build time.
     # If it doesn't, the backend can't decrypt request bodies → "Invalid encrypted payload".
     # If left empty, both sides fall back to the same default key (works, but the key is public).
@@ -74,6 +77,9 @@ package:
 functions:
   api:
     handler: lambda.handler
+    # Cost guardrail: a traffic flood can never run more than this many
+    # concurrent Lambda executions (and so can't run up an unbounded bill).
+    reservedConcurrency: 50
     events:
       - httpApi:
           path: /api/{proxy+}
@@ -81,3 +87,14 @@ functions:
       - httpApi:
           path: /api
           method: any
+
+resources:
+  extensions:
+    # Edge rate limit: API Gateway rejects excess traffic before it ever
+    # reaches (and bills) the Lambda. App-level per-route limits live in
+    # server/app.js; this is the outer wall.
+    HttpApiStage:
+      Properties:
+        DefaultRouteSettings:
+          ThrottlingRateLimit: 50
+          ThrottlingBurstLimit: 100

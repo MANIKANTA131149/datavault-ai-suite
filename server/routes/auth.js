@@ -12,8 +12,13 @@ const router = express.Router();
 router.post("/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || !password)
+    // Strings only — objects here would be Mongo operator injection.
+    if (typeof name !== "string" || typeof email !== "string" || typeof password !== "string" || !name || !email || !password)
       return res.status(400).json({ error: "name, email and password are required" });
+    if (password.length < 8)
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      return res.status(400).json({ error: "Please enter a valid email address" });
 
     const db = await getDb();
     const existing = await db.collection("users").findOne({ email });
@@ -22,7 +27,7 @@ router.post("/signup", async (req, res) => {
 
     const role = "viewer";
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 12);
     const result = await db.collection("users").insertOne({
       name,
       email,
@@ -73,13 +78,15 @@ router.post("/signup", async (req, res) => {
 router.post("/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password)
+    // Strings only — objects here would be Mongo operator injection.
+    if (typeof email !== "string" || typeof password !== "string" || !email || !password)
       return res.status(400).json({ error: "email and password are required" });
 
     const db = await getDb();
     const user = await db.collection("users").findOne({ email });
+    // Generic message: never reveal whether the account exists.
     if (!user)
-      return res.status(404).json({ error: "Account does not exist" });
+      return res.status(401).json({ error: "Invalid credentials" });
 
     // Check if user is suspended
     if (user.status === "suspended")
