@@ -1548,12 +1548,94 @@ async function createAdapter(conn) {
   }
 }
 
+// ─── Adapter pooling + timeouts + circuit breaker (F18) ──────────────────────
+// Reuses live connections across warm Lambda invocations / Express requests
+// instead of reconnecting per call. Only protocols whose clients internally
+// queue queries are pooled; everything else keeps the connect-per-call path.
+// A circuit breaker disables a connection for 60s after 3 consecutive
+// failures so a dead database can't pile up hanging requests.
+
+const POOLABLE_DB_TYPES = new Set(["postgresql", "redshift", "mysql", "mariadb", "sqlserver"]);
+const ADAPTER_IDLE_TTL_MS = 5 * 60 * 1000;
+const DB_WORK_TIMEOUT_MS = Number(process.env.DB_QUERY_TIMEOUT_MS || 60_000);
+const BREAKER_THRESHOLD = 3;
+const BREAKER_COOLDOWN_MS = 60_000;
+
+const adapterCache = new Map(); // key -> { adapter, lastUsed }
+const breakerState = new Map(); // key -> { failures, openUntil }
+
+function adapterCacheKey(conn) {
+  const { createHash } = require("crypto");
+  return createHash("sha256")
+    .update(`${conn.dbType}::${JSON.stringify(conn.config || {})}`)
+    .digest("hex");
+}
+
+function sweepIdleAdapters() {
+  const now = Date.now();
+  for (const [key, entry] of adapterCache) {
+    if (now - entry.lastUsed > ADAPTER_IDLE_TTL_MS) {
+      adapterCache.delete(key);
+      Promise.resolve(entry.adapter.close?.()).catch(() => {});
+    }
+  }
+}
+
+function withWorkTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Database operation timed out after ${Math.round(ms / 1000)}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function withAdapter(conn, work) {
-  const adapter = await createAdapter(conn);
+  const poolable = POOLABLE_DB_TYPES.has(conn.dbType);
+  const key = poolable ? adapterCacheKey(conn) : null;
+
+  if (key) {
+    const breaker = breakerState.get(key);
+    if (breaker && breaker.openUntil > Date.now()) {
+      throw new Error("This connection was temporarily disabled after repeated failures. Try again in a minute.");
+    }
+  }
+
+  sweepIdleAdapters();
+
+  const cached = key ? adapterCache.get(key) : null;
+  const adapter = cached ? cached.adapter : await createAdapter(conn);
+
   try {
-    return await work(adapter);
-  } finally {
-    await adapter.close?.();
+    const result = await withWorkTimeout(Promise.resolve(work(adapter)), DB_WORK_TIMEOUT_MS);
+    if (key) {
+      breakerState.delete(key);
+      // Concurrent first calls can race to create two adapters: keep one,
+      // close the loser so its socket doesn't leak.
+      const existing = adapterCache.get(key);
+      if (existing && existing.adapter !== adapter) {
+        Promise.resolve(existing.adapter.close?.()).catch(() => {});
+      }
+      adapterCache.set(key, { adapter, lastUsed: Date.now() });
+    } else {
+      await adapter.close?.();
+    }
+    return result;
+  } catch (err) {
+    // Never reuse an adapter after a failure — the socket may be wedged.
+    if (key) {
+      adapterCache.delete(key);
+      const breaker = breakerState.get(key) || { failures: 0, openUntil: 0 };
+      breaker.failures += 1;
+      if (breaker.failures >= BREAKER_THRESHOLD) {
+        breaker.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
+        breaker.failures = 0;
+      }
+      breakerState.set(key, breaker);
+    }
+    Promise.resolve(adapter.close?.()).catch(() => {});
+    throw err;
   }
 }
 

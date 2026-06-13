@@ -17,6 +17,15 @@ function trimText(value, limit) {
   return value.length > limit ? value.slice(0, limit) : value;
 }
 
+// AWS Lambda hard-caps a response at 6 MB. A heavy user's full history (with
+// per-entry steps/finalResult inline) can blow past that, and the runtime then
+// rejects ITS OWN response with a 413 — which surfaces to the browser as a 500
+// with no CORS header. So we cap the row count AND enforce a response-size
+// budget, shedding the heavy trace fields from the oldest entries first while
+// keeping recent entries full (the trace view people actually open).
+const HISTORY_LIST_LIMIT = 500;
+const RESPONSE_BUDGET_BYTES = 4_500_000; // stay well under the 6 MB Lambda cap
+
 router.get("/", async (req, res) => {
   try {
     const db = await getDb();
@@ -24,10 +33,32 @@ router.get("/", async (req, res) => {
       .collection("history")
       .find({ userId: req.userId })
       .sort({ date: -1 })
-      .limit(10000)
+      .limit(HISTORY_LIST_LIMIT)
       .toArray();
 
-    res.json(entries.map(({ _id, ...rest }) => ({ id: rest.id ?? _id.toString(), ...rest })));
+    // Newest first; keep full detail until we approach the budget, then send a
+    // lightweight version (no steps / no finalResult) for the remaining (older)
+    // entries so the response always fits.
+    let runningBytes = 0;
+    let trimmed = 0;
+    const payload = entries.map(({ _id, ...rest }) => {
+      const id = rest.id ?? _id.toString();
+      const full = { id, ...rest };
+      const size = Buffer.byteLength(JSON.stringify(full));
+      if (runningBytes + size <= RESPONSE_BUDGET_BYTES) {
+        runningBytes += size;
+        return full;
+      }
+      // Over budget: strip the heavy fields from this (older) entry.
+      trimmed++;
+      const { steps, finalResult, ...light } = full;
+      return { ...light, steps: [], finalResult: null, traceTruncated: true };
+    });
+
+    if (trimmed > 0) {
+      console.warn(`history list for ${req.userId}: trimmed traces from ${trimmed}/${entries.length} entries to fit response budget`);
+    }
+    res.json(payload);
   } catch (err) {
     console.error("get history error:", err);
     res.status(500).json({ error: "Internal server error" });

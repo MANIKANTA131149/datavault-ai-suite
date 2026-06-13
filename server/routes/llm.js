@@ -519,3 +519,7 @@ router.post("/alibaba/chat", async (req, res) => {
 });
 
 module.exports = router;
+// Named exports so server-side features (public API, scheduler) can invoke
+// Bedrock with the platform's admin credentials without duplicating signing.
+module.exports.signedBedrockInvoke = signedBedrockInvoke;
+module.exports.buildBedrockPayload = buildBedrockPayload;

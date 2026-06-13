@@ -104,6 +104,42 @@ router.post("/", async (req, res) => {
       icon: "database",
       link: "/app/datasets",
     });
+
+    // PII scan (F17): detect columns containing personal data, store the map
+    // as metadata and warn the owner. Fire-and-forget — never blocks upload.
+    if (fileData) {
+      setImmediate(async () => {
+        try {
+          const { scanWorkbook } = require("../lib/pii-scanner");
+          const piiColumns = scanWorkbook(fileData);
+          const hasPii = Object.keys(piiColumns).length > 0;
+          const dbConn = await getDb();
+          await dbConn.collection("datasets").updateOne(
+            { _id: id, userId: req.userId },
+            { $set: { piiColumns, piiScannedAt: new Date().toISOString() } }
+          );
+          if (hasPii) {
+            const colCount = Object.values(piiColumns).reduce((n, cols) => n + Object.keys(cols).length, 0);
+            createNotification(dbConn, req.userId, {
+              type: "pii_detected",
+              title: "Personal data detected",
+              message: `"${fileName}" contains ${colCount} column${colCount === 1 ? "" : "s"} that look like personal data (emails, phones, IDs). Handle with care when sharing or deploying.`,
+              icon: "shield-alert",
+              link: "/app/datasets",
+            });
+            logAudit(req.userId, req.userEmail || "", "dataset.pii_detected", { id, fileName, piiColumns }, "warn");
+          }
+        } catch (scanErr) {
+          console.error("PII scan failed (non-fatal):", scanErr.message);
+        }
+      });
+    }
+
+    // Usage metering + lineage (F20/F12): fire-and-forget.
+    try {
+      const { recordUsage } = require("../lib/metering");
+      recordUsage({ userId: req.userId, eventType: "query_execution", units: 0, metadata: { kind: "dataset_upload", id, fileName } });
+    } catch { /* non-fatal */ }
   } catch (err) {
     if (err.code === 10334 || err.message?.includes("document too large")) {
       return res.status(413).json({ error: "File too large to store (MongoDB 16 MB limit exceeded). Dataset metadata was saved but file must be re-uploaded each session." });
@@ -177,6 +213,19 @@ router.post("/:id/duplicate", async (req, res) => {
     const { _id, fileData, ...rest } = copy;
     res.status(201).json({ id: _id, ...rest });
     logAudit(req.userId, req.userEmail || "", "dataset.duplicate", { sourceId: req.params.id, id: newId }, "info");
+    // Lineage (F12): duplicate is derived from its source dataset.
+    try {
+      const { recordLineage } = require("../lib/lineage");
+      recordLineage({
+        userId: req.userId,
+        sourceId: req.params.id,
+        sourceType: "dataset",
+        targetId: newId,
+        targetType: "dataset",
+        relation: "derived_from",
+        meta: { fileName: copy.fileName },
+      });
+    } catch { /* non-fatal */ }
   } catch (err) {
     console.error("duplicate dataset error:", err);
     res.status(500).json({ error: "Internal server error" });

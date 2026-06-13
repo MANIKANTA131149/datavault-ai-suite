@@ -61,6 +61,13 @@ async function incrementDailyUsage(db, userId, model, promptTokens, completionTo
     { upsert: true }
   );
 
+  // Usage metering (F20): mirror every token charge into the append-only
+  // usage_events ledger. Fire-and-forget — never blocks the LLM response.
+  try {
+    const { recordUsage } = require("./metering");
+    recordUsage({ userId, eventType: "llm_tokens", units: totalTokens, metadata: { model } });
+  } catch { /* non-fatal */ }
+
   return totalTokens;
 }
 

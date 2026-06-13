@@ -2,18 +2,23 @@ import { useEffect, useRef, useState, Suspense } from "react";
 import { useLocation, Outlet, Navigate, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  BookOpen,
   Bookmark,
   Cable,
   ChevronRight,
   Clock,
+  CreditCard,
   Database,
   LayoutDashboard,
+  LayoutPanelTop,
   Menu,
   MessageSquare,
   Moon,
+  MoreHorizontal,
   Search,
   Settings,
   Sun,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/AppSidebar";
@@ -43,17 +48,29 @@ const BREADCRUMBS: Record<string, string> = {
   "/app/query": "Query",
   "/app/history": "History",
   "/app/insights": "Insights",
+  "/app/automations": "Automations",
+  "/app/dashboards": "Reports",
+  "/app/glossary": "Glossary",
   "/app/admin": "Admin",
   "/app/settings": "Settings",
 };
 
+// Primary tabs shown directly in the bottom bar (5 = comfortable mobile max).
 const MOBILE_NAV_ITEMS = [
   { label: "Home",     icon: LayoutDashboard, path: "/app/dashboard" },
+  { label: "Data",     icon: Database,        path: "/app/datasets" },
   { label: "Query",    icon: MessageSquare,   path: "/app/query" },
-  // Insights — temporarily disabled, will release later
-  // { label: "Insights", icon: Bookmark,        path: "/app/insights" },
   { label: "History",  icon: Clock,           path: "/app/history" },
-  { label: "Settings", icon: Settings,        path: "/app/settings" },
+];
+
+// Everything else lives in a neat "More" sheet so the bar stays uncluttered.
+const MOBILE_MORE_ITEMS = [
+  { label: "Connections", icon: Cable,          path: "/app/connections" },
+  { label: "Reports",     icon: LayoutPanelTop, path: "/app/dashboards" },
+  { label: "Automations", icon: Zap,            path: "/app/automations" },
+  { label: "Glossary",    icon: BookOpen,       path: "/app/glossary" },
+  { label: "Pricing",     icon: CreditCard,     path: "/app/pricing" },
+  { label: "Settings",    icon: Settings,       path: "/app/settings" },
 ];
 
 // ─── Page Content Loader ──────────────────────────────────────────────────────
@@ -112,85 +129,143 @@ function PageProgressBar({ locationKey }: { locationKey: string }) {
 function MobileBottomNav() {
   const location = useLocation();
   const navigate  = useNavigate();
-  
-  // Smart route mapper to align adjacent pages and sub-routes with bottom navigation tabs
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // Map sub-routes/related pages onto the nearest primary tab so the indicator
+  // still highlights sensibly when you're on a page that isn't its own tab.
   const active = MOBILE_NAV_ITEMS.find((item) => {
     if (location.pathname === item.path) return true;
-    
-    // Align sub-routes and similar modules functionality-wise
-    if (item.path === "/app/dashboard") {
-      return location.pathname === "/app/get-started";
-    }
-    if (item.path === "/app/query") {
-      return (
-        location.pathname === "/app/history" ||
-        location.pathname === "/app/datasets" ||
-        location.pathname === "/app/connections"
-      );
-    }
-    if (item.path === "/app/settings") {
-      return (
-        location.pathname === "/app/pricing" ||
-        location.pathname.startsWith("/app/admin")
-      );
-    }
+    if (item.path === "/app/dashboard") return location.pathname === "/app/get-started";
+    if (item.path === "/app/data") return false;
     return false;
   });
 
-  return (
-    <nav
-      className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/50 bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_-8px_hsl(var(--foreground)/0.12)] backdrop-blur-2xl md:hidden"
-      aria-label="Mobile navigation"
-    >
-      <div
-        className="relative grid"
-        style={{ gridTemplateColumns: `repeat(${MOBILE_NAV_ITEMS.length}, minmax(0, 1fr))` }}
-      >
-        {/* Sliding top indicator */}
-        {active && (
-          <motion.div
-            layoutId="mobile-tab-pill"
-            className="pointer-events-none absolute top-0 left-0 h-[2px] rounded-b-full"
-            style={{
-              background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
-              width: `${100 / MOBILE_NAV_ITEMS.length}%`,
-              x: `${MOBILE_NAV_ITEMS.indexOf(active) * 100}%`,
-            }}
-            transition={{ type: "spring", stiffness: 420, damping: 38 }}
-          />
-        )}
+  // A "More" page is active when the current route lives in the More sheet.
+  const moreActive = MOBILE_MORE_ITEMS.some((m) =>
+    location.pathname === m.path || location.pathname.startsWith(m.path + "/"),
+  ) || location.pathname.startsWith("/app/admin");
 
-        {MOBILE_NAV_ITEMS.map(({ label, icon: Icon, path }) => {
-          const isActive = active?.path === path;
-          return (
-            <button
-              key={path}
-              type="button"
-              aria-label={label}
-              aria-current={isActive ? "page" : undefined}
-              onClick={() => navigate(path)}
-              className="flex flex-col items-center gap-1 px-1 py-2.5 text-[10px] font-medium transition-colors duration-150"
+  // 5 columns: 4 primary tabs + the More button.
+  const COLUMNS = MOBILE_NAV_ITEMS.length + 1;
+  const activeIndex = active ? MOBILE_NAV_ITEMS.indexOf(active) : moreActive ? MOBILE_NAV_ITEMS.length : -1;
+
+  const go = (path: string) => { setMoreOpen(false); navigate(path); };
+
+  return (
+    <>
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/50 bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_-8px_hsl(var(--foreground)/0.12)] backdrop-blur-2xl md:hidden"
+        aria-label="Mobile navigation"
+      >
+        <div
+          className="relative grid"
+          style={{ gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))` }}
+        >
+          {/* Sliding top indicator */}
+          {activeIndex >= 0 && (
+            <motion.div
+              layoutId="mobile-tab-pill"
+              className="pointer-events-none absolute top-0 left-0 h-[2px] rounded-b-full"
               style={{
-                color: isActive ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
-                opacity: isActive ? 1 : 0.65,
+                background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
+                width: `${100 / COLUMNS}%`,
+                x: `${activeIndex * 100}%`,
               }}
-            >
-              <motion.span
-                animate={isActive ? { scale: [1, 1.2, 1] } : { scale: 1 }}
-                transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-xl transition-colors duration-150",
-                  isActive ? "bg-primary/10" : "",
-                )}
-              >
-                <Icon size={17} strokeWidth={isActive ? 2.25 : 1.75} />
-              </motion.span>
-              <span className={cn("text-[10px]", isActive ? "font-semibold" : "font-medium")}>{label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+              transition={{ type: "spring", stiffness: 420, damping: 38 }}
+            />
+          )}
+
+          {MOBILE_NAV_ITEMS.map(({ label, icon: Icon, path }) => {
+            const isActive = active?.path === path;
+            return (
+              <NavTab key={path} label={label} icon={Icon} isActive={isActive} onClick={() => go(path)} />
+            );
+          })}
+
+          {/* More tab — opens a neat sheet with the remaining pages */}
+          <NavTab
+            label="More"
+            icon={MoreHorizontal}
+            isActive={moreActive || moreOpen}
+            onClick={() => setMoreOpen(true)}
+          />
+        </div>
+      </nav>
+
+      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+        <SheetContent
+          side="bottom"
+          className="rounded-t-2xl border-border bg-background pb-[calc(1rem+env(safe-area-inset-bottom))] md:hidden"
+        >
+          <SheetHeader className="text-left">
+            <SheetTitle className="text-base">More</SheetTitle>
+            <SheetDescription className="sr-only">Additional navigation</SheetDescription>
+          </SheetHeader>
+          <div className="mt-3 grid grid-cols-3 gap-2.5">
+            {MOBILE_MORE_ITEMS.map(({ label, icon: Icon, path }) => {
+              const isActive = location.pathname === path || location.pathname.startsWith(path + "/");
+              return (
+                <button
+                  key={path}
+                  type="button"
+                  onClick={() => go(path)}
+                  className={cn(
+                    "flex flex-col items-center justify-center gap-2 rounded-xl border px-2 py-4 text-xs font-medium transition-colors",
+                    isActive
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-border/60 bg-card/60 text-muted-foreground hover:border-primary/30 hover:text-foreground",
+                  )}
+                >
+                  <span className={cn(
+                    "flex h-10 w-10 items-center justify-center rounded-xl",
+                    isActive ? "bg-primary/15" : "bg-background-secondary",
+                  )}>
+                    <Icon size={19} strokeWidth={isActive ? 2.25 : 1.75} />
+                  </span>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+
+// Single bottom-bar tab button.
+function NavTab({
+  label, icon: Icon, isActive, onClick,
+}: {
+  label: string;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-current={isActive ? "page" : undefined}
+      onClick={onClick}
+      className="flex flex-col items-center gap-1 px-0.5 py-2.5 text-[10px] font-medium transition-colors duration-150"
+      style={{
+        color: isActive ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
+        opacity: isActive ? 1 : 0.65,
+      }}
+    >
+      <motion.span
+        animate={isActive ? { scale: [1, 1.2, 1] } : { scale: 1 }}
+        transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded-xl transition-colors duration-150",
+          isActive ? "bg-primary/10" : "",
+        )}
+      >
+        <Icon size={17} strokeWidth={isActive ? 2.25 : 1.75} />
+      </motion.span>
+      <span className={cn("max-w-full truncate text-[10px]", isActive ? "font-semibold" : "font-medium")}>{label}</span>
+    </button>
   );
 }
 

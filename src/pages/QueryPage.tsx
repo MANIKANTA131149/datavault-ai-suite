@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
 import { ShareCard } from "@/components/ShareCard";
+import { DashboardChatPreview, type ChatDashboard } from "@/components/dashboard/DashboardChatPreview";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -4152,7 +4153,7 @@ export default function QueryPage() {
     try {
       for await (const step of runSheetAgent(
         question, workbookSheets, selectedSheet, activeProvider, activeModel, actualApiKey, temperature, maxTokens,
-        systemPrompt || undefined, conversationContext, actualProviderOptions, hitlController
+        systemPrompt || undefined, conversationContext, actualProviderOptions, hitlController, selectedDatasetId
       )) {
         if (cancelRequestedRef.current) {
           steps.push({
@@ -4415,7 +4416,8 @@ export default function QueryPage() {
         systemPrompt || undefined,
         conversationContext,
         actualProviderOptions,
-        hitlController
+        hitlController,
+        selectedDatasetId
       );
     }
 
@@ -5130,7 +5132,9 @@ export default function QueryPage() {
                               </div>
                             </>
                           )}
-                          {finalStep && (
+                          {finalStep && finalStep.args?.kind === "dashboard_created" && finalStep.args?.dashboard ? (
+                            <DashboardChatPreview dashboard={finalStep.args.dashboard as ChatDashboard} />
+                          ) : finalStep && (
                             <InlineFinalResult
                               result={finalStep.result}
                               onSubmitQuickReply={(text) => {
@@ -5170,13 +5174,17 @@ export default function QueryPage() {
                     {/* During a live run, never render the clarification fallback as a
                         "Result" — the question is already shown by the HITL panel. */}
                     {currentFinalStep && currentFinalStep.command !== "HumanClarification" && !hitlState && (
-                      <InlineFinalResult
-                        result={currentFinalStep.result}
-                        onSubmitQuickReply={(text) => {
-                          handleSend(text);
-                        }}
-                        onOpenDetails={() => setShowResult(true)}
-                      />
+                      currentFinalStep.args?.kind === "dashboard_created" && currentFinalStep.args?.dashboard ? (
+                        <DashboardChatPreview dashboard={currentFinalStep.args.dashboard as ChatDashboard} />
+                      ) : (
+                        <InlineFinalResult
+                          result={currentFinalStep.result}
+                          onSubmitQuickReply={(text) => {
+                            handleSend(text);
+                          }}
+                          onOpenDetails={() => setShowResult(true)}
+                        />
+                      )
                     )}
 
                     <AnimatePresence mode="wait">
@@ -5219,7 +5227,9 @@ export default function QueryPage() {
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="shrink-0 border-t border-border/70 bg-background/90 px-2 py-2 backdrop-blur-sm sm:px-4 sm:py-3" style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}>
+              <div
+                className="shrink-0 border-t border-border/70 bg-background/90 px-2 py-2 backdrop-blur-sm sm:px-4 sm:py-3 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+              >
                 {isFreeUser && dailyTokens && (dailyTokens.tokensUsed >= 150000 || dailyTokens.queriesUsed >= 18) && (
                   <div className={`mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between ${
                     dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit

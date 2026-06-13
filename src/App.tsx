@@ -25,6 +25,9 @@ const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
 const ConnectionsPage = lazy(() => import("@/pages/ConnectionsPage"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const DeployedChatPage = lazy(() => import("@/pages/DeployedChatPage"));
+const AutomationsPage = lazy(() => import("@/pages/AutomationsPage"));
+const DashboardsViewerPage = lazy(() => import("@/pages/DashboardsViewerPage"));
+const GlossaryPage = lazy(() => import("@/pages/GlossaryPage"));
 
 function PageLoader() {
   return (
@@ -60,6 +63,9 @@ const App = () => (
               <Route path="connections" element={<ConnectionsPage />} />
               <Route path="query" element={<QueryPage />} />
               <Route path="history" element={<HistoryPage />} />
+              <Route path="automations" element={<AutomationsPage />} />
+              <Route path="dashboards" element={<DashboardsViewerPage />} />
+              <Route path="glossary" element={<GlossaryPage />} />
               {/* Insights — temporarily disabled, will release later */}
               {/* <Route path="insights" element={<InsightsPage />} /> */}
               <Route path="admin" element={<AdminPage />} />

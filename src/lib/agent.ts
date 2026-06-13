@@ -1,8 +1,13 @@
 import { callLLM, type Provider, type LLMProviderOptions, type LLMResponse } from "./llm-client";
 import { loadWorkbook, runSQL, buildSqlSchemaBlock, type RegisteredTable, type SqlResult } from "./sql-engine";
-import { buildMemoryBlock, recordClarification, recordSolvedExample } from "./agent-memory";
+import { buildMemoryBlock, recordClarification, recordSolvedExample, hydrateAgentMemory } from "./agent-memory";
 import type { SheetData } from "./file-parser";
 import { isClarificationAnswer, mergeClarificationOptions, isGreetingQuery } from "./clarification-options";
+import { buildGlossaryBlock } from "./glossary-client";
+import { detectAnomalies, formatObservations } from "./anomaly-detector";
+import { isQualityReportRequest, buildQualityReport, formatQualityReport } from "./data-quality";
+import { isDashboardRequest, buildDashboardFromQuestion } from "./dashboard-builder";
+import { detectMultiIntent, decomposeQuestion, synthesizeParts, rowsToMarkdownTable } from "./agent-orchestrator";
 
 export interface AgentStep {
   turn: number;
@@ -6231,6 +6236,10 @@ function buildSqlVerificationMessage(question: string, sql: string, result: SqlR
  * call sites can swap directly; falls back to runLegacyAgent when the SQL
  * engine is unavailable.
  */
+// Re-entrancy guard for multi-agent orchestration (F1): sub-questions run
+// through runSheetAgent again and must never re-decompose.
+let orchestrationDepth = 0;
+
 export async function* runSheetAgent(
   question: string,
   sheets: WorkbookSheets,
@@ -6243,12 +6252,32 @@ export async function* runSheetAgent(
   systemPromptOverride?: string,
   conversationHistory?: ConversationContext[],
   providerOptions: LLMProviderOptions = {},
-  hitlController?: HitlController
+  hitlController?: HitlController,
+  datasetId?: string | null
 ): AsyncGenerator<AgentStep> {
   // ── Engine init (lazy WASM load). Failure → legacy DSL agent, never a dead end.
   const workbookKey =
     Object.keys(sheets).sort().join("|") + "::" +
     Object.values(sheets).map((s) => s?.rows?.length ?? 0).join(",");
+
+  // ── Data quality report (F21): deterministic full-dataset profile, no LLM,
+  // no SQL engine needed. Answered instantly when explicitly requested.
+  if (isQualityReportRequest(question)) {
+    const startTime = Date.now();
+    const sheetName = sheets[selectedSheetName] ? selectedSheetName : Object.keys(sheets)[0];
+    const rows = sheets[sheetName]?.rows ?? [];
+    const report = buildQualityReport(sheetName, rows);
+    yield {
+      turn: 1,
+      command: "Answer",
+      args: { kind: "data_quality_report" },
+      result: formatQualityReport(report),
+      tokens: { input: 0, output: 0 },
+      durationMs: Date.now() - startTime,
+      isFinal: true,
+    };
+    return;
+  }
   let tables: RegisteredTable[];
   try {
     tables = await loadWorkbook(sheets, workbookKey);
@@ -6265,15 +6294,138 @@ export async function* runSheetAgent(
   const schemaBlock = buildSqlSchemaBlock(tables, sheets);
   const selectedTable = tables.find((t) => t.sheetName === selectedSheetName)?.tableName ?? tables[0].tableName;
 
+  const planningLlm = (messages: { role: string; content: string }[], systemPrompt: string) =>
+    callLLMWithRetry(provider, model, apiKey, messages, systemPrompt, temperature, Math.min(maxTokens, 1500), providerOptions);
+
+  // ── Conversational dashboard builder (F22): "build me a sales dashboard" →
+  // plan panels, verify every panel's SQL by executing it, persist, summarize.
+  // Planning failure falls through to the normal agent flow.
+  if (isDashboardRequest(question)) {
+    const startTime = Date.now();
+    yield {
+      turn: 1,
+      command: "PlanDashboard",
+      args: {},
+      result: "Designing dashboard panels and verifying their queries...",
+      tokens: { input: 0, output: 0 },
+      durationMs: 0,
+      isFinal: false,
+    };
+    // Dashboards need a larger output budget — 8-10 panels each with a SQL
+    // query won't fit in the default 1500-token planning cap.
+    const dashboardPlanningLlm = (messages: { role: string; content: string }[], systemPrompt: string) =>
+      callLLMWithRetry(provider, model, apiKey, messages, systemPrompt, temperature, Math.min(Math.max(maxTokens, 3500), 4096), providerOptions);
+
+    const built = await buildDashboardFromQuestion({
+      question,
+      schemaBlock,
+      selectedTable,
+      callLlm: dashboardPlanningLlm,
+      runSql: async (sql) => {
+        const r = await runSQL(sql);
+        if ((r as any)?.error) throw new Error(String((r as any).error));
+        return r as SqlResult;
+      },
+      sheetName: selectedSheetName,
+      datasetId: datasetId || null,
+    });
+    if (built) {
+      yield {
+        turn: 2,
+        command: "Answer",
+        args: {
+          kind: "dashboard_created",
+          dashboard: {
+            id: built.dashboardId,
+            name: built.name,
+            description: built.description,
+            panels: built.panels,
+          },
+        },
+        result: built.markdown,
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+        isFinal: true,
+      };
+      return;
+    }
+    // fall through: the normal agent still answers the question
+  }
+
+  // ── Multi-agent orchestration (F1): clearly enumerated multi-part questions
+  // are decomposed once, each part runs through this same verified pipeline,
+  // and one combined answer is synthesized. Anything ambiguous → normal flow.
+  if (orchestrationDepth === 0 && detectMultiIntent(question)) {
+    const subQuestions = await decomposeQuestion(question, schemaBlock, planningLlm).catch(() => null);
+    if (subQuestions && subQuestions.length >= 2) {
+      const startTime = Date.now();
+      yield {
+        turn: 1,
+        command: "PlanQuery",
+        args: { parts: subQuestions },
+        result: `Breaking this into ${subQuestions.length} parts:\n${subQuestions.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
+        tokens: { input: 0, output: 0 },
+        durationMs: 0,
+        isFinal: false,
+      };
+
+      const parts: { question: string; answerMarkdown: string }[] = [];
+      orchestrationDepth++;
+      try {
+        for (let i = 0; i < subQuestions.length; i++) {
+          const sub = subQuestions[i];
+          let answerMarkdown = "";
+          for await (const step of runSheetAgent(
+            sub, sheets, selectedSheetName, provider, model, apiKey, temperature, maxTokens,
+            systemPromptOverride, undefined, providerOptions, hitlController, datasetId
+          )) {
+            if (!step.isFinal) {
+              // Surface sub-agent progress in the timeline, namespaced per part.
+              yield { ...step, command: `Part${i + 1}:${step.command}`, isFinal: false };
+              continue;
+            }
+            const r = step.result;
+            if (typeof r === "string") answerMarkdown = r;
+            else if (r && typeof r === "object" && Array.isArray((r as any).rows)) {
+              const narrative = (r as any).narrative ? `${(r as any).narrative}\n\n` : "";
+              answerMarkdown = `${narrative}${rowsToMarkdownTable((r as any).rows)}`;
+            } else if (Array.isArray(r)) answerMarkdown = rowsToMarkdownTable(r as Record<string, unknown>[]);
+            else answerMarkdown = String(r ?? "");
+          }
+          parts.push({ question: sub, answerMarkdown });
+        }
+      } finally {
+        orchestrationDepth--;
+      }
+
+      yield {
+        turn: 2,
+        command: "Answer",
+        args: { kind: "orchestrated", parts: subQuestions },
+        result: synthesizeParts(parts),
+        tokens: { input: 0, output: 0 },
+        durationMs: Date.now() - startTime,
+        isFinal: true,
+      };
+      return;
+    }
+  }
+
   const introParts = [
     `Question: ${question}`,
     `Currently selected table: "${selectedTable}"`,
     `DATABASE SCHEMA:\n${schemaBlock}`,
   ];
   // Long-term memory: glossary of answered clarifications + verified SQL for
-  // similar past questions on this dataset (see agent-memory.ts).
+  // similar past questions on this dataset (see agent-memory.ts). Hydrate the
+  // server copy first (F2) so memory follows the user across devices.
+  await hydrateAgentMemory(workbookKey);
   const memoryBlock = buildMemoryBlock(workbookKey, question);
   if (memoryBlock) introParts.push(memoryBlock);
+  // Business glossary (F9): official team metric definitions for any term the
+  // question mentions. Best-effort — returns "" when offline or undefined.
+  const glossaryBlock = await buildGlossaryBlock(question).catch(() => "");
+  if (glossaryBlock) introParts.push(glossaryBlock);
   if (conversationHistory && conversationHistory.length > 0) {
     const recent = conversationHistory.slice(-3).map((entry, index) =>
       `Q${index + 1}: ${entry.question}\nA${index + 1}: ${typeof entry.answer === "string" ? entry.answer : JSON.stringify(entry.answer).slice(0, 300)}`
@@ -6297,6 +6449,13 @@ export async function* runSheetAgent(
     // Every result that reaches the user passed verification — remember it as
     // a few-shot example for future questions on this dataset.
     recordSolvedExample(workbookKey, question, sql);
+    // Proactive anomaly pass (F10): pure statistics over the result rows —
+    // outliers, sudden spikes, null clusters. Appended to the insight text;
+    // never alters the rows themselves.
+    try {
+      const observations = formatObservations(detectAnomalies(result.rows as Record<string, unknown>[]));
+      if (observations) narrative = (narrative || "").trim() + observations;
+    } catch { /* observations are best-effort */ }
     return {
       turn,
       command: "ExecuteFinalQuery",

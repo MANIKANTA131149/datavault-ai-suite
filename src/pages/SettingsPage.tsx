@@ -42,6 +42,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { PageHeader } from "@/components/PageHeader";
+import { ApiKeysManager } from "@/components/ApiKeysManager";
 import { cn } from "@/lib/utils";
 
 /* ─── Animation constants ─────────────────────────────────────────────────── */
@@ -257,6 +258,7 @@ export default function SettingsPage() {
           <TabsTrigger value="apikeys" className="flex items-center gap-2"><Cpu size={13} />Providers</TabsTrigger>
           <TabsTrigger value="appearance" className="flex items-center gap-2"><Palette size={13} />Appearance</TabsTrigger>
           <TabsTrigger value="billing" className="flex items-center gap-2"><CreditCard size={13} />Usage</TabsTrigger>
+          <TabsTrigger value="apiaccess" className="flex items-center gap-2"><Key size={13} />API Access</TabsTrigger>
         </TabsList>
 
         {/* ─── Profile ─────────────────────────────────────────────────────────── */}
@@ -797,6 +799,15 @@ export default function SettingsPage() {
               </div>
             </motion.div>
 
+          </motion.div>
+        </TabsContent>
+
+        {/* ─── API Access (public REST API keys) ───────────────────────────────── */}
+        <TabsContent value="apiaccess" className="mt-6">
+          <motion.div variants={stagger} initial="hidden" animate="visible">
+            <motion.div variants={fadeUp}>
+              <ApiKeysManager />
+            </motion.div>
           </motion.div>
         </TabsContent>
       </Tabs>

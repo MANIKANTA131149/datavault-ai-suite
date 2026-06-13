@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -810,7 +811,10 @@ function ConnectionDetailPanel({
 }) {
   const fields = getVisibleConfigFields(connection);
 
-  return (
+  // Portaled to <body>: the route wrapper is a transformed scroll container,
+  // which would otherwise capture this fixed panel and scroll/clip it with
+  // the page. The portal keeps it truly viewport-fixed and above the top bar.
+  return createPortal(
     <motion.div
       className="fixed inset-y-0 right-0 z-50 flex w-full max-w-full flex-col border-l border-border/55 bg-background-secondary shadow-[-24px_0_48px_-24px_hsl(var(--foreground)/0.25)] sm:max-w-xl"
       initial={{ x: "100%" }}
@@ -818,45 +822,39 @@ function ConnectionDetailPanel({
       exit={{ x: "100%" }}
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
-      <div className="flex items-start justify-between gap-3 border-b border-border p-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
-            <DbTypeIcon dbType={connection.dbType} size={18} className="text-primary/80" />
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
+            <DbTypeIcon dbType={connection.dbType} size={15} className="text-primary/80" />
           </div>
           <div className="min-w-0">
-            <h3 className="truncate font-semibold text-foreground">{connection.name}</h3>
-            <p className="text-xs text-muted-foreground">{DB_TYPE_LABELS[connection.dbType]} - {getConnectionCategory(connection.dbType)}</p>
-            <div className="mt-1 flex flex-wrap gap-1.5">
+            <h3 className="truncate text-sm font-semibold text-foreground">{connection.name}</h3>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="truncate text-[11px] text-muted-foreground">{DB_TYPE_LABELS[connection.dbType]}</p>
               <StatusBadge status={connection.status} />
-              <Badge variant="outline" className="border-border text-[10px]">
-                {DB_CONNECTION_TYPE_LABELS[DB_TYPE_CONNECTION_TYPE[connection.dbType]]}
-              </Badge>
             </div>
           </div>
         </div>
-        <button aria-label="Close connection details" title="Close" onClick={onClose} className="text-muted-foreground hover:text-foreground">
+        <button aria-label="Close connection details" title="Close" onClick={onClose} className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-card hover:text-foreground">
           <X size={18} />
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 p-4 pb-1 sm:grid-cols-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/50 px-4 py-2">
         {[
-          { label: "Status", value: STATUS_CFG[connection.status].label, icon: ShieldCheck },
-          { label: "Type", value: DB_TYPE_LABELS[connection.dbType], icon: Database },
-          { label: "Created", value: formatDate(connection.createdAt), icon: Calendar },
-          { label: "Tested", value: formatDate(connection.lastTestedAt), icon: TestTube2 },
+          { label: "type", value: DB_CONNECTION_TYPE_LABELS[DB_TYPE_CONNECTION_TYPE[connection.dbType]], icon: Database },
+          { label: "created", value: formatDate(connection.createdAt), icon: Calendar },
+          { label: "tested", value: formatDate(connection.lastTestedAt), icon: TestTube2 },
         ].map(({ label, value, icon: Icon }) => (
-          <div key={label} className="rounded-md border border-border bg-card p-2">
-            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Icon size={10} />
-              {label}
-            </div>
-            <p className="mt-1 truncate text-xs font-medium text-foreground" title={value}>{value}</p>
-          </div>
+          <span key={label} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Icon size={11} className="shrink-0" />
+            <span className="font-semibold text-foreground">{value}</span>
+            <span>{label}</span>
+          </span>
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2 border-b border-border p-4">
+      <div className="flex flex-wrap gap-2 px-4 py-2.5 border-b border-border">
         <Button size="sm" onClick={onQuery} disabled={connection.status !== "connected"}>
           <MessageSquare size={14} className="mr-2" />
           Open in Query
@@ -931,7 +929,8 @@ function ConnectionDetailPanel({
           </Card>
         )}
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }
 
