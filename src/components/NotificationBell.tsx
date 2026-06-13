@@ -115,6 +115,19 @@ export function NotificationBell() {
     if (open) fetchNotifications();
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live push (F6): refresh instantly when the server streams a notification
+  // (scheduled runs, alerts firing). Silently inert where SSE is unavailable —
+  // the open-on-click fetch above keeps working exactly as before.
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    import("@/lib/events-client")
+      .then(({ subscribeToServerEvents }) => {
+        unsubscribe = subscribeToServerEvents(() => fetchNotifications());
+      })
+      .catch(() => {});
+    return () => unsubscribe?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>

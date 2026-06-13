@@ -327,7 +327,10 @@ function HistoryEntryCard({
               {isFavorite && <Badge className="border-0 bg-warning/10 text-warning">Favorite</Badge>}
             </div>
 
-            <h3 className="mt-3 break-words text-lg font-semibold leading-7 text-foreground">
+            <h3
+              className="mt-2.5 line-clamp-2 break-words text-sm font-semibold leading-snug text-foreground sm:text-[15px]"
+              title={entry.query}
+            >
               {entry.query}
             </h3>
 

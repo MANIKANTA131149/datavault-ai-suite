@@ -96,6 +96,17 @@ functions:
           path: /api
           method: any
 
+  # Scheduled query engine + alert evaluator (F3/F11). Runs every 15 minutes;
+  # each tick executes due schedules and evaluates due alerts server-side.
+  scheduler:
+    handler: scheduler.handler
+    timeout: 120
+    memorySize: 512
+    events:
+      - schedule:
+          rate: rate(15 minutes)
+          enabled: true
+
 resources:
   extensions:
     # Edge rate limit: API Gateway rejects excess traffic before it ever

@@ -3,6 +3,7 @@ import { NavLink as RouterNavLink, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Bookmark,
+  BookOpen,
   Cable,
   ChevronLeft,
   ChevronRight,
@@ -11,9 +12,11 @@ import {
   CreditCard,
   Database,
   LayoutDashboard,
+  LayoutPanelTop,
   MessageSquare,
   Settings,
   Shield,
+  Zap,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -66,13 +69,16 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
       items: [
         { to: "/app/datasets",    icon: Database, label: "Datasets"    },
         { to: "/app/connections", icon: Cable,    label: "Connections" },
+        { to: "/app/glossary",    icon: BookOpen, label: "Glossary"    },
       ],
     },
     {
       label: "Analyze",
       items: [
-        { to: "/app/query",    icon: MessageSquare, label: "Query"    },
-        { to: "/app/history",  icon: Clock,         label: "History"  },
+        { to: "/app/query",       icon: MessageSquare,  label: "Query"       },
+        { to: "/app/history",     icon: Clock,          label: "History"     },
+        { to: "/app/dashboards",  icon: LayoutPanelTop, label: "Reports"     },
+        { to: "/app/automations", icon: Zap,            label: "Automations" },
         // Insights — temporarily disabled, will release later
         // { to: "/app/insights", icon: Bookmark,      label: "Insights" },
       ],

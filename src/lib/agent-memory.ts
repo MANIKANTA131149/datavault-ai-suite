@@ -11,6 +11,13 @@
 //      instead of re-deriving them. The agent gets better with every query.
 //
 // Retrieval is plain word-overlap ranking — deterministic, instant, offline.
+//
+// F2 — Cross-device persistence: localStorage stays the synchronous cache the
+// agent reads from, but every record is also pushed (fire-and-forget) to
+// MongoDB via /api/agent-memory, and hydrateAgentMemory() pulls the server
+// copy down before a run. Memory now survives new devices, browsers and
+// incognito sessions. All sync is best-effort: offline/unauthenticated users
+// keep the exact previous localStorage-only behavior.
 
 interface SolvedExample {
   question: string;
@@ -67,6 +74,67 @@ function saveMemory(datasetKey: string, mem: DatasetMemory): void {
   }
 }
 
+// ─── Server sync (F2) ─────────────────────────────────────────────────────────
+// Keyed by the same short hash used for localStorage so no dataset content
+// ever leaves the browser as part of the key.
+
+const hydratedKeys = new Set<string>(); // hydrate once per dataset per session
+let syncDisabled = false; // trips after a hard auth failure to stop retry spam
+
+async function pushMemoryToServer(datasetKey: string, mem: DatasetMemory): Promise<void> {
+  if (syncDisabled) return;
+  try {
+    const { api } = await import("@/lib/api-client");
+    await api.put(`/agent-memory/${storageKey(datasetKey).slice(STORAGE_PREFIX.length)}`, {
+      glossary: mem.glossary,
+      examples: mem.examples,
+    });
+  } catch (err) {
+    if (err instanceof Error && /unauthorized/i.test(err.message)) syncDisabled = true;
+    // Otherwise transient (offline, cold Lambda) — next record retries.
+  }
+}
+
+function mergeEntries<T extends { ts: number }>(
+  local: T[],
+  remote: T[],
+  keyOf: (e: T) => string,
+  cap: number
+): T[] {
+  const byKey = new Map<string, T>();
+  for (const e of [...local, ...remote]) {
+    const k = keyOf(e).trim().toLowerCase();
+    const prev = byKey.get(k);
+    if (!prev || (e.ts || 0) >= (prev.ts || 0)) byKey.set(k, e);
+  }
+  return [...byKey.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0)).slice(-cap);
+}
+
+/**
+ * Pull the server copy of this dataset's memory and merge it into the local
+ * cache. Call before an agent run; resolves fast (or instantly when already
+ * hydrated this session) and never throws.
+ */
+export async function hydrateAgentMemory(datasetKey: string): Promise<void> {
+  const key = storageKey(datasetKey).slice(STORAGE_PREFIX.length);
+  if (syncDisabled || hydratedKeys.has(key)) return;
+  hydratedKeys.add(key);
+  try {
+    const { api } = await import("@/lib/api-client");
+    const remote = await api.get<{ glossary: GlossaryEntry[]; examples: SolvedExample[] }>(
+      `/agent-memory/${key}`
+    );
+    if (!remote || (!remote.glossary?.length && !remote.examples?.length)) return;
+    const mem = loadMemory(datasetKey);
+    mem.glossary = mergeEntries(mem.glossary, remote.glossary || [], (g) => g.asked, MAX_GLOSSARY);
+    mem.examples = mergeEntries(mem.examples, remote.examples || [], (e) => e.question, MAX_EXAMPLES);
+    saveMemory(datasetKey, mem);
+  } catch (err) {
+    if (err instanceof Error && /unauthorized/i.test(err.message)) syncDisabled = true;
+    hydratedKeys.delete(key); // transient failure — allow a later retry
+  }
+}
+
 /** Remember a (question → verified SQL) pair for future few-shot retrieval. */
 export function recordSolvedExample(datasetKey: string, question: string, sql: string): void {
   const q = question.trim();
@@ -78,6 +146,7 @@ export function recordSolvedExample(datasetKey: string, question: string, sql: s
   mem.examples.push({ question: q.slice(0, 500), sql: s.slice(0, 2000), ts: Date.now() });
   if (mem.examples.length > MAX_EXAMPLES) mem.examples = mem.examples.slice(-MAX_EXAMPLES);
   saveMemory(datasetKey, mem);
+  void pushMemoryToServer(datasetKey, mem);
 }
 
 /** Remember a clarification the user answered so it is never asked again. */
@@ -91,6 +160,7 @@ export function recordClarification(datasetKey: string, asked: string, answer: s
   mem.glossary.push({ asked: a.slice(0, 300), answer: ans.slice(0, 300), ts: Date.now() });
   if (mem.glossary.length > MAX_GLOSSARY) mem.glossary = mem.glossary.slice(-MAX_GLOSSARY);
   saveMemory(datasetKey, mem);
+  void pushMemoryToServer(datasetKey, mem);
 }
 
 const STOPWORDS = new Set([

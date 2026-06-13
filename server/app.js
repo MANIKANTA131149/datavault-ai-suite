@@ -20,6 +20,18 @@ const dbQueryRoutes = require("./routes/db-query");
 const chatMemoryRoutes = require("./routes/chat-memory");
 const deploymentsRoutes = require("./routes/deployments");
 const analyticsRoutes = require("./routes/analytics");
+const orgsRoutes = require("./routes/orgs");
+const usageRoutes = require("./routes/usage");
+const agentMemoryRoutes = require("./routes/agent-memory");
+const glossaryRoutes = require("./routes/glossary");
+const lineageRoutes = require("./routes/lineage");
+const schedulesRoutes = require("./routes/schedules");
+const alertsRoutes = require("./routes/alerts");
+const apiKeysRoutes = require("./routes/api-keys");
+const apiV1Routes = require("./routes/api-v1");
+const dashboardsRoutes = require("./routes/dashboards");
+const embedRoutes = require("./routes/embed");
+const eventsRoutes = require("./routes/events");
 
 const app = express();
 
@@ -109,6 +121,14 @@ const publicChatLimiter = rateLimit({
   limit: 30,
   message: { error: "Too many requests. Please slow down." },
 });
+// Public REST API (key-authenticated): tighter than the app catch-all since
+// each call may trigger a server-side LLM invocation on platform credentials.
+const publicApiLimiter = rateLimit({
+  ...rateLimitCommon,
+  windowMs: 60 * 1000,
+  limit: 60,
+  message: { error: "API rate limit exceeded. Please slow down." },
+});
 // Catch-all for the rest of the API.
 const apiLimiter = rateLimit({
   ...rateLimitCommon,
@@ -134,6 +154,18 @@ function mountApiRoutes(basePath) {
   app.use(`${basePath}/chat-memory`, apiLimiter, chatMemoryRoutes);
   app.use(`${basePath}/deployments`, publicChatLimiter, deploymentsRoutes);
   app.use(`${basePath}/analytics`, apiLimiter, analyticsRoutes);
+  app.use(`${basePath}/orgs`, apiLimiter, orgsRoutes);
+  app.use(`${basePath}/usage`, apiLimiter, usageRoutes);
+  app.use(`${basePath}/agent-memory`, apiLimiter, agentMemoryRoutes);
+  app.use(`${basePath}/glossary`, apiLimiter, glossaryRoutes);
+  app.use(`${basePath}/lineage`, apiLimiter, lineageRoutes);
+  app.use(`${basePath}/schedules`, apiLimiter, schedulesRoutes);
+  app.use(`${basePath}/alerts`, apiLimiter, alertsRoutes);
+  app.use(`${basePath}/api-keys`, apiLimiter, apiKeysRoutes);
+  app.use(`${basePath}/v1`, publicApiLimiter, apiV1Routes);
+  app.use(`${basePath}/dashboards`, apiLimiter, dashboardsRoutes);
+  app.use(`${basePath}/embed`, publicChatLimiter, embedRoutes);
+  app.use(`${basePath}/events`, apiLimiter, eventsRoutes);
 }
 
 // Primary API routes.
