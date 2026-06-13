@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/AppSidebar";
+import { GuidedTour } from "@/components/GuidedTour";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { AccountMenu } from "@/components/AccountMenu";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -178,7 +179,7 @@ function MobileBottomNav() {
           {MOBILE_NAV_ITEMS.map(({ label, icon: Icon, path }) => {
             const isActive = active?.path === path;
             return (
-              <NavTab key={path} label={label} icon={Icon} isActive={isActive} onClick={() => go(path)} />
+              <NavTab key={path} label={label} icon={Icon} isActive={isActive} tourKey={`nav:${path}`} onClick={() => go(path)} />
             );
           })}
 
@@ -235,18 +236,20 @@ function MobileBottomNav() {
 
 // Single bottom-bar tab button.
 function NavTab({
-  label, icon: Icon, isActive, onClick,
+  label, icon: Icon, isActive, onClick, tourKey,
 }: {
   label: string;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
   isActive: boolean;
   onClick: () => void;
+  tourKey?: string;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
       aria-current={isActive ? "page" : undefined}
+      data-tour={tourKey}
       onClick={onClick}
       className="flex flex-col items-center gap-1 px-0.5 py-2.5 text-[10px] font-medium transition-colors duration-150"
       style={{
@@ -463,10 +466,14 @@ export default function AppLayout() {
               <AnimatePresence mode="wait">
                 <motion.div
                   key={location.pathname}
-                  initial={{ opacity: 0, y: 8 }}
+                  initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.16 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{
+                    duration: 0.34,
+                    ease: [0.22, 1, 0.36, 1],
+                    exit: { duration: 0.18, ease: [0.4, 0, 1, 1] },
+                  }}
                   className="flex-1 min-h-0 overflow-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0 [&:has(>[data-page=query])]:overflow-hidden [&:has(>[data-page=query])]:pb-0"
                 >
                   <Outlet />
@@ -478,6 +485,9 @@ export default function AppLayout() {
 
         <MobileBottomNav />
       </div>
+
+      {/* First-login interactive walkthrough (spotlight + auto-navigate) */}
+      <GuidedTour />
     </div>
   );
 }

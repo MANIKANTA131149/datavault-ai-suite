@@ -145,38 +145,52 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
           )}
         </div>
 
-        {/* Collapse toggle */}
-        {!mobile && (
-          <Tooltip delayDuration={0}>
+        {/* Collapse toggle — inline when expanded; a clean floating tab when collapsed */}
+        {!mobile && !isCollapsed && (
+          <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
               <motion.button
                 type="button"
-                aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                onClick={() => setCollapsed((v) => !v)}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
+                aria-label="Collapse sidebar"
+                onClick={() => setCollapsed(true)}
+                whileTap={{ scale: 0.92 }}
                 className={cn(
                   "flex h-6 w-6 items-center justify-center rounded-lg",
                   "border border-border/70 bg-background-secondary",
                   "text-muted-foreground shadow-sm",
-                  "transition-all duration-150 hover:border-border hover:bg-card hover:text-foreground",
-                  isCollapsed && "absolute -right-3 top-[18px] z-10 bg-background shadow-[0_2px_10px_-2px_hsl(var(--foreground)/0.18)]",
+                  "transition-colors duration-150 hover:border-border hover:bg-card hover:text-foreground",
                 )}
               >
-                <motion.span
-                  animate={{ rotate: isCollapsed ? 0 : 180 }}
-                  transition={{ duration: 0.2, ease: "easeInOut" }}
-                >
-                  {isCollapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
-                </motion.span>
+                <ChevronLeft size={13} />
               </motion.button>
             </TooltipTrigger>
-            <TooltipContent side="right">
-              {isCollapsed ? "Expand" : "Collapse"} sidebar
-            </TooltipContent>
+            <TooltipContent side="right" sideOffset={8}>Collapse sidebar</TooltipContent>
           </Tooltip>
         )}
       </div>
+
+      {/* Collapsed: a clean, centered expand button below the logo. Stays within
+          the 72px width (the aside is overflow-hidden, so nothing can hang off). */}
+      {!mobile && isCollapsed && (
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <motion.button
+              type="button"
+              aria-label="Expand sidebar"
+              onClick={() => setCollapsed(false)}
+              whileTap={{ scale: 0.92 }}
+              className={cn(
+                "mx-auto mt-2 flex h-7 w-7 items-center justify-center rounded-lg",
+                "border border-border/60 bg-background-secondary text-muted-foreground",
+                "transition-colors duration-150 hover:border-primary/40 hover:bg-card hover:text-foreground",
+              )}
+            >
+              <ChevronRight size={14} />
+            </motion.button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={10}>Expand sidebar</TooltipContent>
+        </Tooltip>
+      )}
 
       {/* Navigation */}
       <nav
@@ -213,6 +227,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                   <RouterNavLink
                     key={item.to}
                     to={item.to}
+                    data-tour={`nav:${item.to}`}
                     onClick={() => onNavigate?.()}
                     className={cn(
                       "group relative flex items-center rounded-xl px-2 py-1.5 text-[13px] font-medium",

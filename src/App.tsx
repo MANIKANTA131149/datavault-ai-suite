@@ -4,7 +4,6 @@ import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { PremiumToaster } from "@/lib/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CommandPalette } from "@/components/CommandPalette";
-import { OnboardingModal } from "@/components/OnboardingModal";
 import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
 import { Seo } from "@/components/Seo";
@@ -46,7 +45,6 @@ const App = () => (
       <BrowserRouter>
         <Seo />
         <CommandPalette />
-        <OnboardingModal />
         <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/" element={<Navigate to="/website" replace />} />
