@@ -5270,7 +5270,7 @@ export default function QueryPage() {
                     </Button>
                   </div>
                 )}
-                <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border/70 bg-card shadow-sm">
+                <div data-tour="query-composer" className="mx-auto w-full max-w-3xl rounded-2xl border border-border/70 bg-card shadow-sm">
                   {/* Listening waveforms overlay */}
                   {isListening && (
                     <div className="flex items-center justify-between px-4 py-3">
