@@ -31,7 +31,8 @@ export interface DashboardBuildResult {
 }
 
 const CHART_TYPES = new Set(["bar", "line", "area", "pie", "table", "metric"]);
-const MAX_PANELS = 10; // server allows 12; leave headroom
+const MAX_PANELS = 12; // matches the server's hard cap — use the full allowance
+const MAX_PLAN_CANDIDATES = 18; // consider extra candidates so dropped/duplicate panels don't shrink the result
 
 /** True when the question asks to build/create a dashboard. */
 export function isDashboardRequest(question: string): boolean {
@@ -147,27 +148,30 @@ export async function buildDashboardFromQuestion(opts: {
   const { question, schemaBlock, selectedTable, callLlm, runSql, sheetName, datasetId } = opts;
 
   const systemPrompt =
-    `You are a senior analytics engineer designing a RICH, COMPREHENSIVE dashboard. ` +
+    `You are a senior analytics engineer designing a RICH, COMPREHENSIVE, executive-grade dashboard. ` +
     `Reply with ONLY a JSON object:\n` +
     `{"name": "<dashboard name>", "description": "<one line>", "panels": [{"title": "<short>", "question": "<what it shows>", ` +
     `"sql": "<single DuckDB SELECT>", "chartType": "bar|line|area|pie|table|metric"}]}\n\n` +
-    `PANEL COUNT: produce 8 to 10 panels — be thorough, explore the data from many angles. Do NOT stop at a generic few.\n\n` +
-    `COVER THIS ANALYTICAL FRAMEWORK (adapt to whatever columns actually exist — skip what doesn't apply):\n` +
-    `  1. KPIs (2-4 "metric" panels): headline single numbers — total rows, total/sum of the main measure, distinct count of a key entity, average of a measure.\n` +
-    `  2. Distributions / breakdowns: counts or sums grouped by each important CATEGORICAL column (status, type, category, region, segment...).\n` +
-    `  3. Rankings (top-N): the biggest/most-frequent entities — top customers, products, applicants, etc. (GROUP BY + ORDER BY ... DESC + LIMIT 10).\n` +
-    `  4. Trends over time: if any date/time column exists, aggregate a measure by day/month/year (line or area).\n` +
-    `  5. Relationships / comparisons: a measure compared across two dimensions, or a detail table of the most important records.\n\n` +
-    `CHART VARIETY IS REQUIRED — use a deliberate MIX, do not make everything a bar chart:\n` +
+    `PANEL COUNT — BE GENEROUS AND DATA-DRIVEN: produce as many genuinely useful panels as the data supports, ` +
+    `targeting 12 to 16 candidate panels. The richer the schema (more columns, more categories, a date column), the MORE panels you should create. ` +
+    `Only a small/narrow dataset should have fewer. Never stop at a generic handful — keep finding new angles until you have explored every important column. ` +
+    `The best 12 are kept, so over-deliver rather than under-deliver.\n\n` +
+    `COVER THIS ANALYTICAL FRAMEWORK as fully as the columns allow (adapt to whatever actually exists — skip what doesn't apply, and add more of any category that the data rewards):\n` +
+    `  1. KPIs (3-5 "metric" panels): headline single numbers — total rows, total/sum of each main measure, distinct count of each key entity, average/median of a measure, min & max.\n` +
+    `  2. Distributions / breakdowns: counts or sums grouped by EACH important CATEGORICAL column (status, type, category, region, segment, channel...). Make one panel per meaningful category column.\n` +
+    `  3. Rankings (top-N): the biggest/most-frequent entities for several dimensions — top customers, products, applicants, locations, etc. (GROUP BY + ORDER BY ... DESC + LIMIT 10-15).\n` +
+    `  4. Trends over time: if any date/time column exists, aggregate measures by day AND by month/year (line or area); add a cumulative/running-total view when it makes sense.\n` +
+    `  5. Comparisons & relationships: a measure compared across two dimensions, share-of-total breakdowns, and an averages-by-category view.\n` +
+    `  6. Detail & outliers: a focused detail table of the most important records, and a "largest/smallest" outlier view.\n\n` +
+    `CHART VARIETY IS REQUIRED — use a deliberate MIX, never make everything one type. Aim for at least 5 of the 6 chart types across the dashboard:\n` +
     `  - "metric" → a single KPI number (SQL returns exactly one row, one column).\n` +
     `  - "line"/"area" → ONLY for time-ordered data (a date/time column on the x-axis).\n` +
     `  - "pie" → share-of-whole when there are FEW categories (<= 6 groups).\n` +
     `  - "bar" → rankings and distributions with several categories.\n` +
-    `  - "table" → multi-column detail listings or many-column results.\n` +
-    `Aim for at least 4 different chartTypes across the dashboard.\n\n` +
+    `  - "table" → multi-column detail listings or many-column results.\n\n` +
     `SQL RULES: each SQL is a SINGLE read-only SELECT against the schema below; quote column names with double quotes; ` +
     `the main table is "${selectedTable}". Aggregate sensibly (GROUP BY + ORDER BY + LIMIT for rankings; cap rankings at 10-15 rows). ` +
-    `Every panel must show something DIFFERENT — no two panels with the same SQL. No DDL/DML. No prose outside the JSON.\n\n` +
+    `Every panel must show something DIFFERENT — no two panels with the same SQL or the same grouping column. Keep each SQL compact so all panels fit in the response. No DDL/DML. No prose outside the JSON.\n\n` +
     `SCHEMA:\n${schemaBlock.slice(0, 6000)}`;
 
   let plan: any;
@@ -180,10 +184,13 @@ export async function buildDashboardFromQuestion(opts: {
   if (!plan || !Array.isArray(plan.panels) || plan.panels.length === 0) return null;
 
   // Verify every panel by executing its SQL; keep only working panels.
+  // Iterate over ALL planned candidates (capped for safety) and stop once we
+  // have a full set — so dropped/duplicate panels never shrink the dashboard
+  // below what the model actually produced.
   const verified: DashboardPreviewPanel[] = [];
   const failed: string[] = [];
   const seenSql = new Set<string>(); // drop duplicate panels (same SQL)
-  for (let i = 0; i < Math.min(plan.panels.length, 12); i++) {
+  for (let i = 0; i < Math.min(plan.panels.length, MAX_PLAN_CANDIDATES); i++) {
     if (verified.length >= MAX_PANELS) break;
     const p = plan.panels[i];
     const sql = String(p?.sql || "").trim();

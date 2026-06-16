@@ -9,6 +9,7 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "@clerk/backend": "^3.7.1",
     "@codegenie/serverless-express": "^4.14.1",
     "@databricks/sql": "^1.13.0",
     "@google-cloud/bigquery": "^8.3.0",

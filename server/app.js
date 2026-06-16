@@ -32,6 +32,7 @@ const apiV1Routes = require("./routes/api-v1");
 const dashboardsRoutes = require("./routes/dashboards");
 const embedRoutes = require("./routes/embed");
 const eventsRoutes = require("./routes/events");
+const clerkWebhookRoutes = require("./routes/clerk-webhook");
 
 const app = express();
 
@@ -167,6 +168,11 @@ function mountApiRoutes(basePath) {
   app.use(`${basePath}/embed`, publicChatLimiter, embedRoutes);
   app.use(`${basePath}/events`, apiLimiter, eventsRoutes);
 }
+
+// Clerk webhooks — must be mounted BEFORE general JSON body parsing touches the path.
+// The handler uses its own express.raw() to read the raw Buffer for signature verification.
+app.use("/api/webhooks/clerk", clerkWebhookRoutes);
+app.use("/webhooks/clerk", clerkWebhookRoutes);
 
 // Primary API routes.
 mountApiRoutes("/api");

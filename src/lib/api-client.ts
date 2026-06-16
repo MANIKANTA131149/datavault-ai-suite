@@ -4,6 +4,9 @@ const BASE_URL = getApiBaseUrl();
 
 let unauthorizedDispatched = false;
 
+// Reset after sign-in so the 401 guard fires again in the new session
+window.addEventListener("datavault:session-start", () => { unauthorizedDispatched = false; });
+
 /** Pull the JWT from the persisted auth store in localStorage */
 function getToken(): string | null {
   try {

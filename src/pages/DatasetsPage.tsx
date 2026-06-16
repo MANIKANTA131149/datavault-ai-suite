@@ -816,73 +816,114 @@ export default function DatasetsPage() {
         </div>
       )}
 
+      {/* ── Compact upload bar ──────────────────────────────────────────── */}
       <div
         {...getRootProps()}
-        className={`cursor-pointer rounded-[28px] border-2 border-dashed p-6 text-center transition-colors sm:p-8 ${
+        className={[
+          "cursor-pointer rounded-2xl border border-dashed transition-all duration-200",
           isDragActive
-            ? "border-primary bg-primary/8 shadow-[0_8px_28px_-12px_hsl(var(--primary)/0.35)]"
-            : "border-border/70 bg-card/70 hover:border-primary/30"
-        }`}
+            ? "border-primary bg-primary/8 shadow-[0_4px_20px_-8px_hsl(var(--primary)/0.35)] py-5"
+            : "border-border/60 bg-card/60 hover:border-primary/40 hover:bg-card/80 py-3",
+        ].join(" ")}
       >
         <input {...getInputProps()} />
         {parsing ? (
-          <div className="space-y-3">
-            <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin mx-auto" />
-            <p className="text-sm text-muted-foreground">Parsing file...</p>
+          <div className="flex items-center justify-center gap-2.5 px-4">
+            <div className="h-4 w-4 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+            <p className="text-sm text-muted-foreground">Parsing file…</p>
+          </div>
+        ) : isDragActive ? (
+          <div className="flex flex-col items-center gap-1.5 px-4 text-center">
+            <Upload size={22} className="text-primary" />
+            <p className="text-sm font-medium text-primary">Drop to upload</p>
           </div>
         ) : (
-          <>
-            <Upload size={32} className="mx-auto text-muted-foreground/50 mb-3" />
-            <p className="text-sm text-foreground font-medium">Drop CSV or Excel files here, or click to browse</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Supports .csv, .xlsx, .xls · {fileSizeLimitLabel}
-            </p>
-            <div className="mt-3 flex flex-wrap justify-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Upload size={13} className="text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground leading-snug">Drop files or <span className="text-primary underline underline-offset-2 decoration-primary/40">click to browse</span></p>
+                <p className="text-[11px] text-muted-foreground leading-none mt-0.5">{fileSizeLimitLabel} per file</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
               {["CSV", "XLSX", "XLS"].map((t) => (
-                <Badge key={t} variant="outline" className="border-border text-xs text-muted-foreground">{t}</Badge>
+                <span key={t} className="rounded-md border border-border/60 bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{t}</span>
               ))}
             </div>
-          </>
+          </div>
         )}
       </div>
 
-      {uploadQueue.length > 0 && (
-        <Card className="p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-foreground">Upload queue</p>
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setUploadQueue((prev) => prev.filter((item) => item.status === "uploading"))}>
-              Clear finished
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {uploadQueue.map((item) => (
-              <div key={item.id} className="rounded-md border border-border bg-card p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-foreground">{item.file.name}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {item.status === "queued" && "Queued"}
-                      {item.status === "uploading" && "Importing"}
-                      {item.status === "done" && "Uploaded"}
-                      {item.status === "failed" && (item.error || "Failed")}
-                      {item.status === "duplicate" && "Duplicate filename detected"}
-                    </p>
+      {/* ── Upload queue — fixed bottom-right toast panel ────────────────── */}
+      <AnimatePresence>
+        {uploadQueue.length > 0 && createPortal(
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="fixed bottom-4 right-4 z-50 w-[min(340px,calc(100vw-2rem))] rounded-2xl border border-border bg-card shadow-[0_8px_32px_-8px_hsl(var(--foreground)/0.18)] backdrop-blur-sm"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+              <div className="flex items-center gap-1.5">
+                <Upload size={12} className="text-primary" />
+                <p className="text-xs font-semibold text-foreground">Uploads</p>
+                <span className="status-badge-neutral tabular-nums">{uploadQueue.length}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUploadQueue((prev) => prev.filter((item) => item.status === "uploading"))}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear done
+              </button>
+            </div>
+            <div className="max-h-[260px] overflow-y-auto divide-y divide-border/40 px-0">
+              {uploadQueue.map((item) => (
+                <div key={item.id} className="flex items-center gap-2.5 px-3 py-2">
+                  <div className="shrink-0">
+                    {item.status === "done" && <CheckCircle2 size={14} className="text-success" />}
+                    {item.status === "uploading" && <div className="h-3.5 w-3.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />}
+                    {item.status === "queued" && <div className="h-3.5 w-3.5 rounded-full border-2 border-muted-foreground/40 border-t-transparent animate-spin" />}
+                    {(item.status === "failed" || item.status === "duplicate") && <AlertTriangle size={14} className="text-warning" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-foreground leading-snug">{item.file.name}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted/60">
+                        <div
+                          className={[
+                            "h-1 rounded-full transition-all duration-300",
+                            item.status === "done" ? "bg-success" : item.status === "failed" || item.status === "duplicate" ? "bg-warning" : "bg-primary",
+                          ].join(" ")}
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{item.progress}%</span>
+                    </div>
+                    {(item.status === "failed" || item.status === "duplicate") && item.error && (
+                      <p className="mt-0.5 text-[10px] leading-snug text-warning line-clamp-1">{item.error}</p>
+                    )}
                   </div>
                   {(item.status === "failed" || item.status === "duplicate") && (
-                    <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={() => retryUpload(item)}>
-                      <RotateCcw size={12} className="mr-1" /> Retry
-                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => retryUpload(item)}
+                      className="shrink-0 rounded-lg border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:border-border/80 transition-colors"
+                    >
+                      Retry
+                    </button>
                   )}
-                  {item.status === "done" && <CheckCircle2 size={15} className="text-success" />}
-                  {item.status === "uploading" && <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />}
-                  {(item.status === "failed" || item.status === "duplicate") && <AlertTriangle size={15} className="text-warning" />}
                 </div>
-                <Progress value={item.progress} className="mt-2 h-1.5" />
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+              ))}
+            </div>
+          </motion.div>,
+          document.body
+        )}
+      </AnimatePresence>
 
       {datasets.length > 0 && (
         <FilterToolbar
@@ -1086,51 +1127,6 @@ export default function DatasetsPage() {
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
-                          aria-label="Copy dataset name"
-                          title="Copy dataset name"
-                          onClick={(event) => { event.stopPropagation(); copyDatasetName(ds.fileName); }}
-                          className="p-1.5 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
-                        >
-                          <Copy size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Duplicate dataset"
-                          title="Duplicate dataset"
-                          onClick={(event) => { event.stopPropagation(); handleDuplicateDataset(ds); }}
-                          className="p-1.5 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
-                        >
-                          <Copy size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Edit dataset details"
-                          title="Edit dataset details"
-                          onClick={(event) => { event.stopPropagation(); openEditDataset(ds); }}
-                          className="p-1.5 rounded hover:bg-background-secondary text-muted-foreground hover:text-foreground"
-                        >
-                          <Pencil size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Pin dataset"
-                          title="Pin dataset"
-                          onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { pinned: !meta.pinned }); }}
-                          className={`p-1.5 rounded hover:bg-background-secondary ${meta.pinned ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          <Pin size={13} fill={meta.pinned ? "currentColor" : "none"} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Favorite dataset"
-                          title="Favorite dataset"
-                          onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { favorite: !meta.favorite }); }}
-                          className={`p-1.5 rounded hover:bg-background-secondary ${meta.favorite ? "text-warning" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          <Star size={13} fill={meta.favorite ? "currentColor" : "none"} />
-                        </button>
-                        <button
-                          type="button"
                           aria-label="Delete dataset"
                           title="Delete dataset"
                           onClick={(event) => { event.stopPropagation(); handleAttemptDeleteDataset(ds); }}
@@ -1149,7 +1145,7 @@ export default function DatasetsPage() {
         </div>
       ) : (
         <motion.div
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
           variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
           initial="hidden"
           animate="visible"
@@ -1177,51 +1173,6 @@ export default function DatasetsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        aria-label="Copy dataset name"
-                        title="Copy dataset name"
-                        onClick={(event) => { event.stopPropagation(); copyDatasetName(ds.fileName); }}
-                        className="reveal-actions p-1 text-muted-foreground hover:bg-card hover:text-foreground"
-                      >
-                        <Copy size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Duplicate dataset"
-                        title="Duplicate dataset"
-                        onClick={(event) => { event.stopPropagation(); handleDuplicateDataset(ds); }}
-                        className="reveal-actions p-1 text-muted-foreground hover:bg-card hover:text-foreground"
-                      >
-                        <Copy size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Edit dataset details"
-                        title="Edit dataset details"
-                        onClick={(event) => { event.stopPropagation(); openEditDataset(ds); }}
-                        className="reveal-actions p-1 text-muted-foreground hover:bg-card hover:text-foreground"
-                      >
-                        <Pencil size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Pin dataset"
-                        title="Pin dataset"
-                        onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { pinned: !meta.pinned }); }}
-                        className={`reveal-actions p-1 hover:bg-card ${meta.pinned ? "text-primary opacity-100" : "text-muted-foreground hover:text-foreground"}`}
-                      >
-                        <Pin size={12} fill={meta.pinned ? "currentColor" : "none"} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Favorite dataset"
-                        title="Favorite dataset"
-                        onClick={(event) => { event.stopPropagation(); patchMeta(ds.id, { favorite: !meta.favorite }); }}
-                        className={`reveal-actions p-1 hover:bg-card ${meta.favorite ? "text-warning opacity-100" : "text-muted-foreground hover:text-foreground"}`}
-                      >
-                        <Star size={12} fill={meta.favorite ? "currentColor" : "none"} />
-                      </button>
                       <button
                         type="button"
                         aria-label="Delete dataset"

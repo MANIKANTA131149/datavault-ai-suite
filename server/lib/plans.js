@@ -163,12 +163,8 @@ function canUseMetric(plan, metric, usageValue, attempted = 1) {
 }
 
 async function getUserById(db, userId) {
-  const { ObjectId } = require("mongodb");
-  try {
-    return await db.collection("users").findOne({ _id: new ObjectId(userId) });
-  } catch {
-    return await db.collection("users").findOne({ _id: userId });
-  }
+  // Users are keyed by Clerk ID strings (e.g. user_abc123), not ObjectIds
+  return await db.collection("users").findOne({ _id: userId });
 }
 
 async function ensureUserPlan(db, userId, actorId = "system") {

@@ -57,8 +57,9 @@ export function DashboardChatPreview({ dashboard }: { dashboard: ChatDashboard }
         )}
       </div>
 
-      {/* Panels grid — responsive, equal width, natural heights */}
-      <div className="grid grid-cols-1 items-start gap-3 p-3 sm:grid-cols-2 sm:p-4 xl:grid-cols-3">
+      {/* Panels grid — responsive across every breakpoint, equal width, natural heights.
+          1 col on phones → 2 on small tablets → 3 on laptops → 4 on ultrawide. */}
+      <div className="grid grid-cols-1 items-start gap-3 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 2xl:grid-cols-4">
         {panels.map((panel, idx) => {
           const TypeIcon = CHART_TYPE_ICON[panel.chartType] ?? Hash;
           return (

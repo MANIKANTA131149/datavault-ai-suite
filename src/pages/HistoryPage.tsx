@@ -833,16 +833,11 @@ export default function HistoryPage() {
         >
           {Object.entries(grouped).map(([group, groupEntries]) => (
             <section key={group} className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{group}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {groupEntries.length} quer{groupEntries.length === 1 ? "y" : "ies"} on this page
-                  </p>
-                </div>
-                <Badge variant="outline" className="border-border bg-card text-xs text-foreground">
-                  {groupEntries.length}
-                </Badge>
+              <div className="divider-label">
+                {group}
+                <span className="status-badge-neutral shrink-0">
+                  {groupEntries.length} {groupEntries.length === 1 ? "query" : "queries"}
+                </span>
               </div>
 
               <div className="space-y-3">

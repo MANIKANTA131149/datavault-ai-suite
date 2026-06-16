@@ -1,8 +1,11 @@
 const express = require("express");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const { verifyToken } = require("@clerk/backend");
 const { getDb } = require("../db");
 const { authMiddleware, JWT_SECRET } = require("../middleware/auth");
+
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
 const {
   getCurrentDailyUsage,
   incrementDailyUsage,
@@ -320,15 +323,20 @@ router.post("/huggingface/chat", async (req, res) => {
   }
 });
 
-function getOptionalUserId(req) {
+// Optional auth: returns the Clerk user id when a valid Clerk session token is
+// present, else null. Auth migrated to Clerk, so this verifies the token the
+// same way authMiddleware does (Clerk `verifyToken`, user id in `sub`) instead
+// of the legacy custom JWT — a Clerk token never validated against JWT_SECRET,
+// which previously caused a false 401 on free-tier Bedrock daily-limit checks.
+async function getOptionalUserId(req) {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.split(" ")[1];
     try {
-      const payload = jwt.verify(token, JWT_SECRET);
-      return payload.userId;
+      const payload = await verifyToken(token, { secretKey: CLERK_SECRET_KEY });
+      return payload.sub;
     } catch (e) {
-      // Ignore token decode errors
+      // Ignore token verification errors — this check is optional.
     }
   }
   return null;
@@ -371,7 +379,7 @@ router.post("/bedrock/chat", async (req, res) => {
 
   try {
     const db = await getDb();
-    userId = getOptionalUserId(req);
+    userId = await getOptionalUserId(req);
     if (userId) {
       const planContext = await getPlanContext(db, userId);
       if (planContext && planContext.plan.tier !== "free") {

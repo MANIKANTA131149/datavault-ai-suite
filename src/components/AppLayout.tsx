@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useLocation, Outlet, Navigate, useNavigate } from "react-router-dom";
+import { useAuth } from "@clerk/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BookOpen,
@@ -23,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/AppSidebar";
 import { GuidedTour } from "@/components/GuidedTour";
+import { KeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { AccountMenu } from "@/components/AccountMenu";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -37,9 +39,11 @@ import { usePlanStore } from "@/stores/plan-store";
 import { useNotificationsStore } from "@/stores/notifications-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { useCommandStore } from "@/stores/command-store";
+import { PlanBanner } from "@/components/PlanBanner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
+import { getApiBaseUrl } from "@/lib/api-base";
 
 const BREADCRUMBS: Record<string, string> = {
   "/app/get-started": "Get Started",
@@ -251,18 +255,17 @@ function NavTab({
       aria-current={isActive ? "page" : undefined}
       data-tour={tourKey}
       onClick={onClick}
-      className="flex flex-col items-center gap-1 px-0.5 py-2.5 text-[10px] font-medium transition-colors duration-150"
-      style={{
-        color: isActive ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
-        opacity: isActive ? 1 : 0.65,
-      }}
+      className={cn(
+        "group/tab flex flex-col items-center gap-1 px-0.5 py-2.5 text-[10px] font-medium transition-colors duration-150 focus-ring rounded-lg",
+        isActive ? "text-primary opacity-100" : "text-muted-foreground opacity-60",
+      )}
     >
       <motion.span
         animate={isActive ? { scale: [1, 1.2, 1] } : { scale: 1 }}
         transition={{ duration: 0.25, ease: [0.34, 1.56, 0.64, 1] }}
         className={cn(
           "flex h-8 w-8 items-center justify-center rounded-xl transition-colors duration-150",
-          isActive ? "bg-primary/10" : "",
+          isActive ? "bg-primary/10" : "bg-transparent group-hover/tab:bg-muted/40",
         )}
       >
         <Icon size={17} strokeWidth={isActive ? 2.25 : 1.75} />
@@ -274,6 +277,7 @@ function NavTab({
 
 // ─── AppLayout ────────────────────────────────────────────────────────────────
 export default function AppLayout() {
+  const { isLoaded: clerkLoaded, isSignedIn } = useAuth();
   const { user, hasHydrated, hydrateRole, logout } = useAuthStore();
   const location                       = useLocation();
   const navigate                       = useNavigate();
@@ -287,6 +291,9 @@ export default function AppLayout() {
   const { setOpen: openCommand }       = useCommandStore();
   const [sidebarOpen, setSidebarOpen]  = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
+  const [dailyTokens, setDailyTokens] = useState<{
+    tokensUsed: number; limit: number; queriesUsed: number; queryLimit: number; percentage: number;
+  } | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -304,10 +311,20 @@ export default function AppLayout() {
           hydrateRole(),
         ]);
         if (!cancelled) setBootstrapping(false);
+        // Fetch daily token usage for free-tier users (used by PlanBanner)
+        if (!cancelled && user?.planTier === "free") {
+          try {
+            const token = useAuthStore.getState().token;
+            if (token) {
+              const res = await fetch(`${getApiBaseUrl()}/llm/token-usage`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (res.ok) setDailyTokens(await res.json());
+            }
+          } catch { /* non-fatal */ }
+        }
       })();
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     } else {
       applyTheme(theme);
     }
@@ -330,7 +347,10 @@ export default function AppLayout() {
     return () => window.removeEventListener("datavault:unauthorized", handler);
   }, [logout, navigate]);
 
-  if (!hasHydrated) {
+  // Wait for both Clerk session check AND Zustand hydration before deciding auth state.
+  // Without this, AppLayout redirects to /auth while ClerkAuthBridge is still fetching
+  // /auth/me, causing a redirect loop (Clerk session exists but store isn't populated yet).
+  if (!clerkLoaded || !hasHydrated || (isSignedIn && !user)) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
@@ -387,38 +407,38 @@ export default function AppLayout() {
 
         <header className="relative shrink-0 border-b border-border/50 bg-background/80 backdrop-blur-xl">
           <PageProgressBar locationKey={location.pathname} />
-          <div className="flex min-h-14 items-center justify-between gap-3 px-4 sm:px-6">
-            <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-h-14 items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6">
+            <div className="flex min-w-0 items-center gap-2 sm:gap-2.5">
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="md:hidden"
+                className="h-8 w-8 shrink-0 rounded-lg md:hidden focus-ring"
                 aria-label="Open navigation menu"
                 onClick={() => setSidebarOpen(true)}
               >
-                <Menu size={18} />
+                <Menu size={17} />
               </Button>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-xs sm:text-sm">
-                  <span className="shrink-0 rounded-md border border-primary/20 bg-primary/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary sm:text-[11px]">
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 rounded-md border border-primary/20 bg-primary/8 px-2 py-0.5 type-caption font-semibold uppercase tracking-[0.16em] text-primary">
                     Querify
                   </span>
-                  <ChevronRight size={13} className="shrink-0 text-muted-foreground/40" />
-                  <span className="truncate font-medium text-foreground">
+                  <ChevronRight size={12} className="shrink-0 text-muted-foreground/40" />
+                  <span className="truncate type-body-sm font-medium text-foreground">
                     {BREADCRUMBS[location.pathname] || "Page"}
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               {/* Cmd+K search trigger */}
               <button
                 type="button"
                 aria-label="Open command palette"
                 onClick={() => openCommand(true)}
-                className="hidden items-center gap-2 rounded-lg border border-border/45 bg-background/50 px-2.5 py-1.5 text-[12px] text-muted-foreground/70 transition-colors hover:border-border/70 hover:bg-background/80 hover:text-muted-foreground sm:flex"
+                className="focus-ring hidden items-center gap-2 rounded-lg border border-border/45 bg-background/50 px-2.5 py-1.5 text-[12px] text-muted-foreground/70 transition-colors hover:border-border/70 hover:bg-background/80 hover:text-muted-foreground sm:flex"
               >
                 <Search size={12} className="shrink-0" />
                 <span className="hidden lg:inline">Search</span>
@@ -432,7 +452,7 @@ export default function AppLayout() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-card/80 hover:text-foreground"
+                className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-card/80 hover:text-foreground focus-ring"
                 aria-label={theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "Switch to light mode" : "Switch to dark mode"}
                 onClick={async () => {
                   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -450,7 +470,7 @@ export default function AppLayout() {
                   <button
                     type="button"
                     aria-label="Open account menu"
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/40 hover:bg-primary/15 hover:shadow-[0_0_12px_-2px_hsl(var(--primary)/0.3)]"
+                    className="focus-ring flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-xs font-semibold text-primary transition-all duration-150 hover:border-primary/40 hover:bg-primary/15 hover:shadow-[0_0_12px_-2px_hsl(var(--primary)/0.3)]"
                   >
                     {user.avatarInitials}
                   </button>
@@ -459,6 +479,9 @@ export default function AppLayout() {
             </div>
           </div>
         </header>
+
+        {/* Plan limit warning banner */}
+        <PlanBanner dailyTokens={dailyTokens} />
 
         <main className="relative min-h-0 flex-1 overflow-hidden flex flex-col">
           <RouteErrorBoundary resetKey={location.pathname}>
@@ -488,6 +511,9 @@ export default function AppLayout() {
 
       {/* First-login interactive walkthrough (spotlight + auto-navigate) */}
       <GuidedTour />
+
+      {/* Global keyboard-shortcuts reference (opens with "?") */}
+      <KeyboardShortcutsModal />
     </div>
   );
 }

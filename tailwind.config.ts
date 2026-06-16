@@ -94,6 +94,22 @@ export default {
         "card-xl": "0 24px 60px -18px hsl(var(--foreground) / 0.20)",
         popover: "0 20px 44px -30px hsl(var(--foreground) / 0.8)",
         "inner-glow": "inset 0 1px 0 hsl(0 0% 100% / 0.06), inset 0 -1px 0 hsl(var(--foreground) / 0.04)",
+        "table-header": "0 1px 0 hsl(var(--border) / 0.5), 0 4px 12px -8px hsl(var(--foreground) / 0.06)",
+        "input-focus": "0 0 0 3px hsl(var(--primary) / 0.12)",
+      },
+      fontSize: {
+        display: ["2.5rem", { lineHeight: "1.1", letterSpacing: "-0.025em" }],
+        h1: ["2rem", { lineHeight: "1.2", letterSpacing: "-0.02em" }],
+        h2: ["1.25rem", { lineHeight: "1.35", letterSpacing: "-0.015em" }],
+        h3: ["1rem", { lineHeight: "1.4", letterSpacing: "-0.01em" }],
+        label: ["0.6875rem", { lineHeight: "1rem", letterSpacing: "0.12em" }],
+        caption: ["0.6875rem", { lineHeight: "1rem" }],
+      },
+      spacing: {
+        section: "1.5rem",
+        card: "1.25rem",
+        "card-sm": "1rem",
+        "card-lg": "1.75rem",
       },
       transitionTimingFunction: {
         enterprise: "cubic-bezier(0.4, 0, 0.2, 1)",

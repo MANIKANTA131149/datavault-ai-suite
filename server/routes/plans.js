@@ -117,20 +117,19 @@ router.post("/record", async (req, res) => {
 
 router.put("/users/:id", async (req, res) => {
   try {
-    const { ObjectId } = require("mongodb");
     const { tier } = req.body || {};
     if (!PLAN_TIERS.includes(tier)) {
       return res.status(400).json({ error: `Invalid plan. Must be one of: ${PLAN_TIERS.join(", ")}` });
     }
 
     const db = await getDb();
-    const actor = await db.collection("users").findOne({ _id: new ObjectId(req.userId) });
+    const actor = await db.collection("users").findOne({ _id: req.userId });
     if (!actor || actor.role !== "admin") {
       return res.status(403).json({ error: "Admin access required" });
     }
     const actorContext = await getPlanContext(db, req.userId);
 
-    const targetId = new ObjectId(req.params.id);
+    const targetId = req.params.id;
     const target = await db.collection("users").findOne({
       _id: targetId,
       organizationId: actorContext.user.organizationId,

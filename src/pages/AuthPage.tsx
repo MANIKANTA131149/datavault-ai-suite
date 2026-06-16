@@ -1,492 +1,265 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth0 } from "@auth0/auth0-react";
+import { SignIn, SignUp, useAuth } from "@clerk/react";
 import { motion } from "framer-motion";
-import { ArrowRight, BarChart2, Brain, Database, Eye, EyeOff, Layers, Loader2, Moon, Sun, Zap } from "lucide-react";
+import { BarChart2, Brain, Layers, Moon, Sun, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuthStore } from "@/stores/auth-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { toast } from "@/lib/toast";
 
 const FEATURES = [
-  { label: "Multi-LLM Support",         icon: Brain },
-  { label: "CSV & Excel Native",         icon: Layers },
-  { label: "Agent Reasoning Trace",      icon: BarChart2 },
+  { label: "Multi-LLM Support", icon: Brain },
+  { label: "CSV & Excel Native", icon: Layers },
+  { label: "Agent Reasoning Trace", icon: BarChart2 },
 ];
 
-function FeaturePills() {
-  return (
-    <div className="mt-6 flex flex-wrap gap-2">
-      {FEATURES.map(({ label, icon: Icon }) => (
-        <span
-          key={label}
-          className="flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-3 py-1.5 text-sm font-medium text-muted-foreground"
-        >
-          <Icon size={13} className="text-primary" />
-          {label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function GoogleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24">
-      <path
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-        fill="#4285F4"
-      />
-      <path
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-        fill="#34A853"
-      />
-      <path
-        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-        fill="#FBBC05"
-      />
-      <path
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-        fill="#EA4335"
-      />
-    </svg>
-  );
-}
-
-function GitHubIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
-    </svg>
-  );
-}
-
 export default function AuthPage() {
-  const navigate = useNavigate();
-  const { login, signup, loginWithAuth0, user: storeUser } = useAuthStore();
-  const {
-    isAuthenticated: auth0Authenticated,
-    user: auth0User,
-    getIdTokenClaims,
-    isLoading: auth0Loading,
-    loginWithRedirect,
-    logout: auth0Logout,
-  } = useAuth0();
-  const [isLoading, setIsLoading] = useState(false);
-  const [auth0Syncing, setAuth0Syncing] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const auth0SyncedRef = useRef(false);
-  const [activeAuthTab, setActiveAuthTab] = useState<"login" | "signup">("login");
-
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [signupName, setSignupName] = useState("");
-  const [signupEmail, setSignupEmail] = useState("");
-  const [signupPassword, setSignupPassword] = useState("");
-  const [signupConfirm, setSignupConfirm] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
+  const navigate  = useNavigate();
+  const { isLoaded: clerkLoaded, isSignedIn } = useAuth();
+  const { user: storeUser } = useAuthStore();
   const { theme, setTheme, saveSettings, hasFetched } = useSettingsStore();
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
 
-  // Default to light on auth page if settings haven't been fetched from backend yet
   useEffect(() => {
-    if (!hasFetched) {
-      setTheme("light");
-    }
+    if (!hasFetched) setTheme("light");
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (clerkLoaded && isSignedIn && storeUser) navigate("/app/dashboard", { replace: true });
+  }, [clerkLoaded, isSignedIn, storeUser, navigate]);
 
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   const handleToggleTheme = async () => {
     const next = isDark ? "light" : "dark";
     setTheme(next);
-    try { await saveSettings(); } catch { /* not logged in yet — DOM updated */ }
+    try { await saveSettings(); } catch { /* not logged in */ }
   };
 
-  // ─── Auth0 callback: detect when Auth0 login completes, sync with backend ──
-  useEffect(() => {
-    if (auth0Authenticated && auth0User && !storeUser && !auth0SyncedRef.current) {
-      auth0SyncedRef.current = true;
-      (async () => {
-        setAuth0Syncing(true);
-        try {
-          const claims = await getIdTokenClaims();
-          const idToken = claims?.__raw;
-          if (!idToken) {
-            // Stale Auth0 session (e.g. after logout) — clear silently
-            auth0Logout({ logoutParams: { returnTo: window.location.origin + "/auth" } });
-            return;
-          }
-          await loginWithAuth0(idToken);
-          toast.success("Welcome!");
-          navigate("/app/dashboard");
-        } catch (err: any) {
-          console.error("Auth0 sync error:", err);
-          toast.error(err?.message || "Social login failed. Please try again.");
-          auth0SyncedRef.current = false;
-        } finally {
-          setAuth0Syncing(false);
-        }
-      })();
-    }
-  }, [auth0Authenticated, auth0User, storeUser]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // If already logged in (store user), redirect to dashboard
-  useEffect(() => {
-    if (storeUser) navigate("/app/dashboard");
-  }, [storeUser, navigate]);
-
-  const handleAuth0Social = (connection: string) => {
-    loginWithRedirect({
-      authorizationParams: {
-        connection,
-        redirect_uri: `${window.location.origin}/auth`,
-      },
-    });
+  // Clerk appearance — strips its own card shell so OUR container is the card.
+  // We also override key element colours to match the active theme variables.
+  const clerkAppearance = {
+    elements: {
+      rootBox:  "w-full",
+      // Remove Clerk's card chrome entirely
+      card:     "w-full shadow-none border-0 !bg-transparent p-0 m-0 gap-4",
+      cardBox:  "w-full shadow-none border-0 !bg-transparent",
+      // Header
+      headerTitle:    "!text-foreground text-lg font-semibold",
+      headerSubtitle: "!text-muted-foreground text-sm",
+      // Social buttons — match our button style
+      socialButtonsBlockButton:
+        "!border !border-border !bg-card hover:!bg-muted !text-foreground text-sm font-medium rounded-xl transition-colors w-full",
+      socialButtonsBlockButtonText: "!text-foreground font-medium",
+      socialButtonsBlockButtonArrow: "hidden",
+      // Divider
+      dividerRow:  "my-2",
+      dividerLine: "!bg-border",
+      dividerText: "!text-muted-foreground text-xs",
+      // Form
+      formFieldRow:   "gap-y-1",
+      formFieldLabel: "!text-foreground text-sm font-medium",
+      formFieldInput:
+        "!bg-muted/50 !border-border !text-foreground placeholder:!text-muted-foreground rounded-xl text-sm focus:!ring-2 focus:!ring-primary/30 focus:!border-primary/50 transition-all",
+      formFieldInputShowPasswordButton: "!text-muted-foreground hover:!text-foreground",
+      // Primary button
+      formButtonPrimary:
+        "!bg-primary hover:!bg-primary/90 !text-primary-foreground rounded-xl text-sm font-semibold transition-colors w-full",
+      // Footer
+      footerActionText: "!text-muted-foreground text-sm",
+      footerActionLink: "!text-primary hover:!text-primary/80 font-semibold",
+      footer:           "!bg-transparent mt-2",
+      footerPages:      "!bg-transparent",
+      // Identity preview
+      identityPreviewText:       "!text-foreground text-sm",
+      identityPreviewEditButton: "!text-primary hover:!text-primary/80 text-sm",
+      // OTP inputs
+      otpCodeFieldInput:
+        "!bg-muted/50 !border-border !text-foreground rounded-xl text-center font-bold text-lg focus:!ring-2 focus:!ring-primary/30",
+      // Alert/error
+      alert:        "!bg-destructive/10 !border-destructive/20 rounded-xl p-3",
+      alertText:    "!text-destructive text-sm",
+      // "Secured by Clerk" branding strip — keep it but make it blend
+      footer:       "!bg-muted/20 rounded-b-xl mt-0",
+    },
+    layout: {
+      socialButtonsPlacement: "top" as const,
+      showOptionalFields: false,
+    },
   };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const errs: Record<string, string> = {};
-    if (!loginEmail) errs.loginEmail = "Email is required";
-    if (!loginPassword) errs.loginPassword = "Password is required";
-    if (Object.keys(errs).length) {
-      setErrors(errs);
-      return;
-    }
-
-    setErrors({});
-    setIsLoading(true);
-    try {
-      await login(loginEmail, loginPassword);
-      toast.success("Welcome back!");
-      navigate("/app/dashboard");
-    } catch (err: any) {
-      const errMsg = err?.message || "Login failed";
-      if (errMsg === "Account does not exist") {
-        toast.error("Account does not exist. We've switched you to Sign Up.");
-        setSignupEmail(loginEmail);
-        setActiveAuthTab("signup");
-      } else {
-        toast.error(errMsg);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const errs: Record<string, string> = {};
-    if (!signupName) errs.signupName = "Name is required";
-    if (!signupEmail) errs.signupEmail = "Email is required";
-    if (!signupPassword) errs.signupPassword = "Password is required";
-    if (signupPassword.length < 6) errs.signupPassword = "Min 6 characters";
-    if (signupPassword !== signupConfirm) errs.signupConfirm = "Passwords don't match";
-    if (Object.keys(errs).length) {
-      setErrors(errs);
-      return;
-    }
-
-    setErrors({});
-    setIsLoading(true);
-    try {
-      await signup(signupName, signupEmail, signupPassword);
-      toast.success("Account created!");
-      navigate("/app/dashboard");
-    } catch (err: any) {
-      toast.error(err?.message || "Signup failed");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Show loading spinner while Auth0 processes the callback or syncs with backend
-  if (auth0Loading || auth0Syncing) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.07),_transparent_32%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="flex flex-col items-center gap-4"
-        >
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Signing you in…</p>
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
-    <div className="relative min-h-dvh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.07),_transparent_32%),linear-gradient(180deg,_hsl(var(--background-secondary))_0%,_hsl(var(--background))_45%)]">
-      {/* Theme toggle — top right */}
+    <div className="relative min-h-dvh bg-background">
+      {/* Subtle gradient overlay */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,hsl(var(--primary)/0.12),transparent)]" />
+
+      {/* Theme toggle */}
       <Button
-        type="button"
-        variant="ghost"
-        size="icon"
+        type="button" variant="ghost" size="icon"
         onClick={handleToggleTheme}
-        className="absolute right-4 top-4 z-50 h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground"
+        className="absolute right-4 top-4 z-50 h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60"
         aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       >
-        {isDark ? <Sun size={18} /> : <Moon size={18} />}
+        {isDark ? <Sun size={16} /> : <Moon size={16} />}
       </Button>
-      <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col xl:flex-row">
-        {/* ── Left marketing panel ──────────────────────────────────────────── */}
-        <section className="relative flex flex-1 flex-col justify-between overflow-hidden border-b border-border/70 px-4 py-6 sm:px-6 lg:px-10 xl:border-b-0 xl:border-r">
 
+      <div className="relative mx-auto flex min-h-dvh w-full max-w-7xl flex-col xl:flex-row">
+
+        {/* ── Left marketing panel (xl only) ────────────────────────────── */}
+        <section className="hidden xl:flex xl:flex-1 xl:flex-col xl:justify-between xl:border-r xl:border-border xl:px-14 xl:py-14">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="relative flex-1"
           >
-            <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 p-1.5 overflow-hidden">
-                <img src="/logo.png" alt="Querify Agent Logo" className="h-full w-full object-contain" />
+            {/* Logo */}
+            <div className="mb-12 flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 overflow-hidden">
+                <img src="/logo.png" alt="Querify" className="h-full w-full object-contain" />
               </div>
-              <span className="text-lg font-semibold text-foreground sm:text-xl">Querify Agent</span>
+              <span className="text-xl font-semibold text-foreground">Querify Agent</span>
             </div>
 
-            <div className="max-w-2xl">
-              <p className="mb-3 text-sm font-medium uppercase tracking-[0.24em] text-primary/80">
-                Analytics workspace
-              </p>
-              <h1 className="text-3xl font-semibold leading-tight text-foreground sm:text-4xl lg:text-5xl">
-                Query your data in plain English on any device.
-              </h1>
-              <p className="mt-4 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
-                Upload CSV or Excel files, connect your preferred LLM provider, and get instant insights with a full
-                reasoning trace — whether you are on mobile, tablet, or desktop.
-              </p>
-              <FeaturePills />
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary/70">
+              Analytics workspace
+            </p>
+            <h1 className="type-display text-foreground">
+              Query your data<br />in plain English.
+            </h1>
+            <p className="mt-5 max-w-md text-base leading-7 text-muted-foreground">
+              Upload CSV or Excel files, connect your preferred LLM, and get instant insights with a full reasoning trace — on any device.
+            </p>
+
+            {/* Feature pills */}
+            <div className="mt-7 flex flex-wrap gap-2">
+              {FEATURES.map(({ label, icon: Icon }) => (
+                <span
+                  key={label}
+                  className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-medium text-muted-foreground"
+                >
+                  <Icon size={13} className="text-primary" />
+                  {label}
+                </span>
+              ))}
             </div>
 
-            {/* Animated live-counting stats */}
-            <div className="mt-10 hidden xl:grid grid-cols-3 gap-4">
-              <AnimatedStat end={12} label="LLM Providers" icon={Brain} />
-              <AnimatedStat end={8} label="Export Formats" icon={Layers} />
-              <AnimatedStat end={99} label="% Uptime SLA" icon={Zap} suffix="%" />
+            {/* Stat cards */}
+            <div className="mt-10 grid grid-cols-3 gap-4">
+              {[
+                { end: "12+", label: "LLM Providers", icon: Brain },
+                { end: "8",   label: "Export Formats", icon: Layers },
+                { end: "99%", label: "Uptime SLA",     icon: Zap },
+              ].map(({ end, label, icon: Icon }) => (
+                <div key={label} className="rounded-2xl border border-border bg-card p-4 shadow-card-xs transition-shadow hover:shadow-card">
+                  <div className="mb-2.5 flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
+                    <Icon size={15} className="text-primary" />
+                  </div>
+                  <span className="stat-number block">{end}</span>
+                  <p className="mt-0.5 type-caption">{label}</p>
+                </div>
+              ))}
             </div>
           </motion.div>
 
-          <div className="relative mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {/* Bottom info cards */}
+          <div className="grid grid-cols-3 gap-3">
             {[
               { label: "Datasets",  value: "CSV, XLSX, XLS" },
               { label: "Providers", value: "OpenAI, Gemini, Bedrock+" },
               { label: "Output",    value: "Answers, history, insights" },
             ].map((item) => (
-              <div key={item.label} className="rounded-2xl border border-border/70 bg-background/60 p-4 backdrop-blur">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">{item.label}</p>
-                <p className="mt-2 text-sm font-medium text-foreground">{item.value}</p>
+              <div key={item.label} className="rounded-2xl border border-border bg-card p-4 shadow-card-xs transition-shadow hover:shadow-card">
+                <p className="type-label">{item.label}</p>
+                <p className="mt-1.5 text-sm font-medium text-foreground">{item.value}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="flex w-full flex-1 items-center justify-center px-4 py-6 sm:px-6 lg:px-10">
+        {/* ── Right auth panel ──────────────────────────────────────────── */}
+        <section className="relative flex flex-1 flex-col items-center justify-center px-4 py-12 sm:px-8">
+
+          {/* Mobile logo */}
           <motion.div
-            className="w-full max-w-md rounded-2xl border border-border/55 bg-background/95 p-5 shadow-[0_24px_48px_-20px_hsl(var(--foreground)/0.18)] backdrop-blur-xl sm:p-8"
-            initial={{ opacity: 0, y: 20 }}
+            className="mb-8 flex items-center gap-2.5 xl:hidden"
+            initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.1 }}
+            transition={{ duration: 0.4 }}
           >
-            <div className="mb-6">
-              <h2 className="text-2xl font-semibold text-foreground">Welcome</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Sign in to continue or create a new workspace account.
-              </p>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 overflow-hidden">
+              <img src="/logo.png" alt="Querify" className="h-full w-full object-contain" />
             </div>
+            <span className="text-lg font-semibold text-foreground">Querify Agent</span>
+          </motion.div>
 
-            <Tabs value={activeAuthTab} onValueChange={(v) => setActiveAuthTab(v as "login" | "signup")} className="w-full">
-              <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-background-secondary p-1">
-                <TabsTrigger value="login" className="min-w-0">
-                  Log in
-                </TabsTrigger>
-                <TabsTrigger value="signup" className="min-w-0">
-                  Sign up
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="login" className="mt-6">
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <div>
-                    <Label htmlFor="login-email">Email</Label>
-                    <Input
-                      id="login-email"
-                      type="email"
-                      autoComplete="email"
-                      placeholder="you@company.com"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      className="mt-1.5 bg-background-secondary border-border"
-                    />
-                    {errors.loginEmail && <p className="mt-1 text-xs text-destructive">{errors.loginEmail}</p>}
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="login-password">Password</Label>
-                      <button type="button" className="shrink-0 text-xs text-primary hover:underline">
-                        Forgot password?
-                      </button>
-                    </div>
-                    <div className="relative mt-1.5">
-                      <Input
-                        id="login-password"
-                        type={showPassword ? "text" : "password"}
-                        autoComplete="current-password"
-                        value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                        className="bg-background-secondary border-border pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((value) => !value)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                    {errors.loginPassword && <p className="mt-1 text-xs text-destructive">{errors.loginPassword}</p>}
-                  </div>
-
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? "Signing in..." : "Sign in"}
-                    {!isLoading && <ArrowRight size={16} className="ml-1" />}
-                  </Button>
-                </form>
-              </TabsContent>
-
-              <TabsContent value="signup" className="mt-6">
-                <form onSubmit={handleSignup} className="space-y-4">
-                  <div>
-                    <Label htmlFor="signup-name">Full name</Label>
-                    <Input
-                      id="signup-name"
-                      autoComplete="name"
-                      placeholder="John Doe"
-                      value={signupName}
-                      onChange={(e) => setSignupName(e.target.value)}
-                      className="mt-1.5 bg-background-secondary border-border"
-                    />
-                    {errors.signupName && <p className="mt-1 text-xs text-destructive">{errors.signupName}</p>}
-                  </div>
-
-                  <div>
-                    <Label htmlFor="signup-email">Email</Label>
-                    <Input
-                      id="signup-email"
-                      type="email"
-                      autoComplete="email"
-                      placeholder="you@company.com"
-                      value={signupEmail}
-                      onChange={(e) => setSignupEmail(e.target.value)}
-                      className="mt-1.5 bg-background-secondary border-border"
-                    />
-                    {errors.signupEmail && <p className="mt-1 text-xs text-destructive">{errors.signupEmail}</p>}
-                  </div>
-
-                  <div>
-                    <Label htmlFor="signup-password">Password</Label>
-                    <Input
-                      id="signup-password"
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="Min 6 characters"
-                      value={signupPassword}
-                      onChange={(e) => setSignupPassword(e.target.value)}
-                      className="mt-1.5 bg-background-secondary border-border"
-                    />
-                    {errors.signupPassword && <p className="mt-1 text-xs text-destructive">{errors.signupPassword}</p>}
-                  </div>
-
-                  <div>
-                    <Label htmlFor="signup-confirm">Confirm password</Label>
-                    <Input
-                      id="signup-confirm"
-                      type="password"
-                      autoComplete="new-password"
-                      value={signupConfirm}
-                      onChange={(e) => setSignupConfirm(e.target.value)}
-                      className="mt-1.5 bg-background-secondary border-border"
-                    />
-                    {errors.signupConfirm && <p className="mt-1 text-xs text-destructive">{errors.signupConfirm}</p>}
-                  </div>
-
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? "Creating account..." : "Create account"}
-                    {!isLoading && <ArrowRight size={16} className="ml-1" />}
-                  </Button>
-                </form>
-              </TabsContent>
-            </Tabs>
-
-            <div className="mt-6">
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-border" />
-                </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
-                </div>
+          <motion.div
+            className="w-full max-w-[380px]"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.08 }}
+          >
+            {/* Our card — one clean container */}
+            <div className="rounded-2xl border border-border bg-card shadow-lg shadow-black/5">
+              {/* Tab switcher */}
+              <div className="flex border-b border-border">
+                {(["sign-in", "sign-up"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className={[
+                      "flex-1 py-3.5 text-sm font-medium transition-colors first:rounded-tl-2xl last:rounded-tr-2xl",
+                      mode === m
+                        ? "bg-card text-foreground border-b-2 border-primary"
+                        : "bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted/70",
+                    ].join(" ")}
+                  >
+                    {m === "sign-in" ? "Log in" : "Sign up"}
+                  </button>
+                ))}
               </div>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Button
-                  variant="outline"
-                  className="border-border bg-background-secondary hover:bg-card"
-                  onClick={() => handleAuth0Social("google-oauth2")}
-                  disabled={isLoading}
-                >
-                  <GoogleIcon /> Google
-                </Button>
-                <Button
-                  variant="outline"
-                  className="border-border bg-background-secondary hover:bg-card"
-                  onClick={() => handleAuth0Social("github")}
-                  disabled={isLoading}
-                >
-                  <GitHubIcon /> GitHub
-                </Button>
+
+              {/* Clerk form — sits inside our card, its own card chrome is stripped */}
+              <div className="p-6">
+                {mode === "sign-in" ? (
+                  <SignIn
+                    routing="hash"
+                    appearance={clerkAppearance}
+                    fallbackRedirectUrl="/app/dashboard"
+                    signUpUrl="/auth"
+                  />
+                ) : (
+                  <SignUp
+                    routing="hash"
+                    appearance={clerkAppearance}
+                    fallbackRedirectUrl="/app/dashboard"
+                    signInUrl="/auth"
+                  />
+                )}
               </div>
             </div>
 
-            <p className="mt-6 text-center text-xs leading-5 text-muted-foreground">
-              By signing in you agree to our{" "}
-              <button type="button" className="text-primary hover:underline" onClick={() => navigate("/terms-and-conditions")}>Terms</button> and{" "}
-              <button type="button" className="text-primary hover:underline" onClick={() => navigate("/privacy-policy")}>Privacy Policy</button>
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              By continuing you agree to our{" "}
+              <button
+                type="button"
+                className="text-primary hover:underline underline-offset-2"
+                onClick={() => navigate("/terms-and-conditions")}
+              >
+                Terms
+              </button>
+              {" "}and{" "}
+              <button
+                type="button"
+                className="text-primary hover:underline underline-offset-2"
+                onClick={() => navigate("/privacy-policy")}
+              >
+                Privacy Policy
+              </button>
             </p>
           </motion.div>
         </section>
       </div>
-    </div>
-  );
-}
-
-// ─── Stat block (Auth left panel) ────────────────────────────────────────────
-function AnimatedStat({
-  end,
-  label,
-  icon: Icon,
-  suffix = "",
-}: {
-  end: number;
-  label: string;
-  icon: React.ElementType;
-  suffix?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-border/60 bg-background/50 p-4 backdrop-blur">
-      <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-        <Icon size={15} className="text-primary" />
-      </div>
-      <span className="block text-2xl font-bold tabular-nums text-foreground">
-        {end}
-        {suffix}
-      </span>
-      <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }

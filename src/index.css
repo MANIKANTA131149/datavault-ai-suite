@@ -71,6 +71,14 @@
     --scrollbar-thumb-accent: 222 7% 38%;
     --scrollbar-thumb-hover: 222 6% 48%;
     --scrollbar-thumb-border: 222 6% 22%;
+
+    /* ── Spacing system tokens ──────────────────────────────────────────── */
+    --space-section: 1.5rem;
+    --space-card: 1.25rem;
+    --space-card-sm: 1rem;
+    --space-card-lg: 1.75rem;
+    --space-form-row: 1rem;
+    --space-form-inline: 0.5rem;
   }
 
   /* ── Light theme ──────────────────────────────────────────────────────── */
@@ -138,6 +146,14 @@
     --scrollbar-thumb-accent: 218 7% 62%;
     --scrollbar-thumb-hover: 218 7% 54%;
     --scrollbar-thumb-border: 0 0% 100%;
+
+    /* ── Spacing system tokens ──────────────────────────────────────────── */
+    --space-section: 1.5rem;
+    --space-card: 1.25rem;
+    --space-card-sm: 1rem;
+    --space-card-lg: 1.75rem;
+    --space-form-row: 1rem;
+    --space-form-inline: 0.5rem;
   }
 }
 
@@ -515,6 +531,159 @@
   /* ── Better focus for interactive inputs ───────────────────────────────── */
   .input-focus-ring:focus-within {
     @apply ring-2 ring-ring ring-offset-1 ring-offset-background;
+  }
+
+  /* ── Typography scale ───────────────────────────────────────────────────── */
+  .type-display {
+    @apply text-[2.5rem] font-semibold leading-[1.1] tracking-[-0.025em] text-foreground;
+  }
+
+  .type-h1 {
+    @apply text-[2rem] font-semibold leading-tight tracking-[-0.02em] text-foreground;
+  }
+
+  .type-h2 {
+    @apply text-xl font-semibold leading-snug tracking-[-0.015em] text-foreground;
+  }
+
+  .type-h3 {
+    @apply text-base font-semibold leading-snug text-foreground;
+  }
+
+  .type-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground;
+  }
+
+  .type-body {
+    @apply text-sm leading-6 text-foreground;
+  }
+
+  .type-body-sm {
+    @apply text-xs leading-5 text-muted-foreground;
+  }
+
+  .type-caption {
+    @apply text-[11px] leading-4 text-muted-foreground;
+  }
+
+  /* ── Form field pattern ─────────────────────────────────────────────────── */
+  .form-field {
+    @apply flex flex-col gap-1.5;
+  }
+
+  .form-field-label {
+    @apply text-sm font-medium text-foreground;
+  }
+
+  .form-field-hint {
+    @apply text-xs leading-5 text-muted-foreground mt-0.5;
+  }
+
+  .form-field-error {
+    @apply flex items-center gap-1 text-xs leading-5 text-destructive mt-0.5;
+  }
+
+  .form-section {
+    @apply space-y-4;
+  }
+
+  .form-section-title {
+    @apply text-base font-semibold leading-snug text-foreground mb-3 pb-2 border-b border-border/40;
+  }
+
+  /* ── Utility layout helpers ─────────────────────────────────────────────── */
+  .action-row {
+    @apply flex flex-wrap items-center justify-between gap-3;
+  }
+
+  .section-divider {
+    @apply border-t border-border/40 my-4;
+  }
+
+  .card-header {
+    @apply flex items-center justify-between gap-3 border-b border-border/40 pb-4 mb-4;
+  }
+
+  /* ── Divider with centered label (date groups, log sections) ────────────── */
+  .divider-label {
+    @apply flex items-center gap-3 select-none;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: hsl(var(--muted-foreground) / 0.5);
+  }
+
+  .divider-label::before,
+  .divider-label::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: hsl(var(--border) / 0.4);
+  }
+
+  /* ── Table horizontal scroll guard (prevents shadow clipping on mobile) ─── */
+  .table-scroll-guard {
+    @apply overflow-x-auto -mx-1 px-1;
+  }
+
+  /* ── Enhanced input group (icon + input with shared focus ring) ─────────── */
+  .input-group {
+    @apply flex items-center rounded-xl border border-input bg-muted/40 transition-all duration-150;
+  }
+
+  .input-group:focus-within {
+    @apply ring-2 border-primary/50;
+    ring-color: hsl(var(--ring) / 0.6);
+  }
+
+  /* ── Status dot (consolidates scattered h-2 w-2 rounded-full) ──────────── */
+  .badge-dot {
+    @apply h-1.5 w-1.5 rounded-full shrink-0;
+  }
+
+  /* ── Metric number display ──────────────────────────────────────────────── */
+  .stat-number {
+    @apply text-2xl font-bold tabular-nums text-foreground tracking-[-0.02em];
+  }
+
+  .stat-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground;
+  }
+
+  /* ── Progress bar glow (AppLayout page progress indicator) ─────────────── */
+  .progress-bar-glow {
+    filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.5));
+  }
+
+  /* ── Inset focus ring (for inputs inside cards where offset clips border) ─ */
+  .focus-ring-inset {
+    @apply outline-none;
+  }
+
+  .focus-ring-inset:focus-visible {
+    @apply ring-2 ring-inset;
+    ring-color: hsl(var(--primary) / 0.6);
+  }
+
+  /* ── Button loading state convention ───────────────────────────────────── */
+  .btn-loading {
+    @apply opacity-70 pointer-events-none select-none;
+  }
+
+  /* ── Button icon + label alignment ─────────────────────────────────────── */
+  .btn-icon-left {
+    @apply flex items-center gap-2;
+  }
+
+  /* ── Status badge — info tone (primary-tinted) ──────────────────────────── */
+  .status-badge-info {
+    @apply inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary;
+  }
+
+  /* ── Status badge size variants ─────────────────────────────────────────── */
+  .status-badge-md {
+    @apply py-1 px-2.5 text-xs;
   }
 
   .site-shell {
@@ -1325,6 +1494,67 @@
   animation: shimmer 1.8s linear infinite;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   ENTERPRISE FOUNDATION — additive design tokens & interaction primitives.
+   Pure additions; nothing above is modified. Safe to layer anywhere.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Semantic motion + elevation tokens ──────────────────────────────────── */
+:root {
+  --motion-instant:  75ms  ease;
+  --motion-fast:     150ms cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-standard: 250ms cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-emphasis: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  --motion-page:     350ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── Streaming caret (AI token streaming) ────────────────────────────────── */
+@keyframes ai-caret-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.ai-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: hsl(var(--primary));
+  animation: ai-caret-blink 1s steps(1) infinite;
+}
+
+/* ── Icon success wiggle (confirmation feedback) ─────────────────────────── */
+@keyframes ai-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25%       { transform: rotate(-9deg); }
+  75%       { transform: rotate(9deg); }
+}
+.icon-success { animation: ai-wiggle 0.4s ease-in-out; }
+
+/* ── Micro-interaction primitives ────────────────────────────────────────── */
+.btn-press   { @apply transition-transform active:scale-[0.97] active:duration-75; }
+.card-lift   { @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card; }
+.press-dim   { @apply transition active:opacity-70 active:scale-[0.98]; }
+
+/* ── AI-native surface + confidence states ───────────────────────────────── */
+.ai-surface {
+  @apply rounded-2xl border border-primary/15;
+  background: hsl(var(--primary) / 0.06);
+}
+.confidence-high   { @apply border-success/20 bg-success/10 text-success; }
+.confidence-medium { @apply border-warning/20 bg-warning/10 text-warning; }
+.confidence-low    { @apply border-destructive/20 bg-destructive/10 text-destructive; }
+
+/* Honour reduced-motion preference globally for the new primitives */
+@media (prefers-reduced-motion: reduce) {
+  .ai-caret,
+  .icon-success { animation: none; }
+  .btn-press,
+  .card-lift,
+  .press-dim { transition: none; }
+}
+
 /* ── Floating background orbs (Auth page) ────────────────────────────────── */
 @keyframes orb-drift-1 {
   0%, 100% { transform: translate(0, 0) scale(1); }
@@ -1836,6 +2066,74 @@
   background-size: 200% 100%;
   animation: et-shimmer 1.8s ease forwards;
   pointer-events: none;
+}
+
+
+/* ─── Clerk auth form — dark/light theme integration ─────────────────────── */
+/* Clerk injects its own stylesheet; these overrides keep our card's dark bg  */
+/* from fighting Clerk's white-background assumptions.                         */
+.dark .cl-card,
+.dark .cl-cardBox,
+.dark .cl-rootBox {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+/* Inputs */
+.dark .cl-formFieldInput {
+  background-color: hsl(var(--muted) / 0.5) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+.dark .cl-formFieldInput::placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+}
+/* Social buttons */
+.dark .cl-socialButtonsBlockButton {
+  background-color: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+.dark .cl-socialButtonsBlockButton:hover {
+  background-color: hsl(var(--muted)) !important;
+}
+/* Divider */
+.dark .cl-dividerLine {
+  background-color: hsl(var(--border)) !important;
+}
+.dark .cl-dividerText {
+  color: hsl(var(--muted-foreground)) !important;
+}
+/* Labels & text */
+.dark .cl-formFieldLabel,
+.dark .cl-headerTitle,
+.dark .cl-headerSubtitle,
+.dark .cl-identityPreviewText {
+  color: hsl(var(--foreground)) !important;
+}
+.dark .cl-headerSubtitle,
+.dark .cl-footerActionText {
+  color: hsl(var(--muted-foreground)) !important;
+}
+/* Footer link */
+.dark .cl-footerActionLink {
+  color: hsl(var(--primary)) !important;
+}
+/* Clerk "Secured by" strip */
+.dark .cl-footer,
+.dark .cl-footerPages {
+  background: hsl(var(--muted) / 0.3) !important;
+}
+/* Primary button */
+.dark .cl-formButtonPrimary {
+  background-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+}
+/* "Last used" badge — keep visible */
+.dark .cl-badge {
+  background-color: hsl(var(--primary) / 0.15) !important;
+  color: hsl(var(--primary)) !important;
+  border-color: hsl(var(--primary) / 0.3) !important;
 }
 
 /* ─── Premium toast progress bar (paused on hover via data attr) ─────────── */

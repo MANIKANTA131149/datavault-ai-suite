@@ -19,6 +19,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
+import { useConnectionStore } from "@/stores/connection-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -52,9 +53,14 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
   const [collapsed, setCollapsed] = useState(false);
   const location                   = useLocation();
   const { user }                   = useAuthStore();
+  const { connections }            = useConnectionStore();
 
   const adminUser  = canAccessAdmin(user?.planTier, user?.isPlanOwner);
   const isCollapsed = mobile ? false : collapsed;
+
+  // Surface a subtle warning dot on the Connections item when any live
+  // connection is offline, so users notice without opening the page.
+  const connectionsNeedAttention = connections.some((c) => c.status === "error");
 
   const navSections: NavSection[] = [
     {
@@ -198,7 +204,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
         aria-label="Main navigation"
       >
         {navSections.map((section, sectionIndex) => (
-          <div key={section.label} className={cn(sectionIndex > 0 && "mt-1")}>
+          <div key={section.label} className={cn(sectionIndex > 0 && "mt-4 first:mt-0")}>
             {/* Section divider / label */}
             {sectionIndex > 0 && (
               isCollapsed ? (
@@ -211,7 +217,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.12 }}
-                    className="px-3 pb-1 pt-2.5 section-label"
+                    className="px-3 pb-1 pt-1 section-label"
                   >
                     {section.label}
                   </motion.p>
@@ -222,6 +228,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
             <div className="space-y-0.5">
               {section.items.map((item) => {
                 const isActive = location.pathname === item.to;
+                const showAttention = item.to === "/app/connections" && connectionsNeedAttention;
 
                 const link = (
                   <RouterNavLink
@@ -230,7 +237,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                     data-tour={`nav:${item.to}`}
                     onClick={() => onNavigate?.()}
                     className={cn(
-                      "group relative flex items-center rounded-xl px-2 py-1.5 text-[13px] font-medium",
+                      "group focus-ring relative flex items-center rounded-xl px-2 py-1.5 text-[13px] font-medium",
                       "transition-colors duration-150",
                       isActive
                         ? "bg-primary/10 text-primary"
@@ -242,7 +249,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                     {isActive && (
                       <motion.div
                         layoutId="sidebar-active-indicator"
-                        className="absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-primary"
+                        className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-full bg-primary"
                         transition={{ type: "spring", stiffness: 500, damping: 40 }}
                       />
                     )}
@@ -250,7 +257,7 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                     {/* Icon container */}
                     <span
                       className={cn(
-                        "flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg",
+                        "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px]",
                         "transition-colors duration-150",
                         isActive
                           ? "bg-primary/10 text-primary"
@@ -258,6 +265,13 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                       )}
                     >
                       <item.icon size={16} />
+                      {/* Attention dot — only visible when collapsed (no label slot) */}
+                      {showAttention && isCollapsed && (
+                        <span className="absolute -right-0.5 -top-0.5 flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning/60" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full border border-background-secondary bg-warning" />
+                        </span>
+                      )}
                     </span>
 
                     {/* Label */}
@@ -269,9 +283,20 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
                           animate={{ opacity: 1, width: "auto" }}
                           exit={{ opacity: 0, width: 0 }}
                           transition={{ duration: 0.15 }}
-                          className="ml-2 truncate overflow-hidden whitespace-nowrap"
+                          className="ml-2 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap"
                         >
-                          {item.label}
+                          <span className="truncate">{item.label}</span>
+                          {showAttention && (
+                            <Tooltip delayDuration={300}>
+                              <TooltipTrigger asChild>
+                                <span className="relative ml-auto flex h-2 w-2 shrink-0">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning/60" />
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-warning" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="right">A connection needs attention</TooltipContent>
+                            </Tooltip>
+                          )}
                         </motion.span>
                       )}
                     </AnimatePresence>
@@ -305,10 +330,10 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
             <button
               type="button"
               className={cn(
-                "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2",
+                "focus-ring flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2",
                 "border border-transparent",
                 "transition-all duration-150",
-                "hover:border-border/60 hover:bg-card/70",
+                "hover:border-border/60 hover:bg-card/90 hover:shadow-card-xs",
                 isCollapsed && "justify-center px-2",
               )}
             >

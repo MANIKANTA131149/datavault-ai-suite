@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type StatusValue =
@@ -39,27 +40,33 @@ const STATUS_MAP: Record<StatusValue, StatusConfig> = {
   neutral:      { cls: "status-badge-neutral", dotCls: "bg-muted-foreground",     defaultLabel: "Unknown" },
   draft:        { cls: "status-badge-neutral", dotCls: "bg-muted-foreground",     defaultLabel: "Draft" },
   inactive:     { cls: "status-badge-neutral", dotCls: "bg-muted-foreground",     defaultLabel: "Inactive" },
-};
+  info:         { cls: "status-badge-info",    dotCls: "bg-primary",              defaultLabel: "Info" },
+} as Record<string, StatusConfig>;
 
 interface StatusBadgeProps {
   status: StatusValue | string;
   label?: string;
   /** Animated live-dot for in-flight states (running, syncing). */
   pulse?: boolean;
+  /** "sm" = current default; "md" = slightly larger for standalone use. */
+  size?: "sm" | "md";
+  /** Optional icon rendered before the label. */
+  icon?: LucideIcon;
   className?: string;
 }
 
-export function StatusBadge({ status, label, pulse = false, className }: StatusBadgeProps) {
+export function StatusBadge({ status, label, pulse = false, size = "sm", icon: IconComp, className }: StatusBadgeProps) {
   const cfg = STATUS_MAP[(status as StatusValue)] ?? STATUS_MAP.neutral;
 
   return (
-    <span className={cn(cfg.cls, className)}>
+    <span className={cn(cfg.cls, size === "md" && "status-badge-md", className)}>
       <span className="relative flex h-1.5 w-1.5 shrink-0">
         {pulse && (
           <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-60", cfg.dotCls)} />
         )}
         <span className={cn("relative inline-flex h-1.5 w-1.5 rounded-full", cfg.dotCls)} />
       </span>
+      {IconComp && <IconComp size={10} className="shrink-0" />}
       {label ?? cfg.defaultLabel}
     </span>
   );

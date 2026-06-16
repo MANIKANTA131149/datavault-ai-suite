@@ -392,12 +392,12 @@ export default function AdminPage() {
             <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
               <Card className={`metric-card ${s.glow}`}>
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{s.label}</span>
+                  <span className="stat-label">{s.label}</span>
                   <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${s.bg}`}>
                     <s.icon size={14} className={s.color} />
                   </div>
                 </div>
-                <p className="text-2xl font-bold text-foreground tabular-nums">{s.value.toLocaleString()}</p>
+                <p className="stat-number">{s.value.toLocaleString()}</p>
               </Card>
             </motion.div>
           ))}
