@@ -63,9 +63,9 @@ export function FilterToolbar({
 
   return (
     <div className={cn("toolbar-panel space-y-3", className)}>
-      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-        {/* Search */}
-        <div className="relative min-w-0 flex-1">
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
+        {/* Search wrapped in input-group for enhanced focus ring */}
+        <div className="input-group relative min-w-0 flex-1">
           <Search
             size={14}
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
@@ -74,7 +74,7 @@ export function FilterToolbar({
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder={searchPlaceholder}
-            className="h-9 pl-9 pr-8"
+            className="h-9 border-0 bg-transparent pl-9 pr-8 shadow-none focus-visible:ring-0"
           />
           {search.trim().length > 0 && (
             <button
@@ -113,8 +113,15 @@ export function FilterToolbar({
           </div>
         )}
 
-        {/* Trailing actions */}
-        {trailing && <div className="flex shrink-0 items-center gap-2">{trailing}</div>}
+        {/* Trailing actions + active filter count badge */}
+        <div className="flex shrink-0 items-center gap-2">
+          {activeFilters.length > 0 && (
+            <span className="status-badge-neutral tabular-nums">
+              {activeFilters.length} filter{activeFilters.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          {trailing}
+        </div>
       </div>
 
       {/* Active filter chips */}

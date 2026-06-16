@@ -7,6 +7,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
 import { Seo } from "@/components/Seo";
+import { ClerkAuthBridge } from "@/components/ClerkAuthBridge";
 
 // const GetStartedPage = lazy(() => import("@/pages/GetStartedPage")); // temporarily disabled, will release later
 const WebsitePage = lazy(() => import("@/pages/WebsitePage"));
@@ -43,6 +44,7 @@ const App = () => (
     <TooltipProvider>
       <PremiumToaster position="top-right" max={4} />
       <BrowserRouter>
+        <ClerkAuthBridge />
         <Seo />
         <CommandPalette />
         <Suspense fallback={<PageLoader />}>

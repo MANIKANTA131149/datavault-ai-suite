@@ -1,6 +1,5 @@
 const express = require("express");
 const { getDb } = require("../db");
-const { ObjectId } = require("mongodb");
 const { authMiddleware } = require("../middleware/auth");
 
 const router = express.Router();
@@ -80,7 +79,7 @@ router.put("/profile", async (req, res) => {
     if (!name?.trim()) return res.status(400).json({ error: "name is required" });
     const db = await getDb();
     await db.collection("users").updateOne(
-      { _id: new ObjectId(req.userId) },
+      { _id: req.userId },
       { $set: { name: name.trim() } }
     );
     res.json({ success: true, name: name.trim() });

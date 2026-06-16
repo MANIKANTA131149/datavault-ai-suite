@@ -3,16 +3,19 @@ import { motion, useMotionValue, animate } from "framer-motion";
 import {
   Activity,
   ArrowRight,
+  Archive,
   BarChart2,
   Cable,
   ChevronRight,
   Clock,
   Database,
+  Lightbulb,
   MessageSquare,
   Minus,
   Plus,
   RefreshCw,
   Shield,
+  Sparkles,
   TrendingDown,
   TrendingUp,
   Upload,
@@ -168,6 +171,100 @@ export default function DashboardPage() {
       success: { cur: srCur, delta: srCur - srPrev },
     };
   }, [entries]);
+
+  // ── AI Insights (rule-based, derived purely from existing client data) ─────
+  const aiInsights = useMemo(() => {
+    const out: {
+      id: string;
+      icon: typeof Sparkles;
+      tone: "info" | "success" | "warning";
+      title: string;
+      description: string;
+      cta?: { label: string; path: string };
+    }[] = [];
+
+    // 1. Provider readiness gate
+    if (configuredProviders.length === 0 && (datasets.length > 0 || entries.length > 0)) {
+      out.push({
+        id: "no-provider",
+        icon: Shield,
+        tone: "warning",
+        title: "No AI provider configured yet",
+        description: "Add an API key to start asking questions about your data in plain English.",
+        cta: { label: "Configure provider", path: "/app/settings" },
+      });
+    }
+
+    // 2. Most-queried dataset → suggest automation
+    if (entries.length >= 5) {
+      const counts: Record<string, number> = {};
+      for (const e of entries) if (e.datasetName) counts[e.datasetName] = (counts[e.datasetName] || 0) + 1;
+      const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      if (top && top[1] >= 3) {
+        out.push({
+          id: "top-dataset",
+          icon: TrendingUp,
+          tone: "info",
+          title: `"${top[0]}" is your most active dataset`,
+          description: `${top[1]} queries recently — turn your repeat questions into a scheduled automation.`,
+          cta: { label: "Create automation", path: "/app/automations" },
+        });
+      }
+    }
+
+    // 3. Low success rate signal
+    if (entries.length >= 5 && successRate < 70) {
+      out.push({
+        id: "low-success",
+        icon: Activity,
+        tone: "warning",
+        title: `Success rate is ${successRate}%`,
+        description: "Some queries are failing. Reviewing recent runs can reveal schema or phrasing issues.",
+        cta: { label: "Review history", path: "/app/history" },
+      });
+    }
+
+    // 4. Unused datasets cleanup
+    const queriedNames = new Set(entries.map((e) => e.datasetName).filter(Boolean));
+    const unused = datasets.filter((ds) => !queriedNames.has(ds.fileName) && !queriedNames.has(ds.displayName || ""));
+    if (unused.length >= 3) {
+      out.push({
+        id: "unused-datasets",
+        icon: Archive,
+        tone: "info",
+        title: `${unused.length} datasets haven't been queried`,
+        description: "Keep your workspace focused by archiving datasets you no longer use.",
+        cta: { label: "Review datasets", path: "/app/datasets" },
+      });
+    }
+
+    // 5. Connection needing attention
+    const brokenConn = connections.find((c) => c.status === "error");
+    if (brokenConn) {
+      out.push({
+        id: "broken-conn",
+        icon: Cable,
+        tone: "warning",
+        title: `"${brokenConn.name}" needs attention`,
+        description: "A database connection is offline. Re-test it to keep live queries working.",
+        cta: { label: "Open connections", path: "/app/connections" },
+      });
+    }
+
+    // 6. Positive momentum
+    if (out.length < 3 && weeklyDigest.queries.delta != null && weeklyDigest.queries.delta > 20) {
+      out.push({
+        id: "momentum",
+        icon: Sparkles,
+        tone: "success",
+        title: `Query activity is up ${weeklyDigest.queries.delta}% this week`,
+        description: "Your team is leaning into the data. Pin your best queries for quick re-runs.",
+        cta: { label: "Open query", path: "/app/query" },
+      });
+    }
+
+    return out.slice(0, 3);
+  }, [configuredProviders.length, datasets, entries, connections, successRate, weeklyDigest]);
 
   // ── Activity chart (variable range) ───────────────────────────────────────
   const activityData = useMemo(() => {
@@ -363,8 +460,8 @@ export default function DashboardPage() {
                     <BarChart2 size={22} className="text-primary" />
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold text-foreground">Welcome to Querify Agent</h3>
-                    <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                    <h3 className="type-h3">Welcome to Querify Agent</h3>
+                    <p className="mt-1 max-w-md type-body-sm">
                       Upload a dataset or connect a database, configure your AI provider, then ask questions in plain English.
                     </p>
                   </div>
@@ -386,7 +483,7 @@ export default function DashboardPage() {
         )}
 
         {/* KPI strip */}
-        <motion.div variants={fadeUp} className="metric-strip">
+        <motion.div variants={fadeUp} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {kpis.map((kpi, index) => (
             <motion.div
               key={kpi.label}
@@ -396,7 +493,7 @@ export default function DashboardPage() {
             >
               <Card className={`metric-card ${kpi.glow}`}>
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{kpi.label}</span>
+                  <span className="stat-label">{kpi.label}</span>
                   <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${kpi.bg}`}>
                     <kpi.icon size={15} className={kpi.color} />
                   </div>
@@ -453,10 +550,10 @@ export default function DashboardPage() {
         {/* Activity chart */}
         <motion.div variants={fadeUp}>
           <Card className="p-6">
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="card-header">
               <div>
-                <h3 className="text-sm font-semibold text-foreground">Query Activity</h3>
-                <p className="text-xs text-muted-foreground">
+                <h3 className="type-h3">Query Activity</h3>
+                <p className="type-body-sm mt-0.5">
                   Queries and token usage over the last {chartDays} days
                 </p>
               </div>
@@ -518,7 +615,7 @@ export default function DashboardPage() {
         <motion.div variants={fadeUp} className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Provider usage */}
           <Card className="p-6">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">Provider Usage</h3>
+            <h3 className="type-h3 mb-4">Provider Usage</h3>
             {providerData.length === 0 ? (
               <div className="flex h-32 flex-col items-center justify-center gap-2">
                 <div className="breathe"><Database size={28} className="text-muted-foreground/25" /></div>
@@ -553,7 +650,7 @@ export default function DashboardPage() {
 
           {/* Top datasets */}
           <Card className="p-6">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">Top Datasets</h3>
+            <h3 className="type-h3 mb-4">Top Datasets</h3>
             {datasetUsage.length === 0 ? (
               <div className="flex h-32 flex-col items-center justify-center gap-2">
                 <div className="breathe"><BarChart2 size={28} className="text-muted-foreground/25" /></div>
@@ -573,7 +670,7 @@ export default function DashboardPage() {
 
           {/* Model performance */}
           <Card className="p-6">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">Model Performance</h3>
+            <h3 className="type-h3 mb-4">Model Performance</h3>
             {modelPerf.length === 0 ? (
               <div className="flex h-32 flex-col items-center justify-center gap-2">
                 <div className="breathe"><Activity size={28} className="text-muted-foreground/25" /></div>
@@ -608,6 +705,58 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
+        {/* AI Insights — bottom of the dashboard */}
+        {aiInsights.length > 0 && (
+          <motion.div variants={fadeUp}>
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary/10">
+                <Lightbulb size={13} className="text-primary" />
+              </div>
+              <h3 className="type-h3">AI Insights</h3>
+              <span className="status-badge-info">Smart</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {aiInsights.map((insight, i) => {
+                const toneRing =
+                  insight.tone === "success" ? "border-success/25 hover:border-success/40"
+                  : insight.tone === "warning" ? "border-warning/25 hover:border-warning/40"
+                  : "border-primary/20 hover:border-primary/40";
+                const toneIcon =
+                  insight.tone === "success" ? "bg-success/10 text-success"
+                  : insight.tone === "warning" ? "bg-warning/10 text-warning"
+                  : "bg-primary/10 text-primary";
+                return (
+                  <motion.div
+                    key={insight.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.06 }}
+                  >
+                    <Card className={cn("card-lift flex h-full flex-col p-4", toneRing)}>
+                      <div className="mb-2.5 flex items-center gap-2">
+                        <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", toneIcon)}>
+                          <insight.icon size={15} />
+                        </div>
+                      </div>
+                      <p className="text-sm font-semibold leading-snug text-foreground">{insight.title}</p>
+                      <p className="mt-1 flex-1 type-body-sm">{insight.description}</p>
+                      {insight.cta && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(insight.cta!.path)}
+                          className="press-dim mt-3 inline-flex items-center gap-1 self-start text-xs font-medium text-primary hover:gap-1.5 transition-all"
+                        >
+                          {insight.cta.label} <ArrowRight size={12} />
+                        </button>
+                      )}
+                    </Card>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
       </motion.div>
     </div>
   );
@@ -635,7 +784,7 @@ function CountUpValue({ value, formatted }: { value: number; formatted: string }
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <p ref={displayRef} className="text-2xl font-bold text-foreground tabular-nums">
+    <p ref={displayRef} className="stat-number">
       {formatted}
     </p>
   );
@@ -677,7 +826,7 @@ function DigestStat({
   const dn = delta !== null && delta < 0;
   return (
     <div className={cn("flex flex-col gap-0.5", className)}>
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="stat-label">{label}</span>
       <div className="flex items-center gap-1.5">
         <span className="text-sm font-semibold tabular-nums text-foreground">{value}</span>
         {delta !== null && (

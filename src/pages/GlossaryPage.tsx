@@ -153,13 +153,13 @@ export default function GlossaryPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((t) => (
             <motion.div key={t.id} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="min-w-0">
-              <Card className="group min-w-0 overflow-hidden p-5 transition-all hover:-translate-y-0.5">
+              <Card className="group glass-card-hover min-w-0 overflow-hidden card-pad-sm">
                 <div className="mb-2 flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-primary/10">
                       <BookOpen size={14} className="text-primary" />
                     </div>
-                    <h3 className="truncate text-sm font-semibold text-foreground">{t.term}</h3>
+                    <h3 className="truncate type-h3">{t.term}</h3>
                   </div>
                   <div className="reveal-actions flex shrink-0 gap-1">
                     <button onClick={() => openEdit(t)} className="rounded p-1.5 text-muted-foreground hover:bg-card hover:text-foreground" title="Edit">
@@ -171,7 +171,7 @@ export default function GlossaryPage() {
                   </div>
                 </div>
 
-                <p className="mb-3 text-xs leading-relaxed text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">{t.definition}</p>
+                <p className="mb-3 type-body-sm leading-relaxed line-clamp-3 break-words [overflow-wrap:anywhere]">{t.definition}</p>
 
                 {t.sqlExpression && (
                   <div className="mb-3 min-w-0 overflow-hidden rounded-md border border-border bg-card p-2.5">

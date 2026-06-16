@@ -10,6 +10,8 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuthStore } from "@/stores/auth-store";
+import { useUser, useSessionList } from "@clerk/react";
+import { ClerkUserProfileModal } from "@/components/ClerkUserProfileModal";
 import { useLLMStore, PROVIDER_LABELS, PROVIDER_MODELS, getModelDisplayName } from "@/stores/llm-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useSettingsStore, type Theme, type CodeFont } from "@/stores/settings-store";
@@ -27,11 +29,15 @@ import {
   Eye,
   EyeOff,
   Key,
+  Laptop,
+  Lock,
   Palette,
   Save,
   Search,
   Settings as SettingsIcon,
   Shield,
+  ShieldCheck,
+  Smartphone,
   Star,
   Trash2,
   TrendingUp,
@@ -58,10 +64,13 @@ const stagger = {
 
 export default function SettingsPage() {
   const { user, updateUserName } = useAuthStore();
+  const { user: clerkUser } = useUser();
+  const { sessions } = useSessionList();
   const { providerConfigs, setProviderConfig, activeProvider, setActiveProvider } = useLLMStore();
   const { entries } = useHistoryStore();
   const { theme, compactMode, codeFont, setTheme, setCompactMode, setCodeFont, saveSettings, loading } = useSettingsStore();
   const { context: planContext, fetchPlan } = usePlanStore();
+  const [clerkProfileOpen, setClerkProfileOpen] = useState(false);
 
   const [editName, setEditName] = useState(user?.name || "");
   const [savingProfile, setSavingProfile] = useState(false);
@@ -175,9 +184,12 @@ export default function SettingsPage() {
     return key.length > 8;
   };
 
-  const configuredCount = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(isProviderConfigured).length;
+  // "querify" is platform-managed — users don't configure it, hide it from this list
+  const userProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((p) => p !== "querify");
 
-  const visibleProviders = (Object.keys(PROVIDER_LABELS) as Provider[]).filter((provider) => {
+  const configuredCount = userProviders.filter(isProviderConfigured).length;
+
+  const visibleProviders = userProviders.filter((provider) => {
     const q = settingsSearch.trim().toLowerCase();
     if (!q) return true;
     return [provider, PROVIDER_LABELS[provider], providerConfigs[provider]?.model || ""].some((v) => v.toLowerCase().includes(q));
@@ -230,31 +242,10 @@ export default function SettingsPage() {
         ]}
       />
 
-      {/* Search bar */}
-      <div className="toolbar-panel">
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={settingsSearch}
-            onChange={(e) => setSettingsSearch(e.target.value)}
-            placeholder="Search settings or providers…"
-            className="border-border bg-background-secondary pl-9"
-          />
-          {settingsSearch && (
-            <button
-              type="button"
-              onClick={() => setSettingsSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-      </div>
-
       <Tabs defaultValue="profile">
         <TabsList className="inline-flex h-auto w-full flex-wrap justify-start gap-1 bg-background-secondary p-1">
           <TabsTrigger value="profile" className="flex items-center gap-2"><User size={13} />Profile</TabsTrigger>
+          <TabsTrigger value="security" className="flex items-center gap-2"><Shield size={13} />Security</TabsTrigger>
           <TabsTrigger value="apikeys" className="flex items-center gap-2"><Cpu size={13} />Providers</TabsTrigger>
           <TabsTrigger value="appearance" className="flex items-center gap-2"><Palette size={13} />Appearance</TabsTrigger>
           <TabsTrigger value="billing" className="flex items-center gap-2"><CreditCard size={13} />Usage</TabsTrigger>
@@ -270,10 +261,26 @@ export default function SettingsPage() {
               <Card className="rounded-[18px] border-border/55 bg-card/80 p-6">
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
                   <div className="flex flex-col items-center gap-2">
-                    <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-accent/30 text-2xl font-bold text-primary ring-2 ring-primary/20 ring-offset-2 ring-offset-background">
-                      {user?.avatarInitials}
-                    </div>
+                    {clerkUser?.imageUrl ? (
+                      <img
+                        src={clerkUser.imageUrl}
+                        alt={user?.name || ""}
+                        className="h-20 w-20 rounded-full border-2 border-primary/20 object-cover ring-2 ring-primary/10 ring-offset-2 ring-offset-background"
+                      />
+                    ) : (
+                      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-accent/30 text-2xl font-bold text-primary ring-2 ring-primary/20 ring-offset-2 ring-offset-background">
+                        {user?.avatarInitials}
+                      </div>
+                    )}
                     <Badge className="border-0 bg-success/10 text-success text-[10px]">Active</Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-xs border-primary/20 text-primary hover:bg-primary/5"
+                      onClick={() => setClerkProfileOpen(true)}
+                    >
+                      <Lock size={11} /> Manage Account
+                    </Button>
                   </div>
                   <div className="flex-1 space-y-1">
                     <p className="text-xl font-bold text-foreground">{user?.name}</p>
@@ -290,8 +297,8 @@ export default function SettingsPage() {
                 <Separator className="my-5 bg-border/60" />
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">Full Name</Label>
+                  <div className="form-field">
+                    <Label className="form-field-label">Full Name</Label>
                     <Input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
@@ -299,8 +306,8 @@ export default function SettingsPage() {
                       placeholder="Your display name"
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">Email Address</Label>
+                  <div className="form-field">
+                    <Label className="form-field-label">Email Address</Label>
                     <div className="relative">
                       <Input
                         defaultValue={user?.email}
@@ -309,7 +316,7 @@ export default function SettingsPage() {
                       />
                       <Shield size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
                     </div>
-                    <p className="text-[11px] text-muted-foreground">Email address cannot be changed.</p>
+                    <p className="form-field-hint">Email is managed via Clerk — change it in <button type="button" className="underline text-primary hover:no-underline" onClick={() => setClerkProfileOpen(true)}>Account Settings</button>.</p>
                   </div>
                 </div>
 
@@ -320,30 +327,142 @@ export default function SettingsPage() {
               </Card>
             </motion.div>
 
-            {/* Account stats */}
+          </motion.div>
+          <ClerkUserProfileModal open={clerkProfileOpen} onOpenChange={setClerkProfileOpen} />
+        </TabsContent>
+
+        {/* ─── Security (Clerk)────────────────────────────────────────────────── */}
+        <TabsContent value="security" className="mt-6">
+          <motion.div variants={stagger} initial="hidden" animate="visible" className="space-y-4">
+
+            {/* MFA status */}
             <motion.div variants={fadeUp}>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {[
-                  { label: "Queries run", value: entries.length.toLocaleString(), icon: Activity },
-                  { label: "Success rate", value: `${successRate}%`, icon: TrendingUp },
-                  { label: "Tokens used", value: totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : totalTokens.toString(), icon: Zap },
-                  { label: "Providers ready", value: `${configuredCount} / ${Object.keys(PROVIDER_LABELS).length}`, icon: Cpu },
-                ].map((stat) => {
-                  const Icon = stat.icon;
-                  return (
-                    <Card key={stat.label} className="rounded-[16px] border-border/55 bg-card/80 p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{stat.label}</p>
-                        <Icon size={13} className="mt-0.5 shrink-0 text-muted-foreground/40" />
+              <Card className="rounded-[18px] border-border/55 bg-card/80 p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+                      <ShieldCheck size={16} className="text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Two-Factor Authentication</p>
+                      <p className="text-xs text-muted-foreground">Adds an extra layer of security to your account</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {clerkUser?.twoFactorEnabled ? (
+                      <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs">Enabled</Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs">Disabled</Badge>
+                    )}
+                  </div>
+                </div>
+                <Separator className="bg-border/60" />
+                <p className="text-xs text-muted-foreground">
+                  Manage 2FA, connected social accounts, active sessions, and password settings through the Clerk account portal.
+                </p>
+                <Button
+                  variant="outline"
+                  className="gap-2 border-primary/20 text-primary hover:bg-primary/5"
+                  onClick={() => setClerkProfileOpen(true)}
+                >
+                  <Lock size={14} /> Open Account Security Settings
+                </Button>
+              </Card>
+            </motion.div>
+
+            {/* Connected accounts */}
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-[18px] border-border/55 bg-card/80 p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+                    <Shield size={16} className="text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Connected Accounts</p>
+                    <p className="text-xs text-muted-foreground">Social providers linked to your identity</p>
+                  </div>
+                </div>
+                <Separator className="bg-border/60" />
+                <div className="space-y-2">
+                  {(clerkUser?.externalAccounts ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No social accounts connected.</p>
+                  ) : (
+                    clerkUser?.externalAccounts.map((acct) => (
+                      <div key={acct.id} className="flex items-center justify-between rounded-lg border border-border/60 bg-background-secondary px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 text-primary text-xs font-bold capitalize">
+                            {acct.provider[0]}
+                          </div>
+                          <span className="text-sm font-medium capitalize text-foreground">{acct.provider}</span>
+                          <span className="text-xs text-muted-foreground">· {acct.emailAddress || acct.username || ""}</span>
+                        </div>
+                        <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-[10px]">Connected</Badge>
                       </div>
-                      <p className="mt-2 text-2xl font-bold tracking-tight text-foreground">{stat.value}</p>
-                    </Card>
-                  );
-                })}
-              </div>
+                    ))
+                  )}
+                </div>
+              </Card>
+            </motion.div>
+
+            {/* Active sessions */}
+            <motion.div variants={fadeUp}>
+              <Card className="rounded-[18px] border-border/55 bg-card/80 p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+                    <Laptop size={16} className="text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Active Sessions</p>
+                    <p className="text-xs text-muted-foreground">Devices currently signed into your account</p>
+                  </div>
+                </div>
+                <Separator className="bg-border/60" />
+                <div className="space-y-2">
+                  {(sessions ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No session data available.</p>
+                  ) : (
+                    sessions?.map((session) => {
+                      const isMobile = /mobile|android|iphone|ipad/i.test(session.latestActivity?.userAgent || "");
+                      const SessionIcon = isMobile ? Smartphone : Laptop;
+                      const isActive = session.status === "active";
+                      return (
+                        <div key={session.id} className="flex items-center justify-between rounded-lg border border-border/60 bg-background-secondary px-3 py-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <SessionIcon size={14} className="shrink-0 text-muted-foreground" />
+                            <div>
+                              <p className="text-xs font-medium text-foreground">
+                                {session.latestActivity?.browserName || "Unknown browser"} · {session.latestActivity?.deviceType || "Unknown device"}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {session.latestActivity?.city ? `${session.latestActivity.city}, ` : ""}{session.latestActivity?.country || ""}
+                              </p>
+                            </div>
+                          </div>
+                          {isActive ? (
+                            <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-[10px]">Current</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] text-muted-foreground">Inactive</Badge>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs text-muted-foreground"
+                  onClick={() => setClerkProfileOpen(true)}
+                >
+                  Manage all sessions
+                </Button>
+              </Card>
             </motion.div>
 
           </motion.div>
+
+          {/* Clerk account portal */}
+          <ClerkUserProfileModal open={clerkProfileOpen} onOpenChange={setClerkProfileOpen} />
         </TabsContent>
 
         {/* ─── API Keys / Providers ─────────────────────────────────────────────── */}
@@ -352,7 +471,7 @@ export default function SettingsPage() {
 
             <motion.div variants={fadeUp} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-sm font-medium text-foreground">{configuredCount} of {Object.keys(PROVIDER_LABELS).length} providers configured</p>
+                <p className="text-sm font-medium text-foreground">{configuredCount} of {userProviders.length} providers configured</p>
                 <p className="text-xs text-muted-foreground">Keys are stored securely in your account and used for running queries.</p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -361,7 +480,7 @@ export default function SettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="border-border bg-popover">
-                    {(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => (
+                    {userProviders.map((p) => (
                       <SelectItem key={p} value={p}>{PROVIDER_LABELS[p]}</SelectItem>
                     ))}
                   </SelectContent>
@@ -385,7 +504,7 @@ export default function SettingsPage() {
                 <motion.div key={provider} variants={fadeUp}>
                   <Card className={cn(
                     "rounded-[18px] border-border/55 bg-card/80 p-4 transition-all sm:p-5",
-                    isActive && "border-primary/35 shadow-[0_4px_18px_-8px_hsl(var(--primary)/0.2)]",
+                    isActive && "border-primary/40 ring-1 ring-primary/20 shadow-[0_4px_18px_-8px_hsl(var(--primary)/0.25)]",
                   )}>
                     {/* Header */}
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -562,8 +681,8 @@ export default function SettingsPage() {
                 {/* Theme picker */}
                 <div className="space-y-3">
                   <div>
-                    <p className="text-sm font-semibold text-foreground">Color Theme</p>
-                    <p className="text-xs text-muted-foreground">Choose your preferred color scheme for the interface.</p>
+                    <p className="type-h3">Color Theme</p>
+                    <p className="type-body-sm mt-0.5">Choose your preferred color scheme for the interface.</p>
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     {(["dark", "light", "system"] as Theme[]).map((option) => (
@@ -610,8 +729,8 @@ export default function SettingsPage() {
                 {/* Compact mode */}
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-sm font-semibold text-foreground">Compact Mode</p>
-                    <p className="text-xs text-muted-foreground">Reduce spacing between elements for a denser layout.</p>
+                    <p className="type-h3">Compact Mode</p>
+                    <p className="type-body-sm mt-0.5">Reduce spacing between elements for a denser layout.</p>
                   </div>
                   <Switch checked={compactMode} onCheckedChange={setCompactMode} />
                 </div>
@@ -622,8 +741,8 @@ export default function SettingsPage() {
                 <div className="space-y-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-sm font-semibold text-foreground">Code Font</p>
-                      <p className="text-xs text-muted-foreground">Font used in SQL blocks, query results, and code views.</p>
+                      <p className="type-h3">Code Font</p>
+                      <p className="type-body-sm mt-0.5">Font used in SQL blocks, query results, and code views.</p>
                     </div>
                     <Select value={codeFont} onValueChange={(v) => setCodeFont(v as CodeFont)}>
                       <SelectTrigger className="w-full border-border bg-card sm:w-48">
@@ -681,10 +800,10 @@ export default function SettingsPage() {
                 return (
                   <Card key={kpi.label} className="rounded-[16px] border-border/55 bg-card/80 p-4">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{kpi.label}</p>
+                      <p className="stat-label">{kpi.label}</p>
                       <Icon size={13} className="mt-0.5 shrink-0 text-muted-foreground/40" />
                     </div>
-                    <p className="mt-2 text-xl font-bold tracking-tight text-foreground">{kpi.value}</p>
+                    <p className="stat-number mt-2">{kpi.value}</p>
                   </Card>
                 );
               })}

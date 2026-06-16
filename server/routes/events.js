@@ -1,19 +1,19 @@
-// ─── Server-Sent Events (F6) ──────────────────────────────────────────────────
+// ─── Server-Sent Events ────────────────────────────────────────────────────────
 // Live push channel for notifications and scheduled-run/alert completions.
 // Works fully on the long-lived Express server (self-hosted / local dev).
 // Behind Lambda + API Gateway responses are buffered, so the stream closes
 // quickly — clients (src/lib/events-client.ts) detect this and silently fall
 // back to their existing polling. Either way nothing breaks.
 //
-// Auth: EventSource cannot set headers, so the JWT is passed as ?token=...
+// Auth: EventSource cannot set headers, so the Clerk token is passed as ?token=
 
 const express = require("express");
-const jwt = require("jsonwebtoken");
+const { verifyToken } = require("@clerk/backend");
 const { getDb } = require("../db");
-const { JWT_SECRET } = require("../middleware/auth");
 
 const router = express.Router();
 
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
 const POLL_INTERVAL_MS = 5000;
 const HEARTBEAT_MS = 25000;
 const MAX_LIFETIME_MS = 10 * 60 * 1000; // re-handshake every 10 min
@@ -21,8 +21,8 @@ const MAX_LIFETIME_MS = 10 * 60 * 1000; // re-handshake every 10 min
 router.get("/stream", async (req, res) => {
   let userId;
   try {
-    const payload = jwt.verify(String(req.query.token || ""), JWT_SECRET);
-    userId = payload.userId;
+    const payload = await verifyToken(String(req.query.token || ""), { secretKey: CLERK_SECRET_KEY });
+    userId = payload.sub;
   } catch {
     return res.status(401).json({ error: "Unauthorized — invalid token" });
   }

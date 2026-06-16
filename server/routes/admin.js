@@ -102,8 +102,7 @@ router.put("/users/:id/role", requirePaidAdmin, async (req, res) => {
     }
 
     const db = await getDb();
-    const { ObjectId } = require("mongodb");
-    const target = await db.collection("users").findOne({ _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId });
+    const target = await db.collection("users").findOne({ _id: req.params.id, organizationId: req.adminUser.organizationId });
     if (!target) return res.status(404).json({ error: "User not found in your organization" });
 
     // Prevent demoting the last admin
@@ -115,7 +114,7 @@ router.put("/users/:id/role", requirePaidAdmin, async (req, res) => {
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId },
+      { _id: req.params.id, organizationId: req.adminUser.organizationId },
       { $set: { role } }
     );
 
@@ -136,8 +135,7 @@ router.put("/users/:id/status", requirePaidAdmin, async (req, res) => {
     }
 
     const db = await getDb();
-    const { ObjectId } = require("mongodb");
-    const target = await db.collection("users").findOne({ _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId });
+    const target = await db.collection("users").findOne({ _id: req.params.id, organizationId: req.adminUser.organizationId });
     if (!target) return res.status(404).json({ error: "User not found in your organization" });
 
     // Prevent self-suspension
@@ -146,7 +144,7 @@ router.put("/users/:id/status", requirePaidAdmin, async (req, res) => {
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(req.params.id), organizationId: req.adminUser.organizationId },
+      { _id: req.params.id, organizationId: req.adminUser.organizationId },
       { $set: { status } }
     );
 
@@ -204,22 +202,19 @@ router.post("/users/invite", requirePaidAdmin, async (req, res) => {
 // ─── DELETE /api/admin/users/:id — delete user (admin only) ─────────────────
 router.delete("/users/:id", requirePaidAdmin, async (req, res) => {
   try {
-    const { ObjectId } = require("mongodb");
-
     // Prevent self-deletion
     if (req.params.id === req.userId) {
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
 
     const db = await getDb();
-    const id = new ObjectId(req.params.id);
     const userId = req.params.id;
-    const target = await db.collection("users").findOne({ _id: id, organizationId: req.adminUser.organizationId });
+    const target = await db.collection("users").findOne({ _id: userId, organizationId: req.adminUser.organizationId });
     if (!target) return res.status(404).json({ error: "User not found in your organization" });
 
     // Delete user and all their data
     await Promise.all([
-      db.collection("users").deleteOne({ _id: id, organizationId: req.adminUser.organizationId }),
+      db.collection("users").deleteOne({ _id: userId, organizationId: req.adminUser.organizationId }),
       db.collection("datasets").deleteMany({ userId }),
       db.collection("history").deleteMany({ userId }),
       db.collection("settings").deleteMany({ userId }),

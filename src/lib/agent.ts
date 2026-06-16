@@ -530,7 +530,7 @@ function isSmallModel(model: string): boolean {
 // loaded dataset. This dramatically reduces column-name hallucination in small
 // models because they see their own data in the examples.
 function buildSchemaGroundedExamples(columns: SheetData["columns"]): string {
-  const numericCols = columns.filter((c) => c.dtype === "number" || c.dtype === "float" || c.dtype === "integer");
+  const numericCols = columns.filter((c) => c.dtype === "number");
   const catCols = columns.filter((c) => c.dtype === "string" && c.uniqueCount <= 50);
   const dateCols = columns.filter((c) => c.dtype === "date");
   const anyCols = columns;
@@ -774,9 +774,7 @@ function detectSubjectiveQuery(
   if (METRIC_SIGNAL_WORDS.some((m) => q.includes(m))) return null;
 
   // Don't fire if a numeric column name is directly mentioned
-  const numericCols = columns.filter(
-    (c) => c.dtype === "number" || c.dtype === "float" || c.dtype === "integer"
-  );
+  const numericCols = columns.filter((c) => c.dtype === "number");
   if (
     numericCols.some((c) =>
       q.includes(c.name.toLowerCase().replace(/_+/g, " "))
@@ -6311,10 +6309,11 @@ export async function* runSheetAgent(
       durationMs: 0,
       isFinal: false,
     };
-    // Dashboards need a larger output budget — 8-10 panels each with a SQL
-    // query won't fit in the default 1500-token planning cap.
+    // Dashboards need a larger output budget — 12-16 panels each with a SQL
+    // query won't fit in the default planning cap. Give the planner generous
+    // headroom (the JSON-recovery path still salvages a truncated tail).
     const dashboardPlanningLlm = (messages: { role: string; content: string }[], systemPrompt: string) =>
-      callLLMWithRetry(provider, model, apiKey, messages, systemPrompt, temperature, Math.min(Math.max(maxTokens, 3500), 4096), providerOptions);
+      callLLMWithRetry(provider, model, apiKey, messages, systemPrompt, temperature, Math.min(Math.max(maxTokens, 6000), 8192), providerOptions);
 
     const built = await buildDashboardFromQuestion({
       question,

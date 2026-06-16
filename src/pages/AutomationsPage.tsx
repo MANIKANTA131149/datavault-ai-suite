@@ -58,15 +58,15 @@ function ScheduleCard({ schedule, datasetName, onToggle, onDelete, busy }: {
 }) {
   return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="min-w-0">
-      <Card className="min-w-0 overflow-hidden p-5 transition-all hover:-translate-y-0.5">
+      <Card className="glass-card-hover min-w-0 overflow-hidden card-pad-sm">
         <div className="flex items-start justify-between gap-3 mb-3 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-[10px] bg-primary/10 flex items-center justify-center shrink-0">
               <CalendarClock size={14} className="text-primary" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground truncate">{schedule.name}</h3>
-              <p className="text-xs text-muted-foreground truncate">{schedule.question || "Scheduled SQL query"}</p>
+              <h3 className="type-h3 truncate">{schedule.name}</h3>
+              <p className="type-caption truncate">{schedule.question || "Scheduled SQL query"}</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -121,15 +121,15 @@ function AlertCard({ alert, datasetName, onToggle, onDelete, busy }: {
   const fired = !!alert.lastFired && alert.lastChecked === null ? false : !!alert.lastFired;
   return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="min-w-0">
-      <Card className="min-w-0 overflow-hidden p-5 transition-all hover:-translate-y-0.5">
+      <Card className="glass-card-hover min-w-0 overflow-hidden card-pad-sm">
         <div className="flex items-start justify-between gap-3 mb-3 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-[10px] bg-amber-500/10 flex items-center justify-center shrink-0">
               <BellRing size={14} className="text-amber-500" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground truncate">{alert.label}</h3>
-              <p className="text-xs text-muted-foreground truncate">
+              <h3 className="type-h3 truncate">{alert.label}</h3>
+              <p className="type-caption truncate">
                 {alert.conditionNl || `Fires when value ${alert.operator} ${alert.threshold.toLocaleString()}`}
               </p>
             </div>

@@ -56,6 +56,7 @@ import { DensityToggle } from "@/components/shared/DensityToggle";
 import { DbTypeIcon } from "@/components/DbTypeIcon";
 import { toast } from "@/lib/toast";
 import { api } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
 import {
   useConnectionStore,
@@ -393,18 +394,18 @@ function ConnectionFormDialog({
               </div>
             </div>
 
-            <div>
-              <Label className="text-xs text-muted-foreground">Connection name *</Label>
+            <div className="form-field">
+              <Label className="form-field-label">Connection name *</Label>
               <Input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="e.g. Production PostgreSQL"
-                className="mt-1.5 border-border bg-card"
+                className="border-border bg-card"
               />
             </div>
 
             <Separator className="bg-border" />
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Connection details</p>
+            <p className="form-section-title">Connection Details</p>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {fields.map((field) => {
@@ -413,8 +414,8 @@ function ConnectionFormDialog({
                 const visible = showSensitive[field];
 
                 return (
-                  <div key={field} className={isLargeField ? "col-span-full" : ""}>
-                    <Label className="text-xs text-muted-foreground">{DB_FIELD_LABELS[field] || field}</Label>
+                  <div key={field} className={cn("form-field", isLargeField ? "col-span-full" : "")}>
+                    <Label className="form-field-label">{DB_FIELD_LABELS[field] || field}</Label>
                     {isLargeField ? (
                       <Textarea
                         value={config[field] || ""}
@@ -451,22 +452,22 @@ function ConnectionFormDialog({
 
             <Separator className="bg-border" />
 
-            <div>
-              <Label className="text-xs text-muted-foreground">Description</Label>
+            <div className="form-field">
+              <Label className="form-field-label">Description</Label>
               <Input
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 placeholder="Optional description"
-                className="mt-1.5 border-border bg-card"
+                className="border-border bg-card"
               />
             </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Tags</Label>
+            <div className="form-field">
+              <Label className="form-field-label">Tags</Label>
               <Input
                 value={tags}
                 onChange={(event) => setTags(event.target.value)}
                 placeholder="production, analytics, finance"
-                className="mt-1.5 border-border bg-card"
+                className="border-border bg-card"
               />
             </div>
           </div>

@@ -47,18 +47,29 @@ export function CommandPalette() {
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      const typing =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement;
+
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-        if (
-          e.target instanceof HTMLInputElement ||
-          e.target instanceof HTMLTextAreaElement
-        ) return;
+        if (typing) return;
         e.preventDefault();
         setOpen(!open);
+        return;
+      }
+
+      // ⌘Q / Ctrl+Q → jump straight to a new query (advertised in the footer
+      // and the shortcuts panel). Skipped while typing in a field.
+      if (e.key.toLowerCase() === "q" && (e.metaKey || e.ctrlKey)) {
+        if (typing) return;
+        e.preventDefault();
+        setOpen(false);
+        navigate("/app/query");
       }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [open, setOpen]);
+  }, [open, setOpen, navigate]);
 
   const run = useCallback(
     (fn: () => void) => {

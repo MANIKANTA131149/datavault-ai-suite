@@ -28,9 +28,7 @@ interface AuthState {
   isFirstLogin: boolean;
   hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
-  loginWithAuth0: (accessToken: string) => Promise<void>;
+  hydrateFromClerk: (clerkToken: string, isNew?: boolean) => Promise<void>;
   logout: () => Promise<void>;
   setFirstLoginDone: () => void;
   updateUserName: (name: string) => void;
@@ -63,25 +61,24 @@ export const useAuthStore = create<AuthState>()(
       hasHydrated: false,
       setHasHydrated: (v) => set({ hasHydrated: v }),
 
-      // ─── Sign In ───────────────────────────────────────────────────────────
-      login: async (email: string, password: string) => {
-        const res = await fetch(`${API}/auth/signin`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
+      // Called by ClerkAuthBridge whenever Clerk has an active session.
+      // Stores the Clerk token, then calls /auth/me which lazily creates the Mongo user.
+      hydrateFromClerk: async (clerkToken: string, isNew = false) => {
+        const res = await fetch(`${API}/auth/me`, {
+          headers: { Authorization: `Bearer ${clerkToken}` },
         });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Login failed" }));
-          throw new Error(err.error ?? "Login failed");
+          const err = await res.json().catch(() => ({ error: "Auth failed" }));
+          throw new Error(err.error ?? "Failed to authenticate");
         }
-        const { token, user } = await res.json();
+        const user = await res.json();
         set({
-          token,
+          token: clerkToken,
           user: {
             name: user.name,
             email: user.email,
             id: user.id || "",
-            avatarInitials: buildInitials(user.name),
+            avatarInitials: buildInitials(user.name || "U"),
             role: user.role || "viewer",
             planTier: user.planTier || "free",
             planStatus: user.planStatus || "active",
@@ -91,95 +88,17 @@ export const useAuthStore = create<AuthState>()(
             planOwnerId: user.planOwnerId || user.organizationOwnerId || user.id || "",
             isPlanOwner: Boolean(user.isPlanOwner ?? true),
           },
-          isFirstLogin: false,
+          isFirstLogin: isNew,
         });
       },
 
-      // ─── Auth0 Social Login ─────────────────────────────────────────────────
-      loginWithAuth0: async (idToken: string) => {
-        const res = await fetch(`${API}/auth/auth0-login`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Auth0 login failed" }));
-          throw new Error(err.error ?? "Auth0 login failed");
-        }
-        const { token, user } = await res.json();
-        set({
-          token,
-          user: {
-            name: user.name,
-            email: user.email,
-            id: user.id || "",
-            avatarInitials: buildInitials(user.name),
-            role: user.role || "viewer",
-            planTier: user.planTier || "free",
-            planStatus: user.planStatus || "active",
-            ownPlanTier: user.ownPlanTier || user.planTier || "free",
-            organizationId: user.organizationId || user.id || "",
-            organizationOwnerId: user.organizationOwnerId || user.id || "",
-            planOwnerId: user.planOwnerId || user.organizationOwnerId || user.id || "",
-            isPlanOwner: Boolean(user.isPlanOwner ?? true),
-          },
-          isFirstLogin: false,
-        });
-      },
-
-      // ─── Sign Up ───────────────────────────────────────────────────────────
-      signup: async (name: string, email: string, password: string) => {
-        const res = await fetch(`${API}/auth/signup`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, email, password }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Signup failed" }));
-          throw new Error(err.error ?? "Signup failed");
-        }
-        const { token, user } = await res.json();
-        set({
-          token,
-          user: {
-            name: user.name,
-            email: user.email,
-            id: user.id || "",
-            avatarInitials: buildInitials(user.name),
-            role: user.role || "viewer",
-            planTier: user.planTier || "free",
-            planStatus: user.planStatus || "active",
-            ownPlanTier: user.ownPlanTier || user.planTier || "free",
-            organizationId: user.organizationId || user.id || "",
-            organizationOwnerId: user.organizationOwnerId || user.id || "",
-            planOwnerId: user.planOwnerId || user.organizationOwnerId || user.id || "",
-            isPlanOwner: Boolean(user.isPlanOwner ?? true),
-          },
-          isFirstLogin: true,
-        });
-      },
-
-      // ─── Logout — clears local session only; all data stays in MongoDB ────────
+      // Clears local session only — Clerk handles the actual sign-out
       logout: async () => {
-        const token = get().token;
-        if (token) {
-          try {
-            await fetch(`${API}/auth/signout`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-            });
-          } catch {
-            // Ignore network errors on logout
-          }
-        }
         try {
           const { useLLMStore } = await import("./llm-store");
           useLLMStore.getState().clearProviderConfigs();
         } catch {
-          // Ignore store cleanup errors on logout
+          // ignore
         }
         try {
           const { useSettingsStore } = await import("./settings-store");
@@ -212,7 +131,7 @@ export const useAuthStore = create<AuthState>()(
         set({ user: { ...u, planTier, planStatus } });
       },
 
-      // Fetch fresh role from server (handles role changes by admin)
+      // Fetches fresh role/plan from server — called after admin changes
       hydrateRole: async () => {
         const token = get().token;
         if (!token) return;
@@ -240,21 +159,16 @@ export const useAuthStore = create<AuthState>()(
             }
           }
         } catch {
-          // Ignore — will use cached role
+          // ignore — will use cached role
         }
       },
 
-      // ─── RBAC Permission Helpers ───────────────────────────────────────────
+      // ─── RBAC Permission Helpers ──────────────────────────────────────────────
       isAdmin: () => get().user?.role === "admin",
       isAnalyst: () => get().user?.role === "analyst" || get().user?.role === "admin",
-      canQuery: () => {
-        const role = get().user?.role;
-        return role === "admin" || role === "analyst";
-      },
-      canUpload: () => {
-        const role = get().user?.role;
-        return role === "admin" || role === "analyst";
-      },
+      // viewer = regular signed-in user, can query and upload within plan limits
+      canQuery: () => Boolean(get().user),
+      canUpload: () => Boolean(get().user),
       canManageUsers: () => get().user?.role === "admin",
       canAccessAdmin: () => {
         const u = get().user;
@@ -268,8 +182,19 @@ export const useAuthStore = create<AuthState>()(
         token: state.token,
         isFirstLogin: state.isFirstLogin,
       }),
-      onRehydrateStorage: () => (state) => {
-        state?.setHasHydrated(true);
+      onRehydrateStorage: () => (state, error) => {
+        // state can be undefined when localStorage key is absent or corrupt.
+        // Either way, mark hydration complete so AppLayout doesn't spin forever.
+        if (state) {
+          state.setHasHydrated(true);
+        }
+        // Fallback: set directly on the store instance after it's created.
+        // Zustand calls this callback synchronously after create(), so the
+        // instance is available via the closure reference set below.
+        setTimeout(() => {
+          const s = useAuthStore.getState();
+          if (!s.hasHydrated) s.setHasHydrated(true);
+        }, 0);
       },
     }
   )
