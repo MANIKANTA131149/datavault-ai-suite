@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { AutomationCardsSkeleton } from "@/components/shared/Skeletons";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { useDatasetStore } from "@/stores/dataset-store";
@@ -425,7 +426,7 @@ export default function AutomationsPage() {
             </Button>
           </div>
           {loading ? (
-            <div className="flex min-h-[20vh] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+            <AutomationCardsSkeleton />
           ) : schedules.length === 0 ? (
             <EmptyState
               icon={CalendarClock}
@@ -457,7 +458,7 @@ export default function AutomationsPage() {
             </Button>
           </div>
           {loading ? (
-            <div className="flex min-h-[20vh] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+            <AutomationCardsSkeleton />
           ) : alerts.length === 0 ? (
             <EmptyState
               icon={BellRing}
