@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { CardGridSkeleton } from "@/components/shared/Skeletons";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { PanelChart, CHART_COLORS, CHART_TYPE_ICON, panelTypeBreakdown } from "@/components/dashboard/DashboardCharts";
 import { useDatasetStore } from "@/stores/dataset-store";
@@ -252,7 +253,7 @@ export default function DashboardsViewerPage() {
       />
 
       {loading ? (
-        <div className="flex min-h-[30vh] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        <CardGridSkeleton />
       ) : dashboards.length === 0 ? (
         <EmptyState
           icon={LayoutDashboard}

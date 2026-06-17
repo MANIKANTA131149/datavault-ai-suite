@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { CardGridSkeleton } from "@/components/shared/Skeletons";
 import { FilterToolbar } from "@/components/shared/FilterToolbar";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { glossaryApi, type GlossaryTermRecord } from "@/lib/automation-client";
@@ -131,7 +132,7 @@ export default function GlossaryPage() {
       </div>
 
       {loading ? (
-        <div className="flex min-h-[30vh] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        <CardGridSkeleton />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={BookOpen}

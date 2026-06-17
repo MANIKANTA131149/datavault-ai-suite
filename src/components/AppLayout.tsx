@@ -28,6 +28,7 @@ import { KeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { AccountMenu } from "@/components/AccountMenu";
 import { NotificationBell } from "@/components/NotificationBell";
+import { BrandLoader } from "@/components/shared/BrandLoader";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuthStore } from "@/stores/auth-store";
 import { useLLMStore } from "@/stores/llm-store";
@@ -82,52 +83,110 @@ const MOBILE_MORE_ITEMS = [
 // Shown while a lazy-loaded page chunk is downloading, so navigation never
 // leaves the content area blank.
 function PageContentLoader() {
+  return <BrandLoader variant="inline" />;
+}
+
+// Dispatched when the destination route's content has actually committed to the
+// DOM. PageProgressBar listens for this to complete the bar accurately instead
+// of guessing with a fixed timer.
+const ROUTE_READY_EVENT = "querify:route-ready";
+
+// ─── Page Progress Bar ────────────────────────────────────────────────────────
+// Slim top bar that trickles toward 90% while the next route loads (covers lazy
+// chunk fetches), then snaps to 100% and fades once the page commits. Accurate
+// because completion is driven by RouteReadyPing, not a stopwatch.
+function PageProgressBar({ locationKey }: { locationKey: string }) {
+  const [progress, setProgress] = useState(0);
+  const [visible, setVisible]   = useState(false);
+  const firstRender             = useRef(true);
+  const trickleRef              = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timersRef               = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const startedAtRef            = useRef(0);
+  const activeRef               = useRef(false);
+
+  const clearAll = () => {
+    if (trickleRef.current) { clearInterval(trickleRef.current); trickleRef.current = null; }
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  };
+
+  // Begin on every navigation (skip the layout's first mount).
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    clearAll();
+    activeRef.current = true;
+    startedAtRef.current = Date.now();
+    setVisible(true);
+    setProgress(8);
+    // Ease toward 90% but never reach it until the page is ready.
+    trickleRef.current = setInterval(() => {
+      setProgress((p) => (p >= 90 ? 90 : p + (90 - p) * 0.13 + 0.6));
+    }, 240);
+  }, [locationKey]);
+
+  // Complete when the destination route commits.
+  useEffect(() => {
+    const finish = () => {
+      if (!activeRef.current) return;
+      // Guarantee a brief minimum so instant navigations still read as a smooth sweep.
+      const wait = Math.max(0, 280 - (Date.now() - startedAtRef.current));
+      const complete = setTimeout(() => {
+        if (trickleRef.current) { clearInterval(trickleRef.current); trickleRef.current = null; }
+        setProgress(100);
+        const hide = setTimeout(() => {
+          setVisible(false);
+          activeRef.current = false;
+          const reset = setTimeout(() => setProgress(0), 220); // reset after fade
+          timersRef.current.push(reset);
+        }, 220);
+        timersRef.current.push(hide);
+      }, wait);
+      timersRef.current.push(complete);
+    };
+    window.addEventListener(ROUTE_READY_EVENT, finish);
+    return () => window.removeEventListener(ROUTE_READY_EVENT, finish);
+  }, []);
+
+  useEffect(() => clearAll, []);
+
   return (
-    <div className="flex min-h-full items-center justify-center py-24">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-x-0 top-0 z-50 h-[2.5px]"
+      style={{ opacity: visible ? 1 : 0, transition: "opacity 220ms ease" }}
+    >
+      <div
+        className="progress-bar-glow relative h-full rounded-r-full"
+        style={{
+          width: `${progress}%`,
+          background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
+          transition: progress === 100
+            ? "width 0.18s ease-out"
+            : "width 0.24s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
+      >
+        {/* Leading glow cap */}
+        <span className="absolute right-0 top-1/2 h-2.5 w-8 -translate-y-1/2 translate-x-1 rounded-full bg-primary opacity-70 blur-[5px]" />
+      </div>
     </div>
   );
 }
 
-// ─── Page Progress Bar ────────────────────────────────────────────────────────
-function PageProgressBar({ locationKey }: { locationKey: string }) {
-  const [visible, setVisible] = useState(false);
-  const [width, setWidth]     = useState(0);
-  const timerRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+// Sits inside the content Suspense boundary, so its effect only runs once the
+// (possibly lazy) destination page has resolved and committed — at which point
+// it tells PageProgressBar to finish. Two rAFs ensure the new route has painted.
+function RouteReadyPing() {
+  const location = useLocation();
   useEffect(() => {
-    setVisible(true);
-    setWidth(0);
-
-    // Rapid ramp to 80%, then freeze until page finishes
-    const t1 = setTimeout(() => setWidth(30),  30);
-    const t2 = setTimeout(() => setWidth(65),  120);
-    const t3 = setTimeout(() => setWidth(82),  260);
-
-    // Complete and hide
-    const t4 = setTimeout(() => setWidth(100), 380);
-    const t5 = setTimeout(() => setVisible(false), 640);
-
-    timerRef.current = t5;
-    return () => {
-      [t1, t2, t3, t4, t5].forEach(clearTimeout);
-    };
-  }, [locationKey]);
-
-  if (!visible) return null;
-
-  return (
-    <div
-      className="pointer-events-none absolute top-0 left-0 h-[2.5px] z-50 progress-bar-glow rounded-r-full"
-      style={{
-        width: `${width}%`,
-        background: "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)))",
-        transition: width === 100
-          ? "width 0.18s ease-out"
-          : "width 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
-      }}
-    />
-  );
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent(ROUTE_READY_EVENT));
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+  }, [location.pathname]);
+  return null;
 }
 
 // ─── Mobile Bottom Nav ────────────────────────────────────────────────────────
@@ -351,41 +410,13 @@ export default function AppLayout() {
   // Without this, AppLayout redirects to /auth while ClerkAuthBridge is still fetching
   // /auth/me, causing a redirect loop (Clerk session exists but store isn't populated yet).
   if (!clerkLoaded || !hasHydrated || (isSignedIn && !user)) {
-    return (
-      <div className="flex min-h-svh items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4">
-          <div className="relative h-11 w-11">
-            <div className="absolute inset-0 rounded-full border-2 border-primary/8" />
-            <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-            <div className="absolute inset-[5px] rounded-full border border-primary/15" />
-          </div>
-          <div className="flex flex-col items-center gap-0.5">
-            <p className="text-[13px] font-medium text-foreground">Loading</p>
-            <p className="text-[11px] text-muted-foreground">Please wait…</p>
-          </div>
-        </div>
-      </div>
-    );
+    return <BrandLoader label="Loading your workspace…" />;
   }
 
   if (!user) return <Navigate to="/auth" replace />;
 
   if (bootstrapping) {
-    return (
-      <div className="flex min-h-svh items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-4">
-          <div className="relative h-11 w-11">
-            <div className="absolute inset-0 rounded-full border-2 border-primary/8" />
-            <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-            <div className="absolute inset-[5px] rounded-full border border-primary/15" />
-          </div>
-          <div className="flex flex-col items-center gap-0.5">
-            <p className="text-[13px] font-medium text-foreground">Setting up workspace</p>
-            <p className="text-[11px] text-muted-foreground">Fetching your data…</p>
-          </div>
-        </div>
-      </div>
-    );
+    return <BrandLoader label="Setting up your workspace…" />;
   }
 
   return (
@@ -499,6 +530,7 @@ export default function AppLayout() {
                   }}
                   className="flex-1 min-h-0 overflow-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0 [&:has(>[data-page=query])]:overflow-hidden [&:has(>[data-page=query])]:pb-0"
                 >
+                  <RouteReadyPing />
                   <Outlet />
                 </motion.div>
               </AnimatePresence>

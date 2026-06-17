@@ -1688,6 +1688,35 @@
   animation: logo-pulse 3s ease-in-out infinite;
 }
 
+/* ── Brand loader: slim indeterminate progress bar ───────────────────────── */
+@keyframes loader-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.loader-track {
+  position: relative;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: hsl(var(--muted) / 0.6);
+}
+
+.loader-track::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--primary) / 0.85),
+    hsl(var(--primary)),
+    transparent
+  );
+  animation: loader-sweep 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
 
 /* ── Human-in-the-loop panel ─────────────────────────────────────────────── */
 .hitl-panel-root {

@@ -86,8 +86,27 @@ function buildNovaInvokePayload(messages, temperature = 0.1, maxTokens = 1024) {
   };
 }
 
-function buildConversePayload(messages, temperature = 0.1, maxTokens = 1024) {
+function buildConversePayload(messages, temperature = 0.1, maxTokens = 1024, tools = null) {
   const { system, chatMessages } = splitSystemMessages(messages);
+
+  // Native tool-use (Bedrock Converse `toolConfig`). tools is the same shape as
+  // the Anthropic Messages API ({name, description, input_schema}); map it to the
+  // Bedrock toolSpec shape. When tools are present we force a tool call so the
+  // agent always gets a structured command.
+  let toolConfig;
+  if (Array.isArray(tools) && tools.length > 0) {
+    toolConfig = {
+      tools: tools.map((t) => ({
+        toolSpec: {
+          name: t.name,
+          description: t.description || "",
+          inputSchema: { json: t.input_schema || t.inputSchema || { type: "object", properties: {} } },
+        },
+      })),
+      toolChoice: { any: {} },
+    };
+  }
+
   return {
     body: {
       messages: chatMessages.map((message) => ({
@@ -95,22 +114,41 @@ function buildConversePayload(messages, temperature = 0.1, maxTokens = 1024) {
         content: [{ text: message.content }],
       })),
       ...(system ? { system: [{ text: system }] } : {}),
+      ...(toolConfig ? { toolConfig } : {}),
       inferenceConfig: {
         maxTokens,
         temperature,
       },
     },
-    parser: (data) => ({
-      content: data.output?.message?.content?.[0]?.text || "",
-      inputTokens: data.usage?.inputTokens || 0,
-      outputTokens: data.usage?.outputTokens || 0,
-    }),
+    parser: (data) => {
+      const blocks = data.output?.message?.content || [];
+      const textBlock = blocks.find((b) => typeof b.text === "string");
+      const toolBlock = blocks.find((b) => b.toolUse);
+      return {
+        content: textBlock?.text || "",
+        toolCall: toolBlock?.toolUse
+          ? { name: toolBlock.toolUse.name, args: toolBlock.toolUse.input || {} }
+          : undefined,
+        inputTokens: data.usage?.inputTokens || 0,
+        outputTokens: data.usage?.outputTokens || 0,
+      };
+    },
   };
 }
 
-function buildBedrockPayload(model, messages, temperature = 0.1, maxTokens = 1024) {
+function buildBedrockPayload(model, messages, temperature = 0.1, maxTokens = 1024, tools = null) {
   const { system, chatMessages } = splitSystemMessages(messages);
   const lowerModel = model.toLowerCase();
+
+  // When the caller requests native tool-use, always go through Converse — it's
+  // the only Bedrock API with toolConfig. Applies to deepseek.v3.2 and any other
+  // Converse-capable model.
+  if (Array.isArray(tools) && tools.length > 0) {
+    return {
+      ...buildConversePayload(messages, temperature, maxTokens, tools),
+      operation: "converse",
+    };
+  }
 
   if (lowerModel.includes("amazon.nova")) {
     return buildNovaInvokePayload(messages, temperature, maxTokens);
@@ -354,7 +392,7 @@ router.get("/token-usage", authMiddleware, async (req, res) => {
 });
 
 router.post("/bedrock/chat", async (req, res) => {
-  const { model, messages, temperature, max_tokens } = req.body || {};
+  const { model, messages, temperature, max_tokens, tools } = req.body || {};
   if (!model || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Model and messages are required" });
   }
@@ -434,7 +472,7 @@ router.post("/bedrock/chat", async (req, res) => {
   }
 
   try {
-    const { body, operation, parser } = buildBedrockPayload(model, messages, temperature, max_tokens);
+    const { body, operation, parser } = buildBedrockPayload(model, messages, temperature, max_tokens, tools);
     const upstream = await signedBedrockInvoke({
       accessKeyId,
       secretAccessKey,
@@ -474,7 +512,14 @@ router.post("/bedrock/chat", async (req, res) => {
     }
 
     return res.json({
-      choices: [{ message: { role: "assistant", content: parsed.content } }],
+      choices: [{
+        message: {
+          role: "assistant",
+          content: parsed.content,
+          // Native tool-use result (Bedrock Converse toolUse), when present.
+          ...(parsed.toolCall ? { toolCall: parsed.toolCall } : {}),
+        },
+      }],
       usage: {
         prompt_tokens: parsed.inputTokens,
         completion_tokens: parsed.outputTokens,

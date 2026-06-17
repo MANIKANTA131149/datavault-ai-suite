@@ -1,4 +1,4 @@
-import { callLLM, type Provider, type LLMProviderOptions, type LLMResponse } from "./llm-client";
+import { callLLM, callLLMStream, callLLMTools, providerSupportsStreaming, providerSupportsNativeTools, type Provider, type LLMProviderOptions, type LLMResponse, type ToolSchema } from "./llm-client";
 import { loadWorkbook, runSQL, buildSqlSchemaBlock, type RegisteredTable, type SqlResult } from "./sql-engine";
 import { buildMemoryBlock, recordClarification, recordSolvedExample, hydrateAgentMemory } from "./agent-memory";
 import type { SheetData } from "./file-parser";
@@ -8,6 +8,7 @@ import { detectAnomalies, formatObservations } from "./anomaly-detector";
 import { isQualityReportRequest, buildQualityReport, formatQualityReport } from "./data-quality";
 import { isDashboardRequest, buildDashboardFromQuestion } from "./dashboard-builder";
 import { detectMultiIntent, decomposeQuestion, synthesizeParts, rowsToMarkdownTable } from "./agent-orchestrator";
+import { correlationMatrix, profileColumns, seasonalForecast } from "./data-tools";
 
 export interface AgentStep {
   turn: number;
@@ -20,6 +21,12 @@ export interface AgentStep {
   isFinal: boolean;
   hitlKind?: "clarification" | "approval";
   hitlPrompt?: string;
+  /**
+   * One-line "why I chose this action" the model emits alongside its command.
+   * Optional and purely additive — older steps and other agents simply omit it.
+   * Surfaced in the UI under each step to make the agent's reasoning visible.
+   */
+  reasoning?: string;
 }
 
 export interface HitlController {
@@ -2478,7 +2485,7 @@ function extractFirstJsonObject(text: string) {
   return null;
 }
 
-function parseCommand(text: string): { command: string; args?: Record<string, any> } | null {
+function parseCommand(text: string): { command: string; args?: Record<string, any>; reasoning?: string } | null {
   if (!text || typeof text !== "string") return null;
 
   // Strip common LLM wrapping artifacts
@@ -2631,10 +2638,16 @@ async function callLLMWithRetry(
   maxTokens: number,
   providerOptions: LLMProviderOptions,
   maxRetries = 2,
+  onToken?: (delta: string) => void,
 ): Promise<LLMResponse> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
+      // Stream when a token sink is provided AND the provider can stream in the
+      // browser; otherwise the non-streaming path (identical to before).
+      if (onToken && providerSupportsStreaming(provider)) {
+        return await callLLMStream(provider, model, apiKey, messages, prompt, temperature, maxTokens, providerOptions, onToken);
+      }
       return await callLLM(provider, model, apiKey, messages, prompt, temperature, maxTokens, providerOptions);
     } catch (err: any) {
       lastErr = err;
@@ -6138,6 +6151,18 @@ COMMANDS — reply with exactly ONE JSON object per turn, no prose, no markdown 
 4. {"command":"Answer","args":{"value":"..."}}
    Plain-text final answer — for greetings, meta questions, or answers that genuinely need no table.
 
+REASONING (always include, and make it REAL): add a top-level "reasoning" string to EVERY command — ONE short, SPECIFIC sentence about THIS exact step in the present moment. It is streamed to the user as your live thinking, so it must reflect what you just learned and what you're doing RIGHT NOW.
+RULES for reasoning:
+  - Be specific to this turn's action and data — name the actual column/value/table you're acting on.
+  - NEVER reuse the same sentence twice in one run. Each turn's reasoning must describe a DIFFERENT step than the last.
+  - On a retry/correction, say WHAT went wrong and HOW you're fixing it (e.g. "Last query returned 0 rows — the date filter used > instead of >=, fixing it").
+  - Describe the action you are taking, NOT the eventual conclusion. (Wrong: "Forecast shows salary declining." Right: "Aggregating avg salary by month so I can fit a trend line.")
+  - No markdown, no restating the question, max ~22 words.
+GOOD sequence example (notice each line is different and tied to its step):
+  Turn 1 {"reasoning":"Checking which columns look like dates and which are numeric before I aggregate","command":"RunSQL",...}
+  Turn 2 {"reasoning":"hire_date is a real DATE, salary is text with $ — I'll cast salary and group by month","command":"ExecuteFinalSQL",...}
+  Turn 3 {"reasoning":"Result has 8 monthly rows, salaries parsed correctly, totals look sane — confirming","command":"ConfirmAnswer",...}
+
 ━━━ CLARIFICATION POLICY (read carefully) ━━━
 Your default is to ATTEMPT the query. You have the full schema — most questions can be answered directly.
 
@@ -6197,6 +6222,28 @@ FORECASTING / PREDICTION RECIPE — for "predict", "next year/month", "future tr
   ORDER BY kind, period
 Never refuse a prediction — a linear trend is always computable. Round to 2 decimals.
 
+━━━ EXTRA ANALYSIS TOOLS (optional — use when they fit the question) ━━━
+Besides RunSQL/ExecuteFinalSQL you may issue these specialized commands. Each runs deterministically and feeds its result back to you for the next turn. Always include "reasoning".
+5. {"command":"Sample","args":{"table":"<table>","n":20}}
+   Random representative sample of rows. Good first look at unfamiliar data.
+6. {"command":"ProfileSchema","args":{"table":"<table>"}}   (optionally args.sql for a subset)
+   Per-column profile: null %, distinct count, numeric min/max/mean/median/std, or top text values. Use for "profile/overview/describe this data" or before a complex query.
+7. {"command":"CorrelationMatrix","args":{"table":"<table>"}}   (optionally args.columns:[...])
+   Pearson correlations across numeric columns; returns the strongest pairs. Use for "correlation/relationship between" questions.
+8. {"command":"ForecastSeasonal","args":{"sql":"<series query>","horizon":6,"seasonLength":12}}
+   Linear-trend + additive-seasonality forecast. args.sql MUST return two columns — a period label and a numeric value — one ordered row per period (e.g. SELECT strftime(date_trunc('month',"d"),'%Y-%m') AS period, sum("amt") AS value FROM "t" GROUP BY 1 ORDER BY 1). seasonLength: 12 monthly, 4 quarterly, 7 daily/weekly. Prefer this over the SQL forecast recipe when the series has a repeating seasonal cycle.
+
+COHORT ANALYSIS RECIPE — for "cohort", "retention", "by signup month" questions, write ONE ExecuteFinalSQL:
+  WITH first_seen AS (
+    SELECT "user_id", min(date_trunc('month', "event_date")) AS cohort FROM "t" GROUP BY "user_id"
+  )
+  SELECT strftime(f.cohort,'%Y-%m') AS cohort,
+         date_diff('month', f.cohort, date_trunc('month', t."event_date")) AS period_offset,
+         count(DISTINCT t."user_id") AS users
+  FROM "t" t JOIN first_seen f USING ("user_id")
+  GROUP BY 1, 2 ORDER BY 1, 2
+Adapt column names to the schema; pick the right id/date columns.
+
 WORKFLOW:
 1. Schema (tables, columns, types, sample + categorical values) is provided below — never ask for it.
 2. Decide: can I answer directly? If yes → RunSQL probe if needed, then ExecuteFinalSQL.
@@ -6206,12 +6253,136 @@ WORKFLOW:
 
 SELF-CORRECTION: SQL errors are recoverable. Diagnose the cause and immediately reissue a corrected command. Never apologize, never give up.`;
 
+// ─── Native tool schemas (Phase 2) ──────────────────────────────────────────
+// Structured restatement of the SQL agent's commands for providers with native
+// function-calling (Bedrock Converse / Anthropic / OpenAI). The downstream
+// switch is identical whether the command came from parsed JSON or a tool call,
+// so this changes only HOW a command is obtained. The prompt-JSON path remains
+// the universal fallback. "reasoning" rides as an arg so it survives tool-use.
+const SHEET_AGENT_TOOLS: ToolSchema[] = [
+  {
+    name: "RunSQL",
+    description: "Run an exploratory read-only SQL probe (always LIMIT) to inspect value formats, distinct values, or sanity-check before the final query.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string", description: "One short sentence on why you're running this probe." },
+        sql: { type: "string", description: "A read-only DuckDB SELECT/WITH query with a small LIMIT." },
+      },
+      required: ["sql"],
+    },
+  },
+  {
+    name: "ExecuteFinalSQL",
+    description: "Run THE single query whose complete result answers the user's question. Its rows are shown to the user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string", description: "One short sentence on why this query answers the question." },
+        sql: { type: "string", description: "The complete read-only DuckDB query that answers the question." },
+      },
+      required: ["sql"],
+    },
+  },
+  {
+    name: "AskUser",
+    description: "Ask the user ONE clarifying question — only when the schema and a probe cannot resolve a genuine ambiguity.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string" },
+        question: { type: "string", description: "The clarifying question." },
+        options: { type: "array", items: { type: "string" }, description: "Optional 2-6 concrete choices from the schema." },
+      },
+      required: ["question"],
+    },
+  },
+  {
+    name: "Answer",
+    description: "Give a plain-text final answer — for greetings, meta questions, or answers that need no table.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string" },
+        value: { type: "string", description: "The answer text." },
+      },
+      required: ["value"],
+    },
+  },
+  {
+    name: "ConfirmAnswer",
+    description: "Confirm that the pending verified result correctly answers the question (use only at the VERIFICATION step).",
+    input_schema: {
+      type: "object",
+      properties: {
+        critique: { type: "string", description: "One sentence: what you checked and why the result is sound." },
+      },
+    },
+  },
+  {
+    name: "Sample",
+    description: "Random sample of rows from a table — a quick representative peek at unfamiliar data.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string" },
+        table: { type: "string", description: "Table name from the schema." },
+        n: { type: "integer", description: "Number of rows to sample (default 20)." },
+      },
+    },
+  },
+  {
+    name: "ProfileSchema",
+    description: "Per-column profile (null %, distinct count, numeric min/max/mean/median/std, top text values) of a table. Use for profile/overview/describe requests.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string" },
+        table: { type: "string", description: "Table name from the schema." },
+      },
+    },
+  },
+  {
+    name: "CorrelationMatrix",
+    description: "Pearson correlations across numeric columns of a table; returns the strongest pairs. Use for correlation/relationship questions.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string" },
+        table: { type: "string", description: "Table name from the schema." },
+        columns: { type: "array", items: { type: "string" }, description: "Optional explicit numeric columns." },
+      },
+    },
+  },
+  {
+    name: "ForecastSeasonal",
+    description: "Linear-trend + seasonal forecast. args.sql MUST return two columns (a period label and a numeric value), one ordered row per period.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reasoning: { type: "string" },
+        sql: { type: "string", description: "Series query: SELECT <period> AS period, <agg> AS value FROM ... GROUP BY 1 ORDER BY 1." },
+        horizon: { type: "integer", description: "Number of future periods (default 6)." },
+        seasonLength: { type: "integer", description: "Periods per cycle: 12 monthly, 4 quarterly, 7 daily/weekly." },
+      },
+      required: ["sql"],
+    },
+  },
+];
+
+// Phase 2 default-on for the capable providers we've validated. Bedrock/querify
+// run deepseek.v3.2 via Converse toolConfig per the user's directive; Anthropic
+// and OpenAI use their native tool APIs. Any failure falls back to prompt-JSON.
+function nativeToolsEnabled(provider: Provider): boolean {
+  return providerSupportsNativeTools(provider);
+}
+
 function findAllNullColumns(result: SqlResult): string[] {
   if (result.rows.length === 0) return [];
   return result.columns.filter((c) => result.rows.every((r) => r[c] === null || r[c] === undefined));
 }
 
-function buildSqlVerificationMessage(question: string, sql: string, result: SqlResult): string {
+function buildSqlVerificationMessage(question: string, sql: string, result: SqlResult, reflect = false): string {
   const sample = result.rows.slice(0, 5);
   const allNull = findAllNullColumns(result);
   return [
@@ -6224,7 +6395,9 @@ function buildSqlVerificationMessage(question: string, sql: string, result: SqlR
       ? `⛔ WARNING: these columns are NULL in EVERY row: ${allNull.map((c) => `"${c}"`).join(", ")}. If the question needs them, this result is WRONG — usually a failed date parse, a bad cast, or a join key mismatch. Probe the RAW source column with RunSQL (SELECT "col" FROM "table" LIMIT 5), fix the SQL, and resend ExecuteFinalSQL. Do NOT confirm.`
       : ``,
     `Checklist: right table? right columns? filters match the question exactly (direction of comparisons, AND vs OR)? aggregates computed over the intended values (casts applied)? nothing important excluded by NULLs?`,
-    `If the result correctly answers the question, reply {"command":"ConfirmAnswer"}.`,
+    reflect
+      ? `If the result correctly answers the question, reply {"command":"ConfirmAnswer","args":{"critique":"<one sentence: what you checked and why the result is sound>"}}.`
+      : `If the result correctly answers the question, reply {"command":"ConfirmAnswer"}.`,
     `If anything is wrong, reply with a corrected {"command":"ExecuteFinalSQL","args":{"sql":"..."}}.`,
   ].filter(Boolean).join("\n");
 }
@@ -6251,7 +6424,11 @@ export async function* runSheetAgent(
   conversationHistory?: ConversationContext[],
   providerOptions: LLMProviderOptions = {},
   hitlController?: HitlController,
-  datasetId?: string | null
+  datasetId?: string | null,
+  // Optional live-thought sink: receives raw token deltas as the model writes
+  // each turn, for the UI's streaming "thinking" panel. Out-of-band (the
+  // AgentStep stream stays pure). No-ops on providers that can't stream.
+  onThought?: (delta: string) => void
 ): AsyncGenerator<AgentStep> {
   // ── Engine init (lazy WASM load). Failure → legacy DSL agent, never a dead end.
   const workbookKey =
@@ -6443,6 +6620,9 @@ export async function* runSheetAgent(
   // Verification state: the candidate final result awaiting model confirmation.
   let pendingFinal: { sql: string; result: SqlResult } | null = null;
   let verificationUsed = false;
+  // Last reasoning shown — used to suppress verbatim repeats so the live trace
+  // reflects evolving thinking, not a single echoed sentence.
+  let lastReasoning: string | undefined;
 
   const finalStepFrom = (sql: string, result: SqlResult, tokens: { input: number; output: number }, durationMs: number, narrative?: string): AgentStep => {
     // Every result that reaches the user passed verification — remember it as
@@ -6493,23 +6673,78 @@ export async function* runSheetAgent(
     }
   };
 
+  // ── Self-reflection gate (Phase 1d) ──────────────────────────────────────
+  // For genuinely complex questions only, the agent (a) sketches a short plan
+  // before acting and (b) self-critiques the candidate result at the existing
+  // verification turn. Simple questions skip both → zero added latency. Bounded
+  // by maxTurns + the single verification pass, so no new unbounded loop.
+  const reflectionEnabled = detectQueryComplexity(question, sheets).isComplex;
+
+  if (reflectionEnabled) {
+    try {
+      const planResp = await planningLlm(
+        [{ role: "user", content: `Question: "${question}"\n\nSchema:\n${schemaBlock.slice(0, 2500)}\n\nIn 2-4 short numbered steps, outline how you'll answer this with SQL. Plain text only — no JSON, no SQL yet, just the plan.` }],
+        "You are a senior data analyst. Briefly plan before you query. Be concrete and concise."
+      );
+      const planText = (planResp.content || "").trim();
+      if (planText && !planText.startsWith("{")) {
+        yield {
+          turn: 0,
+          command: "Plan",
+          args: {},
+          result: planText,
+          tokens: { input: planResp.inputTokens, output: planResp.outputTokens },
+          durationMs: 0,
+          isFinal: false,
+        };
+        // Seed the plan into context so the loop follows it.
+        introParts.push(`Your plan for this question:\n${planText}\n\nFollow it, adapting as results come in.`);
+        llmInput = introParts.join("\n\n");
+      }
+    } catch { /* planning is best-effort — fall through to the normal loop */ }
+  }
+
   while (turn < maxTurns) {
     turn++;
     const startTime = Date.now();
     history.push({ role: "user", content: llmInput });
 
-    let llmResponse: LLMResponse;
+    let llmResponse: LLMResponse | null = null;
+    let parsed: { command: string; args?: Record<string, any>; reasoning?: string } | null = null;
+    let __nativeAcquired = false;
     try {
-      llmResponse = await callLLMWithRetry(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions);
+      // Signal the UI that a fresh thought stream begins for this turn, then
+      // forward each token delta. The agent's command JSON is parsed from the
+      // full content afterwards — streaming is purely for live visibility.
+      if (onThought) onThought(" RESET ");
+      // Native tool-use first on capable providers (deepseek.v3.2 via Bedrock
+      // Converse toolConfig, Anthropic/OpenAI native). Any failure -> JSON path.
+      if (nativeToolsEnabled(provider)) {
+        try {
+          const toolResp = await callLLMTools(provider, model, apiKey, history, prompt, SHEET_AGENT_TOOLS, temperature, maxTokens, providerOptions);
+          llmResponse = toolResp;
+          if (toolResp.toolCall) {
+            const a = (toolResp.toolCall.args || {}) as Record<string, any>;
+            parsed = { command: toolResp.toolCall.name, args: a, reasoning: typeof a.reasoning === "string" ? a.reasoning : undefined };
+            __nativeAcquired = true;
+            history.push({ role: "assistant", content: JSON.stringify({ command: toolResp.toolCall.name, args: a }) });
+          }
+        } catch (toolErr) {
+          console.warn("[agent] native tool-use failed, falling back to prompt-JSON:", toolErr);
+        }
+      }
+      if (!__nativeAcquired) {
+        llmResponse = await callLLMWithRetry(provider, model, apiKey, history, prompt, temperature, maxTokens, providerOptions, 2, onThought);
+        history.push({ role: "assistant", content: llmResponse.content });
+      }
     } catch (err: any) {
       yield { turn, command: "Error", args: {}, result: err.message, tokens: { input: 0, output: 0 }, durationMs: Date.now() - startTime, isFinal: true };
       return;
     }
-    history.push({ role: "assistant", content: llmResponse.content });
-    const tokens = { input: llmResponse.inputTokens, output: llmResponse.outputTokens };
+    const tokens = { input: llmResponse!.inputTokens, output: llmResponse!.outputTokens };
 
     try {
-      const parsed = parseCommand(llmResponse.content);
+      if (!parsed) parsed = parseCommand(llmResponse!.content);
       if (!parsed) {
         yield { turn, command: "PARSE_ERROR", args: {}, result: "Could not parse command, retrying...", tokens, durationMs: Date.now() - startTime, isFinal: false };
         llmInput = "Invalid response. Reply ONLY with a single JSON command object — no prose, no markdown.";
@@ -6517,18 +6752,53 @@ export async function* runSheetAgent(
       }
       const { command, args = {} } = parsed;
       const rawArgs = (args || {}) as Record<string, any>;
+      // Per-step reasoning the model emits ("why this command"). We keep it only
+      // when it's genuinely NEW — a model that repeats the same sentence (or
+      // leaks a stale conclusion onto every step) is filtered out so the trace
+      // reflects real, evolving thinking rather than a hardcoded-looking echo.
+      let reasoning = typeof parsed.reasoning === "string" && parsed.reasoning.trim()
+        ? parsed.reasoning.trim()
+        : undefined;
+      if (reasoning && reasoning === lastReasoning) reasoning = undefined; // drop verbatim repeats
+      // `withReason` attaches the (de-duped) model reasoning; retry/validation
+      // branches pass an explicit `why` that describes the actual situation
+      // ("got 0 rows — rechecking the filter"), which always wins over a stale line.
+      const withReason = (s: AgentStep, why?: string): AgentStep => {
+        const r = why ?? reasoning;
+        if (r) { lastReasoning = r; return { ...s, reasoning: r }; }
+        return s;
+      };
 
       // ── Confirmation of a verified result ────────────────────────────────
       if (pendingFinal && (command === "ConfirmAnswer" || command === "Confirm" || command === "Answer")) {
-        yield {
+        // For complex questions, surface the model's self-critique as a visible
+        // Reflect step before finalizing (reuses this existing verification turn —
+        // no extra LLM call, no parallel loop).
+        if (reflectionEnabled) {
+          const critique = typeof rawArgs.critique === "string" && rawArgs.critique.trim()
+            ? rawArgs.critique.trim()
+            : reasoning;
+          if (critique) {
+            yield {
+              turn,
+              command: "Reflect",
+              args: {},
+              result: critique,
+              tokens,
+              durationMs: Date.now() - startTime,
+              isFinal: false,
+            };
+          }
+        }
+        yield withReason({
           turn,
           command: "VerifyResult",
           args: {},
           result: "Result verified against the question.",
-          tokens,
+          tokens: reflectionEnabled ? { input: 0, output: 0 } : tokens,
           durationMs: Date.now() - startTime,
           isFinal: false,
-        };
+        });
         const insight = await generateInsight(pendingFinal.sql, pendingFinal.result);
         yield finalStepFrom(pendingFinal.sql, pendingFinal.result, { input: 0, output: 0 }, 0, insight);
         return;
@@ -6538,7 +6808,7 @@ export async function* runSheetAgent(
         case "GetSchema":
         case "GetColumns":
         case "GetSheetDescription": {
-          yield { turn, command: "GetSchema", args: rawArgs, result: schemaBlock, tokens, durationMs: Date.now() - startTime, isFinal: false };
+          yield withReason({ turn, command: "GetSchema", args: rawArgs, result: schemaBlock, tokens, durationMs: Date.now() - startTime, isFinal: false });
           llmInput = `Schema:\n${schemaBlock}\n\nNow answer the question with RunSQL or ExecuteFinalSQL.`;
           continue;
         }
@@ -6547,13 +6817,96 @@ export async function* runSheetAgent(
           const sql = String(rawArgs.sql ?? rawArgs.query ?? "");
           const res = await runSQL(sql, 1000);
           if ("error" in res) {
-            yield { turn, command: "RunSQL", args: { sql }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+            yield withReason({ turn, command: "RunSQL", args: { sql }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
             healAttempts++;
             llmInput = `SQL error: ${res.error}\nDiagnose the cause and reissue ONE corrected JSON command. Schema reminder:\n${schemaBlock.slice(0, 1500)}`;
             continue;
           }
-          yield { turn, command: "RunSQL", args: { sql }, result: res.rows.slice(0, 50), sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+          yield withReason({ turn, command: "RunSQL", args: { sql }, result: res.rows.slice(0, 50), sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
           llmInput = `Result: ${res.totalRowCount} row(s). First rows: ${JSON.stringify(res.rows.slice(0, 20)).slice(0, 2000)}\n\nIf you now know enough, issue ExecuteFinalSQL with the complete answer query.`;
+          continue;
+        }
+
+        // ── Deeper data tools (additive) ─────────────────────────────────────
+        // Each runs deterministically over a fetched result, yields a visible
+        // step, and feeds a compact summary back so the agent can reason on it
+        // exactly like a RunSQL probe. Final answer still goes via ExecuteFinalSQL.
+
+        case "Sample": {
+          // Random sample of rows — quick representative peek at the data.
+          const table = String(rawArgs.table ?? rawArgs.tableName ?? selectedTable);
+          const n = Math.min(Math.max(Number(rawArgs.n ?? rawArgs.rows ?? 20) || 20, 1), 200);
+          const sql = `SELECT * FROM "${table}" USING SAMPLE ${n} ROWS`;
+          const res = await runSQL(sql, n);
+          if ("error" in res) {
+            yield withReason({ turn, command: "Sample", args: { table, n }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+            healAttempts++;
+            llmInput = `Sample error: ${res.error}. Check the table name against the schema, then continue. Schema:\n${schemaBlock.slice(0, 1200)}`;
+            continue;
+          }
+          yield withReason({ turn, command: "Sample", args: { table, n }, result: res.rows.slice(0, 50), sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+          llmInput = `Random sample of ${res.rows.length} row(s) from "${table}": ${JSON.stringify(res.rows.slice(0, 20)).slice(0, 2000)}\n\nProceed to answer the question with ExecuteFinalSQL (or another probe).`;
+          continue;
+        }
+
+        case "ProfileSchema":
+        case "ProfileData": {
+          // Per-column profile (completeness, cardinality, numeric stats) of a
+          // table or an explicit probe query — reuses the deterministic helper.
+          const table = String(rawArgs.table ?? rawArgs.tableName ?? selectedTable);
+          const sql = String(rawArgs.sql ?? rawArgs.query ?? `SELECT * FROM "${table}"`);
+          const res = await runSQL(sql, 20000);
+          if ("error" in res) {
+            yield withReason({ turn, command: "ProfileSchema", args: { table }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+            healAttempts++;
+            llmInput = `Profile error: ${res.error}. Fix the table/query and continue. Schema:\n${schemaBlock.slice(0, 1200)}`;
+            continue;
+          }
+          const profiles = profileColumns(res.rows);
+          yield withReason({ turn, command: "ProfileSchema", args: { table }, result: profiles, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+          llmInput = `Column profile of "${table}" (${res.totalRowCount} rows scanned): ${JSON.stringify(profiles).slice(0, 2500)}\n\nUse this to decide your final query, then issue ExecuteFinalSQL. If the user asked for a profile/overview, you may Answer with a concise written summary of these stats.`;
+          continue;
+        }
+
+        case "CorrelationMatrix": {
+          // Pearson correlation across numeric columns of a table or probe query.
+          const table = String(rawArgs.table ?? rawArgs.tableName ?? selectedTable);
+          const cols = Array.isArray(rawArgs.columns) ? rawArgs.columns.map(String) : undefined;
+          const sql = String(rawArgs.sql ?? rawArgs.query ?? `SELECT * FROM "${table}"`);
+          const res = await runSQL(sql, 20000);
+          if ("error" in res) {
+            yield withReason({ turn, command: "CorrelationMatrix", args: { table }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+            healAttempts++;
+            llmInput = `Correlation error: ${res.error}. Fix the table/query and continue. Schema:\n${schemaBlock.slice(0, 1200)}`;
+            continue;
+          }
+          const corr = correlationMatrix(res.rows, cols);
+          yield withReason({ turn, command: "CorrelationMatrix", args: { table, columns: cols }, result: corr, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+          llmInput = `Correlation matrix over numeric columns of "${table}". Strongest pairs: ${JSON.stringify(corr.topPairs).slice(0, 1500)}\n\nInterpret the relationships for the user. If they asked for correlations, Answer with the key findings; otherwise continue toward ExecuteFinalSQL.`;
+          continue;
+        }
+
+        case "ForecastSeasonal": {
+          // Linear-trend + additive-seasonality forecast over an aggregated series.
+          // args: { sql } returning (period, value) rows, OR a prior series.
+          const sql = String(rawArgs.sql ?? rawArgs.query ?? "");
+          const horizon = Math.min(Math.max(Number(rawArgs.horizon ?? 6) || 6, 1), 36);
+          const seasonLength = Math.min(Math.max(Number(rawArgs.seasonLength ?? 12) || 12, 2), 53);
+          const res = await runSQL(sql, 20000);
+          if ("error" in res) {
+            yield withReason({ turn, command: "ForecastSeasonal", args: { horizon, seasonLength }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+            healAttempts++;
+            llmInput = `Forecast error: ${res.error}. The query must return two columns: a period label and a numeric value, one row per period in order. Fix and reissue. Schema:\n${schemaBlock.slice(0, 1200)}`;
+            continue;
+          }
+          // Map first column → period, second (or a 'value') column → value.
+          const keys = res.rows.length ? Object.keys(res.rows[0]) : [];
+          const periodKey = keys[0];
+          const valueKey = keys.find((k) => k.toLowerCase() === "value") ?? keys[1] ?? keys[0];
+          const series = res.rows.map((r) => ({ period: String(r[periodKey]), value: r[valueKey] as number }));
+          const forecast = seasonalForecast(series, horizon, seasonLength);
+          yield withReason({ turn, command: "ForecastSeasonal", args: { horizon, seasonLength }, result: forecast, sql, tokens, durationMs: Date.now() - startTime, isFinal: false });
+          llmInput = `Seasonal forecast (linear trend + seasonality, horizon ${horizon}): ${JSON.stringify(forecast).slice(0, 2500)}\n\nThese are projections, not guarantees — present them as such with the trend direction. Answer the user, clearly labeling actual vs forecast rows.`;
           continue;
         }
 
@@ -6562,20 +6915,20 @@ export async function* runSheetAgent(
           const sql = String(rawArgs.sql ?? rawArgs.query ?? "");
           const res = await runSQL(sql, 20000);
           if ("error" in res) {
-            yield { turn, command: "ExecuteFinalSQL", args: { sql }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+            yield withReason({ turn, command: "ExecuteFinalSQL", args: { sql }, result: res, sql, tokens, durationMs: Date.now() - startTime, isFinal: false }, `Query errored (${String(res.error).slice(0, 80)}) — diagnosing and rewriting it.`);
             healAttempts++;
             if (healAttempts > 6) {
               yield { turn, command: "Error", args: {}, result: `Could not produce a working SQL query after ${healAttempts} attempts. Last error: ${res.error}`, tokens: { input: 0, output: 0 }, durationMs: 0, isFinal: true };
               return;
             }
-            llmInput = `SQL error: ${res.error}\nThis is recoverable — diagnose the exact cause and reissue ONE corrected ExecuteFinalSQL. Schema reminder:\n${schemaBlock.slice(0, 1500)}`;
+            llmInput = `SQL error: ${res.error}\nThis is recoverable — diagnose the exact cause and reissue ONE corrected ExecuteFinalSQL. In your "reasoning", state what the error was and your specific fix. Schema reminder:\n${schemaBlock.slice(0, 1500)}`;
             continue;
           }
           // Deterministic validator: empty result gets one structured re-check.
           if (res.totalRowCount === 0 && !zeroRowsNudged) {
             zeroRowsNudged = true;
-            yield { turn, command: "ExecuteFinalSQL", args: { sql }, result: { rows: 0 }, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
-            llmInput = `The query ran but returned 0 rows. Double-check: exact column spelling, TRY_CAST on text-typed numeric columns, comparison directions, ILIKE instead of = for text, AND vs OR. If after re-checking you believe 0 rows is genuinely the correct answer, re-issue the SAME ExecuteFinalSQL and it will be accepted.`;
+            yield withReason({ turn, command: "ExecuteFinalSQL", args: { sql }, result: { rows: 0 }, sql, tokens, durationMs: Date.now() - startTime, isFinal: false }, "Query returned 0 rows — re-checking column spelling, casts and filter direction.");
+            llmInput = `The query ran but returned 0 rows. Double-check: exact column spelling, TRY_CAST on text-typed numeric columns, comparison directions, ILIKE instead of = for text, AND vs OR. Put your specific finding in "reasoning". If after re-checking you believe 0 rows is genuinely the correct answer, re-issue the SAME ExecuteFinalSQL and it will be accepted.`;
             continue;
           }
           // Deterministic validator: a column that came back 100% NULL almost
@@ -6584,7 +6937,7 @@ export async function* runSheetAgent(
             const allNullCols = findAllNullColumns(res);
             if (allNullCols.length > 0 && nullColsNudges < 2) {
               nullColsNudges++;
-              yield { turn, command: "ExecuteFinalSQL", args: { sql }, result: { warning: `All-NULL columns: ${allNullCols.join(", ")}` }, sql, tokens, durationMs: Date.now() - startTime, isFinal: false };
+              yield withReason({ turn, command: "ExecuteFinalSQL", args: { sql }, result: { warning: `All-NULL columns: ${allNullCols.join(", ")}` }, sql, tokens, durationMs: Date.now() - startTime, isFinal: false }, `Column(s) ${allNullCols.join(", ")} came back all-NULL — the cast failed, probing the raw values.`);
               llmInput = `The query ran, but these result columns are NULL in EVERY row: ${allNullCols.map((c) => `"${c}"`).join(", ")}. Your cast/parse failed for ALL values — do NOT retry a variation of the same expression. REQUIRED next step: probe the RAW source values first with RunSQL (e.g. SELECT "source_col" FROM "table" LIMIT 5), look at the actual format, then write the correct expression and reissue ExecuteFinalSQL. (Attempt ${nullColsNudges} of 2 — after that the result goes to verification with a warning.)`;
               continue;
             }
@@ -6593,7 +6946,7 @@ export async function* runSheetAgent(
           if (!verificationUsed) {
             verificationUsed = true;
             pendingFinal = { sql, result: res };
-            yield {
+            yield withReason({
               turn,
               command: "ExecuteFinalSQL",
               args: { sql },
@@ -6602,8 +6955,8 @@ export async function* runSheetAgent(
               tokens,
               durationMs: Date.now() - startTime,
               isFinal: false,
-            };
-            llmInput = buildSqlVerificationMessage(question, sql, res);
+            }, `Got ${res.totalRowCount.toLocaleString()} row(s) (${res.columns.length} cols) — double-checking they actually answer the question before showing you.`);
+            llmInput = buildSqlVerificationMessage(question, sql, res, reflectionEnabled);
             continue;
           }
           // Already verified once (this is the corrected query) → final.

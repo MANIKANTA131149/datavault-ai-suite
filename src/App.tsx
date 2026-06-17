@@ -8,6 +8,7 @@ import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
 import { Seo } from "@/components/Seo";
 import { ClerkAuthBridge } from "@/components/ClerkAuthBridge";
+import { BrandLoader } from "@/components/shared/BrandLoader";
 
 // const GetStartedPage = lazy(() => import("@/pages/GetStartedPage")); // temporarily disabled, will release later
 const WebsitePage = lazy(() => import("@/pages/WebsitePage"));
@@ -29,14 +30,6 @@ const AutomationsPage = lazy(() => import("@/pages/AutomationsPage"));
 const DashboardsViewerPage = lazy(() => import("@/pages/DashboardsViewerPage"));
 const GlossaryPage = lazy(() => import("@/pages/GlossaryPage"));
 
-function PageLoader() {
-  return (
-    <div className="flex min-h-[40vh] items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-    </div>
-  );
-}
-
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -47,7 +40,7 @@ const App = () => (
         <ClerkAuthBridge />
         <Seo />
         <CommandPalette />
-        <Suspense fallback={<PageLoader />}>
+        <Suspense fallback={<BrandLoader />}>
           <Routes>
             <Route path="/" element={<Navigate to="/website" replace />} />
             <Route path="/website" element={<WebsitePage />} />

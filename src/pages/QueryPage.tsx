@@ -92,6 +92,16 @@ const COMMAND_COLORS: Record<string, string> = {
   HumanApproval: "bg-warning/10 text-warning",
   MaxTurnsReached: "bg-destructive/10 text-destructive",
   Error: "bg-destructive/10 text-destructive",
+  // Deeper data tools + reflection
+  Sample: "bg-accent/10 text-accent",
+  ProfileSchema: "bg-accent/10 text-accent",
+  ProfileData: "bg-accent/10 text-accent",
+  CorrelationMatrix: "bg-accent/10 text-accent",
+  ForecastSeasonal: "bg-warning/10 text-warning",
+  Plan: "bg-primary/10 text-primary",
+  PlanQuery: "bg-primary/10 text-primary",
+  Reflect: "bg-purple-500/10 text-purple-400",
+  VerifyResult: "bg-success/10 text-success",
 };
 
 const CHART_COLORS = [
@@ -523,6 +533,22 @@ function describeAgentStep(step: AgentStep) {
       return "Returned a direct answer.";
     case "NarrativeAnswer":
       return "Returned a written explanation.";
+    case "Sample":
+      return `Took a random sample of rows${targetName ? ` from ${targetLabel} "${targetName}"` : ""}.`;
+    case "ProfileSchema":
+    case "ProfileData":
+      return "Profiled the columns (completeness, distribution, key stats).";
+    case "CorrelationMatrix":
+      return "Computed correlations between the numeric columns.";
+    case "ForecastSeasonal":
+      return "Projected a seasonal trend forecast from the historical series.";
+    case "Plan":
+    case "PlanQuery":
+      return "Outlined a plan before answering.";
+    case "Reflect":
+      return "Reviewed the result against the question before finalizing.";
+    case "VerifyResult":
+      return "Verified the result answers the question.";
     case "PARSE_ERROR":
       return "Retried because the model response was not valid JSON.";
     case "MaxTurnsReached":
@@ -1320,6 +1346,12 @@ const StepCard = memo(function StepCard({
           {expanded ? <ChevronDown size={14} className="text-muted-foreground ml-auto" /> : <ChevronRight size={14} className="text-muted-foreground ml-auto" />}
         </button>
         {summary && <p className="mt-1 text-xs text-muted-foreground">{summary}</p>}
+        {step.reasoning && (
+          <p className="mt-1 flex items-start gap-1 text-xs italic text-muted-foreground/80">
+            <Sparkles size={11} className="mt-0.5 shrink-0 text-primary/70" />
+            <span>{step.reasoning}</span>
+          </p>
+        )}
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="mt-2 space-y-2 overflow-hidden">
             {Object.keys(step.args).length > 0 && (
@@ -3689,6 +3721,9 @@ export default function QueryPage() {
   }[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
+  // Live streamed "thinking" tokens for the current turn (Phase 1b). Empty when
+  // the provider can't stream — the UI then falls back to the plain spinner.
+  const [liveThought, setLiveThought] = useState("");
   const [finalResult, setFinalResult] = useState<any>(null);
   const [lastQuery, setLastQuery] = useState("");
   // Closed by default — the result panel only opens when the user clicks for it.
@@ -4153,7 +4188,8 @@ export default function QueryPage() {
     try {
       for await (const step of runSheetAgent(
         question, workbookSheets, selectedSheet, activeProvider, activeModel, actualApiKey, temperature, maxTokens,
-        systemPrompt || undefined, conversationContext, actualProviderOptions, hitlController, selectedDatasetId
+        systemPrompt || undefined, conversationContext, actualProviderOptions, hitlController, selectedDatasetId,
+        (delta: string) => setLiveThought((prev) => (delta === " RESET " ? "" : prev + delta))
       )) {
         if (cancelRequestedRef.current) {
           steps.push({
@@ -4212,6 +4248,7 @@ export default function QueryPage() {
       setMessages((prev) => [...prev, { role: "agent", content: message, steps: [] }]);
     } finally {
       setIsRunning(false);
+      setLiveThought("");
       fetchDailyTokens();
     }
   };
@@ -5206,20 +5243,34 @@ export default function QueryPage() {
                       ) : null}
                     </AnimatePresence>
                     {!hitlState && (
-                      <div className="flex flex-wrap items-center gap-2 pl-3 sm:pl-10">
-                        {/* Premium 3-dot thinking indicator */}
-                        <div className="flex items-center gap-1.5">
-                          <span className="thinking-dot" />
-                          <span className="thinking-dot" />
-                          <span className="thinking-dot" />
+                      <div className="flex flex-col gap-2 pl-3 sm:pl-10">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Premium 3-dot thinking indicator */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="thinking-dot" />
+                            <span className="thinking-dot" />
+                            <span className="thinking-dot" />
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            Agent is thinking... {Math.floor(elapsedMs / 1000)}s
+                            {elapsedMs > 30000 ? " — taking longer than usual" : ""}
+                          </span>
+                          <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
+                            <X size={12} className="mr-1" /> Stop
+                          </Button>
                         </div>
-                        <span className="text-xs text-muted-foreground">
-                          Agent is thinking... {Math.floor(elapsedMs / 1000)}s
-                          {elapsedMs > 30000 ? " — taking longer than usual" : ""}
-                        </span>
-                        <Button variant="outline" size="sm" className="h-7 border-border text-xs" onClick={handleStopQuery}>
-                          <X size={12} className="mr-1" /> Stop
-                        </Button>
+                        {/* Live streamed reasoning (Phase 1b) — only when the
+                            provider streams; otherwise this stays empty. */}
+                        {liveThought.trim() && (
+                          <div className="max-w-2xl rounded-lg border border-border/50 bg-card/60 px-3 py-2 backdrop-blur-sm">
+                            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                              <Sparkles size={11} className="text-primary/70" /> Thinking
+                            </div>
+                            <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-muted-foreground scrollbar-thin">
+                              {liveThought.trim().slice(-1200)}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
