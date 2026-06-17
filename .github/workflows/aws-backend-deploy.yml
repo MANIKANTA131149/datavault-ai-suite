@@ -65,6 +65,8 @@ jobs:
           ANALYTICS_USERNAME: ${{ secrets.ANALYTICS_USERNAME }}
           ANALYTICS_PASSWORD: ${{ secrets.ANALYTICS_PASSWORD }}
           ANALYTICS_TOKEN_SECRET: ${{ secrets.ANALYTICS_TOKEN_SECRET }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_JWKS_URL: ${{ secrets.CLERK_JWKS_URL }}
           AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
           VITE_AWS_ACCESS_KEY_ID: ${{ secrets.VITE_AWS_ACCESS_KEY_ID }}
