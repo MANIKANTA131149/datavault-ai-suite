@@ -48,8 +48,6 @@ export function AccountMenu({ trigger, side = "bottom", align = "end", onNavigat
   const [dailyTokens, setDailyTokens] = useState<{
     tokensUsed: number;
     limit: number;
-    queriesUsed: number;
-    queryLimit: number;
     percentage: number;
   } | null>(null);
 
@@ -131,7 +129,7 @@ export function AccountMenu({ trigger, side = "bottom", align = "end", onNavigat
 
           <DropdownMenuSeparator />
 
-          {/* ── Daily limit bar (free tier only) ───────────────────────── */}
+          {/* ── Daily usage bar (free tier only) ───────────────────────── */}
           {user?.planTier === "free" && dailyTokens && (
             <>
               <div className="px-2.5 py-2 space-y-2">
@@ -164,20 +162,19 @@ export function AccountMenu({ trigger, side = "bottom", align = "end", onNavigat
 
                 <div className="flex items-center justify-between text-[9px] text-muted-foreground">
                   <span>{dailyTokens.tokensUsed.toLocaleString()} / {dailyTokens.limit.toLocaleString()} tokens</span>
-                  <span>{dailyTokens.queriesUsed} / {dailyTokens.queryLimit} queries</span>
+                  <span>Resets 00:00 UTC</span>
                 </div>
-                <p className="text-[9px] text-right text-muted-foreground/70">Resets 00:00 UTC</p>
               </div>
               <DropdownMenuSeparator />
             </>
           )}
 
-          {/* ── Navigation items ────────────────────────────────────────── */}
-          <DropdownMenuItem onClick={() => { setProfileOpen(true); onNavigate?.(); }}>
-            <Shield size={14} className="mr-2" /> Manage Account
-          </DropdownMenuItem>
+          {/* ── Navigation items (order: Settings → Manage Account → Plans) ── */}
           <DropdownMenuItem onClick={() => handleRoute("/app/settings")}>
             <Settings size={14} className="mr-2" /> Settings
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => { setProfileOpen(true); onNavigate?.(); }}>
+            <Shield size={14} className="mr-2" /> Manage Account
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => handleRoute("/app/pricing")}>
             <CreditCard size={14} className="mr-2" /> Plans & Billing

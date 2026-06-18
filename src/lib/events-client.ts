@@ -39,8 +39,28 @@ function getToken(): string | null {
   }
 }
 
+// SSE requires a long-lived HTTP response. Lambda + API Gateway buffers and
+// caps responses, returning a 503 (with no CORS header → a noisy console error)
+// instead of streaming. Detect that environment up front and skip SSE entirely
+// — the app's polling already covers notifications there. We only attempt SSE
+// against a real long-lived server (localhost dev / self-hosted).
+function environmentSupportsSSE(): boolean {
+  try {
+    const base = getApiBaseUrl();
+    const { hostname } = new URL(base, window.location.origin);
+    if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+    // Managed serverless gateways that buffer responses — never stream here.
+    if (/execute-api\.[a-z0-9-]+\.amazonaws\.com$/i.test(hostname)) return false;
+    if (hostname.endsWith(".lambda-url.amazonaws.com")) return false;
+    return true; // a normal long-lived server (EC2, container, self-hosted)
+  } catch {
+    return false;
+  }
+}
+
 function connect(): void {
   if (gaveUp || source || listeners.size === 0) return;
+  if (!environmentSupportsSSE()) { gaveUp = true; return; }
   const token = getToken();
   if (!token || typeof EventSource === "undefined") return;
 

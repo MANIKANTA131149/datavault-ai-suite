@@ -3430,9 +3430,8 @@ export default function QueryPage() {
 
   const [dailyTokens, setDailyTokens] = useState<{
     tokensUsed: number;
-    limit: number;
-    queriesUsed: number;
-    queryLimit: number;
+    limit: number | null; // null = unlimited tier (Enterprise)
+    queriesUsed?: number; // informational only — no longer a limit
     percentage: number;
   } | null>(null);
 
@@ -3510,7 +3509,9 @@ export default function QueryPage() {
   }, [user?.name]);
 
   const fetchDailyTokens = useCallback(async () => {
-    if (!isFreeUser) return;
+    // Usage applies whenever the platform-served (querify) models are in use —
+    // every tier has a per-day token cap now (Enterprise reports unlimited).
+    if (activeProvider !== "querify") return;
     try {
       const token = useAuthStore.getState().token;
       if (!token) return;
@@ -3524,7 +3525,7 @@ export default function QueryPage() {
     } catch (e) {
       console.error("Failed to fetch daily token usage:", e);
     }
-  }, [isFreeUser]);
+  }, [activeProvider]);
 
   useEffect(() => {
     fetchDailyTokens();
@@ -4053,13 +4054,10 @@ export default function QueryPage() {
     const isFreeNovaModelLocal = isFreeNovaModel && isFreeUser;
 
     // Check daily limits first
-    if (isFreeNovaModelLocal && dailyTokens) {
+    if (isFreeNovaModelLocal && dailyTokens && dailyTokens.limit != null) {
       const tokensExhausted = dailyTokens.tokensUsed >= dailyTokens.limit;
-      const queriesExhausted = dailyTokens.queriesUsed >= dailyTokens.queryLimit;
-      if (tokensExhausted || queriesExhausted) {
-        const limitMsg = tokensExhausted
-          ? "daily free Bedrock token limit (200k tokens)"
-          : "daily free Bedrock query limit (25 queries)";
+      if (tokensExhausted) {
+        const limitMsg = `daily token limit (${dailyTokens.limit.toLocaleString()} tokens)`;
         toast.error(`Your ${limitMsg} has been exhausted. Please upgrade your plan for higher limits.`, {
           action: {
             label: "View Plans",
@@ -4265,13 +4263,10 @@ export default function QueryPage() {
     const isFreeNovaModelLocal = isFreeNovaModel && isFreeUser;
 
     // Check daily limits first
-    if (isFreeNovaModelLocal && dailyTokens) {
+    if (isFreeNovaModelLocal && dailyTokens && dailyTokens.limit != null) {
       const tokensExhausted = dailyTokens.tokensUsed >= dailyTokens.limit;
-      const queriesExhausted = dailyTokens.queriesUsed >= dailyTokens.queryLimit;
-      if (tokensExhausted || queriesExhausted) {
-        const limitMsg = tokensExhausted
-          ? "daily free Bedrock token limit (200k tokens)"
-          : "daily free Bedrock query limit (25 queries)";
+      if (tokensExhausted) {
+        const limitMsg = `daily token limit (${dailyTokens.limit.toLocaleString()} tokens)`;
         toast.error(`Your ${limitMsg} has been exhausted. Please upgrade your plan for higher limits.`, {
           action: {
             label: "View Plans",
@@ -5281,23 +5276,23 @@ export default function QueryPage() {
               <div
                 className="shrink-0 border-t border-border/70 bg-background/90 px-2 py-2 backdrop-blur-sm sm:px-4 sm:py-3 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-[max(0.75rem,env(safe-area-inset-bottom))]"
               >
-                {isFreeUser && dailyTokens && (dailyTokens.tokensUsed >= 150000 || dailyTokens.queriesUsed >= 18) && (
+                {activeProvider === "querify" && dailyTokens && dailyTokens.limit != null && dailyTokens.tokensUsed >= dailyTokens.limit * 0.75 && (
                   <div className={`mx-auto mb-3 flex max-w-3xl flex-col items-start gap-2 rounded-md border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between ${
-                    dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
+                    dailyTokens.tokensUsed >= dailyTokens.limit
                       ? "border-destructive/30 bg-destructive/10 text-destructive"
                       : "border-warning/30 bg-warning/10 text-warning"
                   }`}>
                     <span>
-                      {dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
-                        ? `Daily free Bedrock limit (${dailyTokens.tokensUsed >= dailyTokens.limit ? `${dailyTokens.limit.toLocaleString()} tokens` : `${dailyTokens.queryLimit} queries`}) has been exhausted. Please upgrade your plan to continue chatting.`
-                        : `Notice: You have consumed ${dailyTokens.tokensUsed.toLocaleString()} / ${dailyTokens.limit.toLocaleString()} tokens & ${dailyTokens.queriesUsed} / ${dailyTokens.queryLimit} queries (${dailyTokens.percentage}%) of your daily free Bedrock allowance.`
+                      {dailyTokens.tokensUsed >= dailyTokens.limit
+                        ? `Daily token limit (${dailyTokens.limit.toLocaleString()} tokens) has been exhausted. ${isFreeUser ? "Please upgrade your plan to continue chatting." : "It resets at 00:00 UTC."}`
+                        : `Notice: You have used ${dailyTokens.tokensUsed.toLocaleString()} / ${dailyTokens.limit.toLocaleString()} tokens (${dailyTokens.percentage}%) of your daily allowance.`
                       }
                     </span>
                     <Button
                       variant="outline"
                       size="sm"
                       className={`h-7 text-xs ${
-                        dailyTokens.tokensUsed >= dailyTokens.limit || dailyTokens.queriesUsed >= dailyTokens.queryLimit
+                        dailyTokens.tokensUsed >= dailyTokens.limit
                           ? "border-destructive/30 hover:bg-destructive/10"
                           : "border-warning/30 hover:bg-warning/10"
                       }`}

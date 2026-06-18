@@ -409,8 +409,8 @@ function SectionTitle({ kicker, title, text, centered = false }: { kicker: strin
 function PlanTable() {
   const rows = [
     {
-      label: "Monthly queries",
-      values: PLAN_TIERS.map((tier) => formatPlanLimit(PLAN_DEFINITIONS[tier].monthlyQueries)),
+      label: "Daily tokens",
+      values: PLAN_TIERS.map((tier) => formatPlanLimit(PLAN_DEFINITIONS[tier].monthlyTokens)),
     },
     {
       label: "Datasets",

@@ -80,21 +80,6 @@ export default function SettingsPage() {
   const [settingsSearch, setSettingsSearch] = useState("");
   const [testingProvider, setTestingProvider] = useState<Provider | null>(null);
   const [testResults, setTestResults] = useState<Record<string, "success" | "error">>({});
-  const [dailyTokens, setDailyTokens] = useState<{
-    tokensUsed: number;
-    limit: number;
-    queriesUsed: number;
-    queryLimit: number;
-    percentage: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (user?.planTier !== "free") return;
-    api.get("/llm/token-usage")
-      .then((data) => { if (data) setDailyTokens(data as any); })
-      .catch((e) => console.error("Failed to fetch daily tokens:", e));
-  }, [user?.planTier]);
-
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>(
     Object.fromEntries((Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => [p, providerConfigs[p]?.apiKey || ""]))
   );
@@ -248,7 +233,6 @@ export default function SettingsPage() {
           <TabsTrigger value="security" className="flex items-center gap-2"><Shield size={13} />Security</TabsTrigger>
           <TabsTrigger value="apikeys" className="flex items-center gap-2"><Cpu size={13} />Providers</TabsTrigger>
           <TabsTrigger value="appearance" className="flex items-center gap-2"><Palette size={13} />Appearance</TabsTrigger>
-          <TabsTrigger value="billing" className="flex items-center gap-2"><CreditCard size={13} />Usage</TabsTrigger>
           <TabsTrigger value="apiaccess" className="flex items-center gap-2"><Key size={13} />API Access</TabsTrigger>
         </TabsList>
 
@@ -784,142 +768,9 @@ export default function SettingsPage() {
           </motion.div>
         </TabsContent>
 
-        {/* ─── Usage / Billing ─────────────────────────────────────────────────── */}
-        <TabsContent value="billing" className="mt-6">
-          <motion.div variants={stagger} initial="hidden" animate="visible" className="space-y-4">
-
-            {/* KPI strip */}
-            <motion.div variants={fadeUp} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[
-                { label: "Queries run", value: entries.length.toLocaleString(), icon: Activity },
-                { label: "Success rate", value: `${successRate}%`, icon: TrendingUp },
-                { label: "Total tokens", value: totalTokens >= 1_000_000 ? `${(totalTokens / 1_000_000).toFixed(1)}M` : totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : totalTokens.toString(), icon: Zap },
-                { label: "Active plan", value: currentPlan.name, icon: CreditCard },
-              ].map((kpi) => {
-                const Icon = kpi.icon;
-                return (
-                  <Card key={kpi.label} className="rounded-[16px] border-border/55 bg-card/80 p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="stat-label">{kpi.label}</p>
-                      <Icon size={13} className="mt-0.5 shrink-0 text-muted-foreground/40" />
-                    </div>
-                    <p className="stat-number mt-2">{kpi.value}</p>
-                  </Card>
-                );
-              })}
-            </motion.div>
-
-            {/* Usage bars */}
-            <motion.div variants={fadeUp}>
-              <Card className="rounded-[18px] border-border/55 bg-card/80 p-6">
-                <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Current Period Usage</p>
-                    <p className="text-xs text-muted-foreground">Resets monthly. Managed by your account administrator.</p>
-                  </div>
-                  <Badge className="border-0 bg-primary/10 text-primary">{currentPlan.name}</Badge>
-                </div>
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                  {[
-                    {
-                      label: currentPlan.tier === "free" ? "Daily Bedrock Queries" : "Queries",
-                      value: currentPlan.tier === "free" && dailyTokens ? dailyTokens.queriesUsed : usage.monthlyQueries,
-                      max: currentPlan.tier === "free" && dailyTokens ? dailyTokens.queryLimit : currentPlan.monthlyQueries,
-                    },
-                    {
-                      label: currentPlan.tier === "free" ? "Daily Bedrock Tokens" : "Tokens",
-                      value: currentPlan.tier === "free" && dailyTokens ? dailyTokens.tokensUsed : usage.monthlyTokens,
-                      max: currentPlan.tier === "free" && dailyTokens ? dailyTokens.limit : currentPlan.monthlyTokens,
-                    },
-                    { label: "Datasets", value: usage.datasets, max: currentPlan.datasets },
-                    { label: "Saved insights", value: usage.insights, max: currentPlan.insights },
-                    { label: "Team members", value: usage.members, max: currentPlan.members },
-                    { label: "Success rate", value: successRate, max: 100 },
-                  ].map(({ label, value, max }) => {
-                    const pct = usagePercent(value, max);
-                    const isNear = pct >= 80 && pct < 100;
-                    const isOver = pct >= 100;
-                    return (
-                      <div key={label} className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{label}</span>
-                          <span className="font-mono text-foreground">
-                            {value.toLocaleString()} / {formatPlanLimit(max)}
-                          </span>
-                        </div>
-                        <div className="h-1.5 overflow-hidden rounded-full border border-border/50 bg-background-secondary">
-                          <motion.div
-                            className={cn("h-full rounded-full", isOver ? "bg-destructive" : isNear ? "bg-amber-500" : "bg-primary")}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${Math.max(2, pct)}%` }}
-                            transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            </motion.div>
-
-            {/* Plan comparison grid */}
-            <motion.div variants={fadeUp}>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Available Plans</p>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {PLAN_TIERS.map((tier: PlanTier) => {
-                  const plan = PLAN_DEFINITIONS[tier];
-                  const active = plan.tier === currentPlan.tier;
-                  return (
-                    <Card key={plan.tier} className={cn("rounded-[18px] border-border/55 bg-card/80 p-5 transition-all", active && "border-primary/35 shadow-[0_4px_18px_-8px_hsl(var(--primary)/0.2)]")}>
-                      <div className="mb-4 flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-sm font-bold text-foreground">{plan.name}</h3>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {plan.adminPage ? "Includes admin panel access" : "Personal workspace plan"}
-                          </p>
-                        </div>
-                        {active ? (
-                          <Badge className="border-0 bg-primary/10 text-primary text-xs">Current</Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-border text-xs text-muted-foreground">Available</Badge>
-                        )}
-                      </div>
-                      <div className="mb-4 grid grid-cols-2 gap-2 text-xs">
-                        {[
-                          { label: "Queries", val: formatPlanLimit(plan.monthlyQueries) },
-                          { label: "Tokens", val: formatPlanLimit(plan.monthlyTokens) },
-                          { label: "Datasets", val: formatPlanLimit(plan.datasets) },
-                          { label: "File size", val: formatFileSizeLimit(plan.fileSizeLimitBytes) },
-                        ].map((item) => (
-                          <div key={item.label} className="rounded-[10px] border border-border/60 bg-background/60 px-2.5 py-1.5">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{item.label}</p>
-                            <p className="font-mono font-medium text-foreground">{item.val}</p>
-                          </div>
-                        ))}
-                      </div>
-                      <ul className="mb-4 space-y-1.5">
-                        {plan.features.map((feature) => (
-                          <li key={feature} className="flex items-center gap-2 text-xs text-foreground">
-                            <Check size={11} className="shrink-0 text-success" /> {feature}
-                          </li>
-                        ))}
-                      </ul>
-                      <Button
-                        variant={active ? "default" : "outline"}
-                        className="w-full border-border text-xs"
-                        disabled={active}
-                        onClick={() => toast.info("Plan changes are managed by an administrator")}
-                      >
-                        {active ? "Active plan" : "Contact admin"}
-                      </Button>
-                    </Card>
-                  );
-                })}
-              </div>
-            </motion.div>
-
-          </motion.div>
-        </TabsContent>
+        {/* Usage tab removed from Settings — daily/free usage now lives in the
+            profile (account) menu's "Daily Free Limits" bar, and full plan
+            usage is on the Plans & Billing (Pricing) page. */}
 
         {/* ─── API Access (public REST API keys) ───────────────────────────────── */}
         <TabsContent value="apiaccess" className="mt-6">

@@ -7,6 +7,7 @@ const { authMiddleware, JWT_SECRET } = require("../middleware/auth");
 
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
 const {
+  DAILY_LIMIT,
   getCurrentDailyUsage,
   incrementDailyUsage,
   checkDailyLimit,
@@ -14,6 +15,9 @@ const {
 const { getPlanContext } = require("../lib/plans");
 
 const router = express.Router();
+
+// Fallback daily token cap used when a user's plan can't be loaded (Free tier).
+const DEFAULT_DAILY_TOKEN_LIMIT = DAILY_LIMIT;
 
 const HUGGINGFACE_ROUTER_CHAT_URL = "https://router.huggingface.co/v1/chat/completions";
 const BEDROCK_SERVICE = "bedrock";
@@ -383,7 +387,14 @@ async function getOptionalUserId(req) {
 router.get("/token-usage", authMiddleware, async (req, res) => {
   try {
     const db = await getDb();
-    const usage = await getCurrentDailyUsage(db, req.userId);
+    // Report usage against the caller's own tier limit (Free 200k, Standard
+    // 400k, Pro 800k, Enterprise unlimited). Defaults to Free if plan missing.
+    let dailyLimit = DEFAULT_DAILY_TOKEN_LIMIT;
+    try {
+      const planContext = await getPlanContext(db, req.userId);
+      if (planContext) dailyLimit = planContext.plan.monthlyTokens; // number | null
+    } catch { /* fall back to default */ }
+    const usage = await getCurrentDailyUsage(db, req.userId, dailyLimit);
     res.json(usage);
   } catch (err) {
     console.error("Failed to fetch token usage:", err);
@@ -414,39 +425,53 @@ router.post("/bedrock/chat", async (req, res) => {
   ].includes(model);
   let isFreeUser = true;
   let userId = null;
+  // The user's per-day token cap, resolved from their plan tier. `monthlyTokens`
+  // on the plan now holds the DAILY token allowance (Free 200k, Standard 400k,
+  // Pro 800k, Enterprise null = unlimited). Defaults to Free's 200k when the
+  // plan can't be loaded. `null` = unlimited (Enterprise).
+  let dailyTokenLimit = DEFAULT_DAILY_TOKEN_LIMIT;
+  let planTier = "free";
 
   try {
     const db = await getDb();
     userId = await getOptionalUserId(req);
     if (userId) {
       const planContext = await getPlanContext(db, userId);
-      if (planContext && planContext.plan.tier !== "free") {
-        isFreeUser = false;
+      if (planContext) {
+        planTier = planContext.plan.tier;
+        isFreeUser = planTier === "free";
+        // monthlyTokens === null means an unlimited (Enterprise) daily allowance.
+        dailyTokenLimit = planContext.plan.monthlyTokens; // number | null
       }
     }
   } catch (dbErr) {
     console.error("Failed to load user plan context for limit check:", dbErr);
   }
 
-  // If this is a free user executing a default free Bedrock model, enforce daily limit checks
-  if (isFreeBedrockModel && isFreeUser) {
+  // Enforce the per-tier DAILY token limit for the platform-served (free
+  // Bedrock) models, which run on our admin credentials. Applies to every tier
+  // except unlimited (Enterprise). Other (BYO-key) providers are unmetered here.
+  if (isFreeBedrockModel) {
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized — missing token required for daily limit tracking" });
     }
-    try {
-      const db = await getDb();
-      const limitCheck = await checkDailyLimit(db, userId);
-      if (!limitCheck.allowed) {
-        const errorMsg = limitCheck.reason === "queries"
-          ? "Daily free query limit of 25 queries has been exhausted. Please upgrade your plan for higher limits."
-          : "Daily free token limit of 200k tokens has been exhausted. Please upgrade your plan for higher limits.";
-        return res.status(403).json({
-          error: errorMsg,
-          code: "DAILY_TOKEN_LIMIT_EXHAUSTED",
-        });
+    // dailyTokenLimit === null → unlimited tier, skip the cap (still tracked below).
+    if (dailyTokenLimit !== null && dailyTokenLimit !== undefined) {
+      try {
+        const db = await getDb();
+        const limitCheck = await checkDailyLimit(db, userId, 0, dailyTokenLimit);
+        if (!limitCheck.allowed) {
+          const limitLabel = Number(dailyTokenLimit) >= 1000
+            ? `${Math.round(Number(dailyTokenLimit) / 1000)}k`
+            : String(dailyTokenLimit);
+          return res.status(403).json({
+            error: `Daily token limit of ${limitLabel} tokens has been exhausted. ${planTier === "free" ? "Please upgrade your plan for higher limits." : "It resets at 00:00 UTC."}`,
+            code: "DAILY_TOKEN_LIMIT_EXHAUSTED",
+          });
+        }
+      } catch (limitErr) {
+        console.error("Limit checking failed:", limitErr);
       }
-    } catch (limitErr) {
-      console.error("Limit checking failed:", limitErr);
     }
   }
 
@@ -493,18 +518,21 @@ router.post("/bedrock/chat", async (req, res) => {
     const data = JSON.parse(text || "{}");
     const parsed = parser(data);
 
-    // Track usage if it's a free user utilizing Nova models
+    // Track daily token usage for every user on the platform-served models
+    // (all tiers now have a per-day cap; Enterprise is unlimited but still
+    // tracked). Usage is reported back against the user's own tier limit.
     let dailyUsage = null;
-    if (isFreeBedrockModel && isFreeUser && userId) {
+    if (isFreeBedrockModel && userId) {
       try {
         const db = await getDb();
         await incrementDailyUsage(db, userId, model, parsed.inputTokens, parsed.outputTokens);
-        const usage = await getCurrentDailyUsage(db, userId);
+        const usage = await getCurrentDailyUsage(db, userId, dailyTokenLimit);
         dailyUsage = {
           used: usage.tokensUsed,
-          limit: usage.limit,
+          limit: usage.limit, // number, or null for unlimited tiers
           percentage: usage.percentage,
-          warning: usage.tokensUsed >= 150000 || usage.queriesUsed >= 18,
+          // Warn once the user passes 75% of their own daily allowance.
+          warning: usage.limit != null && usage.tokensUsed >= usage.limit * 0.75,
         };
       } catch (usageLogErr) {
         console.error("Failed to log daily token usage:", usageLogErr);

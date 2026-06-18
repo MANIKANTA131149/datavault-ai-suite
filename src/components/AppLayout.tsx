@@ -351,7 +351,7 @@ export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen]  = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
   const [dailyTokens, setDailyTokens] = useState<{
-    tokensUsed: number; limit: number; queriesUsed: number; queryLimit: number; percentage: number;
+    tokensUsed: number; limit: number; percentage: number;
   } | null>(null);
 
   useEffect(() => {

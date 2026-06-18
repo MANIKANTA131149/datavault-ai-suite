@@ -11,8 +11,6 @@ interface PlanBannerProps {
   dailyTokens?: {
     tokensUsed: number;
     limit: number;
-    queriesUsed: number;
-    queryLimit: number;
     percentage: number;
   } | null;
 }
@@ -37,14 +35,12 @@ export function PlanBanner({ dailyTokens }: PlanBannerProps) {
     if (pct >= 80) alerts.push({ label, pct: Math.min(pct, 100), exhausted: pct >= 100 });
   };
 
-  addAlert("Monthly queries",  usage.monthlyQueries, plan.monthlyQueries);
   addAlert("Monthly tokens",   usage.monthlyTokens,  plan.monthlyTokens);
   addAlert("Datasets",         usage.datasets,        plan.datasets);
   addAlert("Saved insights",   usage.insights,        plan.insights);
 
   if (user.planTier === "free" && dailyTokens) {
     addAlert("Daily tokens",   dailyTokens.tokensUsed,  dailyTokens.limit);
-    addAlert("Daily queries",  dailyTokens.queriesUsed, dailyTokens.queryLimit);
   }
 
   if (alerts.length === 0) return null;
