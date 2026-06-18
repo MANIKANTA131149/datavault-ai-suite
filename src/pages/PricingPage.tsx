@@ -127,7 +127,7 @@ interface ComparisonRow {
 
 function buildComparisonRows(): ComparisonRow[] {
   return [
-    { label: "Monthly Queries", icon: MessageSquare, values: { free: formatPlanLimit(PLAN_DEFINITIONS.free.monthlyQueries), standard: formatPlanLimit(PLAN_DEFINITIONS.standard.monthlyQueries), professional: formatPlanLimit(PLAN_DEFINITIONS.professional.monthlyQueries), enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise.monthlyQueries) } },
+    { label: "Daily Tokens", icon: MessageSquare, values: { free: formatPlanLimit(PLAN_DEFINITIONS.free.monthlyTokens), standard: formatPlanLimit(PLAN_DEFINITIONS.standard.monthlyTokens), professional: formatPlanLimit(PLAN_DEFINITIONS.professional.monthlyTokens), enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise.monthlyTokens) } },
     { label: "Datasets", icon: Database, values: { free: formatPlanLimit(PLAN_DEFINITIONS.free.datasets), standard: formatPlanLimit(PLAN_DEFINITIONS.standard.datasets), professional: formatPlanLimit(PLAN_DEFINITIONS.professional.datasets), enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise.datasets) } },
     { label: "File Size Limit", icon: FileUp, values: { free: formatFileSizeLimit(PLAN_DEFINITIONS.free.fileSizeLimitBytes), standard: formatFileSizeLimit(PLAN_DEFINITIONS.standard.fileSizeLimitBytes), professional: formatFileSizeLimit(PLAN_DEFINITIONS.professional.fileSizeLimitBytes), enterprise: formatFileSizeLimit(PLAN_DEFINITIONS.enterprise.fileSizeLimitBytes) } },
     { label: "Saved Insights", icon: Bookmark, values: { free: formatPlanLimit(PLAN_DEFINITIONS.free.insights), standard: formatPlanLimit(PLAN_DEFINITIONS.standard.insights), professional: formatPlanLimit(PLAN_DEFINITIONS.professional.insights), enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise.insights) } },
@@ -149,8 +149,8 @@ const FAQ_ITEMS = [
     a: "Yes. You can upgrade your plan at any time and the new limits take effect immediately. Downgrades are processed at the end of your current billing cycle.",
   },
   {
-    q: "What happens when I hit my monthly query limit?",
-    a: "Queries will be paused until your cycle resets or you upgrade to a higher tier. You'll see a clear warning as you approach the limit so you're never caught off guard.",
+    q: "What happens when I hit my daily token limit?",
+    a: "Querying pauses until your daily allowance resets at 00:00 UTC, or you upgrade to a higher tier. You'll see a clear warning as you approach the limit so you're never caught off guard.",
   },
   {
     q: "Is my data secure on the platform?",
@@ -162,7 +162,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What does the Enterprise plan include?",
-    a: "Enterprise includes unlimited queries, datasets, and team members, plus dedicated onboarding, SLA-backed uptime, audit logging, and a direct support channel. Contact us to discuss a custom arrangement.",
+    a: "Enterprise includes unlimited tokens, datasets, and team members, plus dedicated onboarding, SLA-backed uptime, audit logging, and a direct support channel. Contact us to discuss a custom arrangement.",
   },
   {
     q: "Can I try the platform before upgrading?",
@@ -414,8 +414,6 @@ export default function PricingPage() {
   const [dailyTokens, setDailyTokens] = useState<{
     tokensUsed: number;
     limit: number;
-    queriesUsed: number;
-    queryLimit: number;
     percentage: number;
   } | null>(null);
 
@@ -497,22 +495,16 @@ export default function PricingPage() {
             ) : context ? (
               <div className="grid gap-6 md:grid-cols-2">
                 <UsageBar
-                  label={currentTier === "free" ? "Daily Bedrock Queries" : "Monthly Queries"}
-                  used={currentTier === "free" && dailyTokens ? dailyTokens.queriesUsed : context.usage.monthlyQueries}
-                  limit={currentTier === "free" && dailyTokens ? dailyTokens.queryLimit : currentPlan.monthlyQueries}
-                  icon={MessageSquare}
+                  label="Daily Tokens"
+                  used={currentTier === "free" && dailyTokens ? dailyTokens.tokensUsed : context.usage.monthlyTokens}
+                  limit={currentTier === "free" && dailyTokens ? dailyTokens.limit : currentPlan.monthlyTokens}
+                  icon={Zap}
                 />
                 <UsageBar
                   label="Datasets"
                   used={context.usage.datasets}
                   limit={currentPlan.datasets}
                   icon={Database}
-                />
-                <UsageBar
-                  label={currentTier === "free" ? "Daily Bedrock Tokens" : "Monthly Tokens"}
-                  used={currentTier === "free" && dailyTokens ? dailyTokens.tokensUsed : context.usage.monthlyTokens}
-                  limit={currentTier === "free" && dailyTokens ? dailyTokens.limit : currentPlan.monthlyTokens}
-                  icon={Zap}
                 />
                 <UsageBar
                   label="Saved Insights"

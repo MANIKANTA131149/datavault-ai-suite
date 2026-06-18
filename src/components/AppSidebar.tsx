@@ -9,12 +9,10 @@ import {
   ChevronRight,
   Clock,
   Compass,
-  CreditCard,
   Database,
   LayoutDashboard,
   LayoutPanelTop,
   MessageSquare,
-  Settings,
   Shield,
   Zap,
 } from "lucide-react";
@@ -89,14 +87,15 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
         // { to: "/app/insights", icon: Bookmark,      label: "Insights" },
       ],
     },
-    {
-      label: "Account",
-      items: [
-        { to: "/app/pricing",  icon: CreditCard, label: "Pricing"  },
-        ...(adminUser ? [{ to: "/app/admin", icon: Shield, label: "Admin" }] : []),
-        { to: "/app/settings", icon: Settings,   label: "Settings" },
-      ],
-    },
+    // Account section (Settings / Plans & Billing) intentionally lives only in
+    // the profile/account menu now — kept out of the left nav. Admin stays
+    // reachable from the account menu too.
+    ...(adminUser
+      ? [{
+          label: "Account",
+          items: [{ to: "/app/admin", icon: Shield, label: "Admin" }],
+        } as NavSection]
+      : []),
   ];
 
   return (
