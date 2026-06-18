@@ -73,6 +73,10 @@ function isAllowedOrigin(origin) {
   } catch { /* malformed origin header */ }
   return false;
 }
+// Exported so routes that bypass the cors() middleware (e.g. the SSE handler,
+// which calls res.writeHead and would otherwise drop the CORS headers) can
+// re-apply the same allowlist manually.
+app.locals.isAllowedOrigin = isAllowedOrigin;
 
 app.use(
   cors({

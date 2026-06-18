@@ -19,15 +19,30 @@ const HEARTBEAT_MS = 25000;
 const MAX_LIFETIME_MS = 10 * 60 * 1000; // re-handshake every 10 min
 
 router.get("/stream", async (req, res) => {
+  // CORS for the SSE response. The cors() middleware sets these, but the
+  // res.writeHead() below replaces the whole header set — and the 401 path
+  // returns before any middleware-set headers matter — so apply them here too.
+  // EventSource never sends credentials, so echoing the allowed origin (not "*")
+  // is the correct, safe value.
+  const origin = req.headers.origin;
+  const allowOrigin = req.app.locals.isAllowedOrigin;
+  const corsHeaders = {};
+  if (origin && (!allowOrigin || allowOrigin(origin))) {
+    corsHeaders["Access-Control-Allow-Origin"] = origin;
+    corsHeaders["Vary"] = "Origin";
+  }
+
   let userId;
   try {
     const payload = await verifyToken(String(req.query.token || ""), { secretKey: CLERK_SECRET_KEY });
     userId = payload.sub;
   } catch {
+    res.set(corsHeaders);
     return res.status(401).json({ error: "Unauthorized — invalid token" });
   }
 
   res.writeHead(200, {
+    ...corsHeaders,
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
