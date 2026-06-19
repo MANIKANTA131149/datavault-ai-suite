@@ -11,6 +11,7 @@ const { getDb } = require("./db");
 const { runStoredQuery } = require("./lib/query-runner");
 const { recordUsage } = require("./lib/metering");
 const { recordLineage } = require("./lib/lineage");
+const { evaluateCondition, dispatchAction } = require("./lib/automation-actions");
 
 const BATCH_LIMIT = 25;
 
@@ -48,18 +49,48 @@ async function runDueSchedules(db, nowIso) {
     let rowCount = 0;
     let preview = [];
 
+    let runResult = null;
     try {
-      const result = await runStoredQuery(db, schedule.userId, {
+      runResult = await runStoredQuery(db, schedule.userId, {
         datasetId: schedule.datasetId,
         connectionId: schedule.connectionId,
         sheetName: schedule.sheetName,
         sql: schedule.sql,
       });
-      rowCount = result.rowCount;
-      preview = result.rows.slice(0, 50);
+      rowCount = runResult.rowCount;
+      preview = runResult.rows.slice(0, 50);
     } catch (err) {
       status = "error";
       error = String(err.message || err).slice(0, 500);
+    }
+
+    // F-AUTO: result-driven "when → then". Only schedules that carry a condition
+    // do anything here; legacy schedules skip this entirely (unchanged behavior).
+    let automationStatus = null;
+    if (status === "success" && schedule.condition && runResult) {
+      try {
+        const evald = evaluateCondition(schedule.condition, runResult, schedule.lastValue);
+        // Persist the latest value so "changed/increased/decreased" works next tick.
+        await db.collection("schedules").updateOne(
+          { _id: schedule._id },
+          { $set: { lastValue: evald.value } }
+        );
+        if (evald.tripped) {
+          automationStatus = await dispatchAction(
+            schedule.action,
+            { scheduleName: schedule.name, detail: evald.detail, rowCount },
+            (payload) => notify(db, schedule.userId, payload)
+          );
+          recordUsage({
+            userId: schedule.userId,
+            eventType: "alert_evaluation",
+            units: 1,
+            metadata: { scheduleId: schedule._id, automation: automationStatus, detail: evald.detail },
+          });
+        }
+      } catch (e) {
+        automationStatus = `error: ${String(e.message || e).slice(0, 120)}`;
+      }
     }
 
     // Record the run (append-only run log, capped retrieval client-side).
@@ -71,6 +102,7 @@ async function runDueSchedules(db, nowIso) {
       error,
       rowCount,
       preview,
+      ...(automationStatus ? { automationStatus } : {}),
     }).catch((e) => console.error("schedule_runs insert failed:", e.message));
 
     // Advance nextRun from NOW (not from the stale nextRun) so a backlog

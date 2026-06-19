@@ -25,6 +25,33 @@ function computeNextRun(interval, fromTs = Date.now()) {
   return new Date(fromTs + (INTERVALS[interval] || INTERVALS.daily)).toISOString();
 }
 
+// F-AUTO: validate & normalize an optional "when → then" rule. Returns
+// { condition, action } or { condition: null, action: null } when absent.
+const COND_OPERATORS = new Set([">", ">=", "<", "<=", "=", "!=", "changed", "increased", "decreased", "any_rows", "no_rows"]);
+const ACTION_TYPES = new Set(["notification", "webhook"]);
+function sanitizeAutomation(body) {
+  const c = body?.condition;
+  const a = body?.action;
+  let condition = null;
+  let action = null;
+  if (c && typeof c === "object" && COND_OPERATORS.has(c.operator)) {
+    condition = {
+      operator: c.operator,
+      threshold: c.threshold !== undefined && c.threshold !== null && c.threshold !== "" ? Number(c.threshold) : null,
+    };
+  }
+  if (condition && a && typeof a === "object" && ACTION_TYPES.has(a.type)) {
+    if (a.type === "notification") {
+      action = { type: "notification", message: String(a.message || "").slice(0, 500) };
+    } else if (a.type === "webhook") {
+      const url = String(a.url || "").trim();
+      // Only accept http(s) URLs; the scheduler additionally enforces SSRF guard.
+      if (/^https?:\/\//i.test(url)) action = { type: "webhook", url: url.slice(0, 500) };
+    }
+  }
+  return { condition, action };
+}
+
 // ─── List schedules ───────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -78,6 +105,9 @@ router.post("/", async (req, res) => {
       nextRun: computeNextRun(interval),
       runCount: 0,
       createdAt: new Date().toISOString(),
+      // F-AUTO (optional): when→then rule. null for plain scheduled queries.
+      ...sanitizeAutomation(req.body),
+      lastValue: null,
     };
     await db.collection("schedules").insertOne(doc);
 
@@ -102,6 +132,12 @@ router.put("/:id", async (req, res) => {
       if (!INTERVALS[req.body.interval]) return res.status(400).json({ error: "Invalid interval" });
       update.interval = req.body.interval;
       update.nextRun = computeNextRun(req.body.interval);
+    }
+    // F-AUTO: allow editing/clearing the when→then rule.
+    if (req.body?.condition !== undefined || req.body?.action !== undefined) {
+      const { condition, action } = sanitizeAutomation(req.body);
+      update.condition = condition;
+      update.action = action;
     }
     const result = await db.collection("schedules").updateOne({ _id: req.params.id, userId: req.userId }, { $set: update });
     if (result.matchedCount === 0) return res.status(404).json({ error: "Schedule not found" });

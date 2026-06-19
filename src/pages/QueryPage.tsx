@@ -59,6 +59,7 @@ import { ProviderLogo } from "@/components/ProviderLogo";
 import { DbTypeIcon } from "@/components/DbTypeIcon";
 
 import { runDatabaseAgent, runSheetAgent, type AgentStep, type ConversationContext } from "@/lib/agent";
+import { tracesApi } from "@/lib/platform-client";
 import { parseOptionsFromText, cleanPromptText } from "@/lib/clarification-options";
 import type { Provider } from "@/lib/llm-client";
 import type { ColumnInfo } from "@/lib/file-parser";
@@ -3740,6 +3741,14 @@ export default function QueryPage() {
   const [showMobileAdvanced, setShowMobileAdvanced] = useState(false);
   const [favoritePrompts, setFavoritePrompts] = useState<string[]>(() => readStoredList(FAVORITE_PROMPTS_KEY));
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  // Drag-resizable width for the left context panel, persisted across sessions.
+  // Clamped to a sensible range; collapse still wins (renders w-10).
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("querify:query-left-width"));
+    return Number.isFinite(saved) && saved >= 220 && saved <= 460 ? saved : 288;
+  });
+  const leftResizingRef = useRef(false);
+  const leftPanelRef = useRef<HTMLDivElement>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [hitlState, setHitlState] = useState<{
     kind: "clarification" | "approval";
@@ -3843,6 +3852,46 @@ export default function QueryPage() {
     const replayQuestion = searchParams.get("q");
     if (replayQuestion) setInput(replayQuestion);
   }, [searchParams]);
+
+  // F-MKT: a forked query template stashes its payload here before navigating.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("querify:forked-query");
+      if (!raw) return;
+      sessionStorage.removeItem("querify:forked-query");
+      const payload = JSON.parse(raw) as { question?: string };
+      if (payload?.question) {
+        setInput(payload.question);
+        toast.success("Template loaded — pick a data source and run");
+      }
+    } catch { /* ignore malformed payload */ }
+  }, []);
+
+  // Drag-to-resize the left context panel. Pointer listeners are only attached
+  // while dragging, so there is zero idle cost.
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!leftResizingRef.current) return;
+      // Measure from the panel's own left edge so the app sidebar offset never
+      // skews the width. Clamp to keep both panes usable.
+      const left = leftPanelRef.current?.getBoundingClientRect().left ?? 0;
+      const next = Math.min(460, Math.max(220, e.clientX - left));
+      setLeftPanelWidth(next);
+    };
+    const onUp = () => {
+      if (!leftResizingRef.current) return;
+      leftResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try { localStorage.setItem("querify:query-left-width", String(leftPanelWidth)); } catch { /* ignore */ }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [leftPanelWidth]);
 
   useEffect(() => {
     const scroller = chatScrollRef.current;
@@ -4238,6 +4287,27 @@ export default function QueryPage() {
       } finally {
         fetchPlan();
       }
+
+      // F-OBS: persist a trace of this run for the Traces page (fire-and-forget;
+      // never blocks or fails the answer).
+      tracesApi.record({
+        question,
+        steps: steps.map((s) => ({
+          command: s.command,
+          summary: typeof s.result === "string" ? s.result.slice(0, 500) : "",
+          reasoning: (s as { reasoning?: string }).reasoning,
+          sql: (s.args as { sql?: string })?.sql,
+          final: s.isFinal,
+          tokens: (s.tokens?.input || 0) + (s.tokens?.output || 0),
+          latencyMs: s.durationMs,
+        })),
+        totalTokens,
+        latencyMs: Date.now() - startTime,
+        model: activeModel,
+        provider: activeProvider,
+        status: steps.some((s) => s.command === "Error") ? "error" : "ok",
+        datasetId: selectedDatasetId,
+      });
     } catch (err: any) {
       console.error("Query run failed:", err);
       const message = formatRunError(err);
@@ -4744,8 +4814,28 @@ export default function QueryPage() {
               transition={{ duration: 0.15, ease: "easeOut" }}
               className="flex-1 flex min-h-0 min-w-0 overflow-hidden relative xl:flex-row flex-col w-full h-full"
             >
-            {/* Left: Context Panel */}
-            <div className={`hidden shrink-0 flex-col overflow-hidden border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex transition-all duration-200 ${leftPanelCollapsed ? "w-10" : "w-[clamp(16rem,20vw,18rem)]"}`}>
+            {/* Left: Context Panel (collapsible + drag-resizable) */}
+            <div
+              ref={leftPanelRef}
+              style={leftPanelCollapsed ? undefined : { width: leftPanelWidth }}
+              className={`relative hidden shrink-0 flex-col overflow-hidden border-r border-border/70 bg-background-secondary/90 backdrop-blur-sm lg:flex ${leftResizingRef.current ? "" : "transition-[width] duration-200"} ${leftPanelCollapsed ? "w-10" : ""}`}
+            >
+              {/* Drag handle — only when expanded. Sits on the right edge. */}
+              {!leftPanelCollapsed && (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize panel"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    leftResizingRef.current = true;
+                    document.body.style.cursor = "col-resize";
+                    document.body.style.userSelect = "none";
+                  }}
+                  onDoubleClick={() => { setLeftPanelWidth(288); try { localStorage.setItem("querify:query-left-width", "288"); } catch { /* ignore */ } }}
+                  className="absolute right-0 top-0 z-20 h-full w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-primary/30 active:bg-primary/40"
+                />
+              )}
               {/* Sidebar Tab Switcher */}
               <div className="shrink-0 flex items-center border-b border-border/60 bg-background-secondary px-2 py-2 gap-1">
                 {!leftPanelCollapsed && (
@@ -5163,6 +5253,20 @@ export default function QueryPage() {
                                 )}
                               </div>
                             </>
+                          )}
+                          {finalStep && (finalStep.confidence === "low" || finalStep.confidence === "medium") && finalStep.confidenceReason && (
+                            <div className={cn(
+                              "mx-3 mt-1 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs sm:mx-10",
+                              finalStep.confidence === "low"
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                : "border-border/60 bg-muted/50 text-muted-foreground",
+                            )}>
+                              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                              <span>
+                                <span className="font-medium">{finalStep.confidence === "low" ? "Low confidence" : "Worth a check"}:</span>{" "}
+                                {finalStep.confidenceReason}
+                              </span>
+                            </div>
                           )}
                           {finalStep && finalStep.args?.kind === "dashboard_created" && finalStep.args?.dashboard ? (
                             <DashboardChatPreview dashboard={finalStep.args.dashboard as ChatDashboard} />

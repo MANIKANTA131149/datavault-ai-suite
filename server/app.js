@@ -33,6 +33,11 @@ const dashboardsRoutes = require("./routes/dashboards");
 const embedRoutes = require("./routes/embed");
 const eventsRoutes = require("./routes/events");
 const clerkWebhookRoutes = require("./routes/clerk-webhook");
+const tracesRoutes = require("./routes/traces");
+const templatesRoutes = require("./routes/templates");
+const metricsRoutes = require("./routes/metrics");
+const evalRoutes = require("./routes/eval");
+const collabRoutes = require("./routes/collab");
 
 const app = express();
 
@@ -171,6 +176,11 @@ function mountApiRoutes(basePath) {
   app.use(`${basePath}/dashboards`, apiLimiter, dashboardsRoutes);
   app.use(`${basePath}/embed`, publicChatLimiter, embedRoutes);
   app.use(`${basePath}/events`, apiLimiter, eventsRoutes);
+  app.use(`${basePath}/traces`, apiLimiter, tracesRoutes);
+  app.use(`${basePath}/templates`, apiLimiter, templatesRoutes);
+  app.use(`${basePath}/metrics`, apiLimiter, metricsRoutes);
+  app.use(`${basePath}/eval`, apiLimiter, evalRoutes);
+  app.use(`${basePath}/collab`, apiLimiter, collabRoutes);
 }
 
 // Clerk webhooks — must be mounted BEFORE general JSON body parsing touches the path.

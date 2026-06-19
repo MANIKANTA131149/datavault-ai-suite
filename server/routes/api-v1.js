@@ -41,23 +41,38 @@ router.post("/query", async (req, res) => {
     const schema = await describeTarget(db, req.userId, target);
 
     const tableHint = schema.tableName ? ` The table name is "${schema.tableName}".` : "";
-    const { content } = await serverChat({
-      userId: req.userId,
-      orgId: req.orgId,
-      purpose: "public_api_query",
-      maxTokens: 1000,
-      messages: [
-        {
-          role: "system",
-          content:
-            `You convert a natural-language question into a single read-only ${schema.dialect} SELECT statement.` +
-            ` Reply with ONLY the SQL — no explanation, no markdown.${tableHint}\nSchema:\n${schema.description.slice(0, 6000)}`,
-        },
-        { role: "user", content: question.slice(0, 1000) },
-      ],
-    });
+    // F-SEM: ground the model on certified metrics for this org/target (no-op
+    // when the org has defined none — identical behavior to before).
+    let metricsBlock = "";
+    try {
+      const { buildMetricsContext } = require("./metrics");
+      metricsBlock = await buildMetricsContext(db, req.orgId, { datasetId, connectionId });
+    } catch { /* non-fatal */ }
+    // Cache key: identical question + schema + metrics → identical SQL. Cuts
+    // tokens/latency on repeats; a miss falls straight through to a live call.
+    const { getCached, setCached } = require("../lib/llm-cache");
+    const cacheParts = { p: "v1_query", q: question.slice(0, 1000), schema: schema.description.slice(0, 6000), metricsBlock, dialect: schema.dialect };
+    let sql = await getCached(cacheParts);
 
-    const sql = extractSql(content);
+    if (!sql) {
+      const { content } = await serverChat({
+        userId: req.userId,
+        orgId: req.orgId,
+        purpose: "public_api_query",
+        maxTokens: 1000,
+        messages: [
+          {
+            role: "system",
+            content:
+              `You convert a natural-language question into a single read-only ${schema.dialect} SELECT statement.` +
+              ` Reply with ONLY the SQL — no explanation, no markdown.${tableHint}\nSchema:\n${schema.description.slice(0, 6000)}${metricsBlock}`,
+          },
+          { role: "user", content: question.slice(0, 1000) },
+        ],
+      });
+      sql = extractSql(content);
+      if (sql) setCached(cacheParts, sql);
+    }
     if (!sql) return res.status(422).json({ error: "Could not generate SQL for that question" });
     validateReadOnlySql(sql, connectionId ? "postgresql" : "duckdb");
 

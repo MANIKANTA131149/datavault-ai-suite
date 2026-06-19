@@ -1052,6 +1052,11 @@ export default function DatasetsPage() {
           icon={FileSpreadsheet}
           title="No datasets yet"
           description="Upload a CSV or Excel file above to get started. Your data stays private and secure."
+          secondaryAction={
+            <Button variant="outline" size="sm" onClick={() => navigate("/app/templates")}>
+              Browse templates
+            </Button>
+          }
         />
       ) : visibleDatasets.length === 0 ? (
         <EmptyState
