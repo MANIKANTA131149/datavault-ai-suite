@@ -27,6 +27,7 @@ import { GuidedTour } from "@/components/GuidedTour";
 import { KeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { AccountMenu } from "@/components/AccountMenu";
+import { OrgSwitcher } from "@/components/OrgSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import { BrandLoader } from "@/components/shared/BrandLoader";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -57,6 +58,10 @@ const BREADCRUMBS: Record<string, string> = {
   "/app/automations": "Automations",
   "/app/dashboards": "Reports",
   "/app/glossary": "Glossary",
+  "/app/metrics": "Metrics",
+  "/app/traces": "Traces",
+  "/app/templates": "Templates",
+  "/app/evaluation": "Evaluation",
   "/app/admin": "Admin",
   "/app/settings": "Settings",
 };
@@ -460,6 +465,10 @@ export default function AppLayout() {
                     {BREADCRUMBS[location.pathname] || "Page"}
                   </span>
                 </div>
+              </div>
+              {/* Workspace switcher — hidden on the smallest screens to keep the bar tidy */}
+              <div className="ml-1 hidden sm:block">
+                <OrgSwitcher />
               </div>
             </div>
 

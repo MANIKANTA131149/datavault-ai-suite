@@ -29,6 +29,10 @@ const DeployedChatPage = lazy(() => import("@/pages/DeployedChatPage"));
 const AutomationsPage = lazy(() => import("@/pages/AutomationsPage"));
 const DashboardsViewerPage = lazy(() => import("@/pages/DashboardsViewerPage"));
 const GlossaryPage = lazy(() => import("@/pages/GlossaryPage"));
+const TracesPage = lazy(() => import("@/pages/TracesPage"));
+const TemplatesPage = lazy(() => import("@/pages/TemplatesPage"));
+const MetricsPage = lazy(() => import("@/pages/MetricsPage"));
+const EvalPage = lazy(() => import("@/pages/EvalPage"));
 
 const queryClient = new QueryClient();
 
@@ -59,6 +63,10 @@ const App = () => (
               <Route path="automations" element={<AutomationsPage />} />
               <Route path="dashboards" element={<DashboardsViewerPage />} />
               <Route path="glossary" element={<GlossaryPage />} />
+              <Route path="traces" element={<TracesPage />} />
+              <Route path="templates" element={<TemplatesPage />} />
+              <Route path="metrics" element={<MetricsPage />} />
+              <Route path="evaluation" element={<EvalPage />} />
               {/* Insights — temporarily disabled, will release later */}
               {/* <Route path="insights" element={<InsightsPage />} /> */}
               <Route path="admin" element={<AdminPage />} />

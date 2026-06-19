@@ -2,6 +2,8 @@ import { useState } from "react";
 import { NavLink as RouterNavLink, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Activity,
+  BadgeCheck,
   Bookmark,
   BookOpen,
   Cable,
@@ -10,8 +12,10 @@ import {
   Clock,
   Compass,
   Database,
+  FlaskConical,
   LayoutDashboard,
   LayoutPanelTop,
+  LayoutTemplate,
   MessageSquare,
   Shield,
   Zap,
@@ -71,29 +75,35 @@ export function AppSidebar({ className, mobile = false, onNavigate }: AppSidebar
     {
       label: "Data",
       items: [
-        { to: "/app/datasets",    icon: Database, label: "Datasets"    },
-        { to: "/app/connections", icon: Cable,    label: "Connections" },
-        { to: "/app/glossary",    icon: BookOpen, label: "Glossary"    },
+        { to: "/app/datasets",    icon: Database,    label: "Datasets"    },
+        { to: "/app/connections", icon: Cable,       label: "Connections" },
+        { to: "/app/glossary",    icon: BookOpen,    label: "Glossary"    },
+        { to: "/app/metrics",     icon: BadgeCheck,  label: "Metrics"     },
       ],
     },
     {
       label: "Analyze",
       items: [
-        { to: "/app/query",       icon: MessageSquare,  label: "Query"       },
-        { to: "/app/history",     icon: Clock,          label: "History"     },
-        { to: "/app/dashboards",  icon: LayoutPanelTop, label: "Reports"     },
-        { to: "/app/automations", icon: Zap,            label: "Automations" },
+        { to: "/app/query",       icon: MessageSquare,    label: "Query"       },
+        { to: "/app/history",     icon: Clock,            label: "History"     },
+        { to: "/app/dashboards",  icon: LayoutPanelTop,   label: "Reports"     },
+        { to: "/app/automations", icon: Zap,              label: "Automations" },
+        { to: "/app/traces",      icon: Activity,         label: "Traces"      },
+        { to: "/app/templates",   icon: LayoutTemplate,   label: "Templates"   },
         // Insights — temporarily disabled, will release later
         // { to: "/app/insights", icon: Bookmark,      label: "Insights" },
       ],
     },
     // Account section (Settings / Plans & Billing) intentionally lives only in
     // the profile/account menu now — kept out of the left nav. Admin stays
-    // reachable from the account menu too.
+    // reachable from the account menu too. Evaluation is admin-only too.
     ...(adminUser
       ? [{
           label: "Account",
-          items: [{ to: "/app/admin", icon: Shield, label: "Admin" }],
+          items: [
+            { to: "/app/evaluation", icon: FlaskConical, label: "Evaluation" },
+            { to: "/app/admin",      icon: Shield,       label: "Admin"      },
+          ],
         } as NavSection]
       : []),
   ];

@@ -93,7 +93,7 @@ router.get("/:orgId/members", async (req, res) => {
 router.post("/:orgId/members", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
-    const role = ["admin", "member", "viewer"].includes(req.body?.role) ? req.body.role : "member";
+    const role = ["admin", "analyst", "member", "viewer"].includes(req.body?.role) ? req.body.role : "member";
     if (!email) return res.status(400).json({ error: "email is required" });
 
     const db = await getDb();
@@ -124,6 +124,55 @@ router.post("/:orgId/members", async (req, res) => {
     logAudit(req.userId, req.userEmail || "", "org.member_invite", { orgId: req.params.orgId, email, role }, "info");
   } catch (err) {
     console.error("invite member error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ─── Change a member's role (F-RBAC) — owner/admin only ───────────────────────
+router.put("/:orgId/members/:userId/role", async (req, res) => {
+  try {
+    const role = ["admin", "analyst", "member", "viewer"].includes(req.body?.role) ? req.body.role : null;
+    if (!role) return res.status(400).json({ error: "role must be one of: admin, analyst, member, viewer" });
+
+    const db = await getDb();
+    const me = await db.collection("org_members").findOne({ orgId: req.params.orgId, userId: req.userId, status: "active" });
+    if (!me || !["owner", "admin"].includes(me.role)) {
+      return res.status(403).json({ error: "Only org owners/admins can change roles" });
+    }
+    // Never let anyone demote the owner via this route.
+    const target = await db.collection("org_members").findOne({ orgId: req.params.orgId, userId: req.params.userId });
+    if (!target) return res.status(404).json({ error: "Member not found" });
+    if (target.role === "owner") return res.status(403).json({ error: "The organization owner's role cannot be changed" });
+
+    await db.collection("org_members").updateOne(
+      { orgId: req.params.orgId, userId: req.params.userId },
+      { $set: { role } }
+    );
+    res.json({ success: true });
+    logAudit(req.userId, req.userEmail || "", "org.member_role_change", { orgId: req.params.orgId, userId: req.params.userId, role }, "info");
+  } catch (err) {
+    console.error("change role error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ─── Remove a member — owner/admin only ───────────────────────────────────────
+router.delete("/:orgId/members/:userId", async (req, res) => {
+  try {
+    const db = await getDb();
+    const me = await db.collection("org_members").findOne({ orgId: req.params.orgId, userId: req.userId, status: "active" });
+    if (!me || !["owner", "admin"].includes(me.role)) {
+      return res.status(403).json({ error: "Only org owners/admins can remove members" });
+    }
+    const target = await db.collection("org_members").findOne({ orgId: req.params.orgId, userId: req.params.userId });
+    if (!target) return res.status(404).json({ error: "Member not found" });
+    if (target.role === "owner") return res.status(403).json({ error: "The organization owner cannot be removed" });
+
+    await db.collection("org_members").deleteOne({ orgId: req.params.orgId, userId: req.params.userId });
+    res.json({ success: true });
+    logAudit(req.userId, req.userEmail || "", "org.member_remove", { orgId: req.params.orgId, userId: req.params.userId }, "info");
+  } catch (err) {
+    console.error("remove member error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });

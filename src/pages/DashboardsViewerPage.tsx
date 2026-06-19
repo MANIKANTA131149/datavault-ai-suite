@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   LayoutDashboard, ArrowLeft, Trash2, RefreshCw, Database, Loader2,
-  MessageSquare, AlertTriangle, Hash, Clock, TrendingUp, Activity,
+  MessageSquare, AlertTriangle, Hash, Clock, TrendingUp, Activity, Users,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { CardGridSkeleton } from "@/components/shared/Skeletons";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { CollabPanel } from "@/components/CollabPanel";
 import { PanelChart, CHART_COLORS, CHART_TYPE_ICON, panelTypeBreakdown } from "@/components/dashboard/DashboardCharts";
 import { useDatasetStore } from "@/stores/dataset-store";
 import { dashboardsApi, type DashboardRecord } from "@/lib/automation-client";
@@ -50,6 +51,7 @@ export default function DashboardsViewerPage() {
   const [panelStates, setPanelStates] = useState<Record<string, PanelState>>({});
   const [running, setRunning] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [showCollab, setShowCollab] = useState(false);
 
   const activeDatasets = useMemo(() => datasets.filter((d) => !d.archived), [datasets]);
 
@@ -97,6 +99,7 @@ export default function DashboardsViewerPage() {
   const openDashboard = (dashboard: DashboardRecord) => {
     setActive(dashboard);
     setPanelStates({});
+    setShowCollab(false);
     if (dashboard.datasetId) runPanels(dashboard, dashboard.datasetId);
   };
 
@@ -154,6 +157,14 @@ export default function DashboardsViewerPage() {
                 <RefreshCw size={13} className={`mr-1 ${running ? "animate-spin" : ""}`} />Refresh
               </Button>
             )}
+            <Button
+              variant={showCollab ? "default" : "outline"}
+              size="sm"
+              className={showCollab ? "h-8" : "h-8 border-border"}
+              onClick={() => setShowCollab((s) => !s)}
+            >
+              <Users size={13} className="mr-1" />Share &amp; comments
+            </Button>
             <Button variant="outline" size="sm" className="h-8 border-border text-destructive hover:bg-destructive/10" onClick={() => setDeleteId(active.id)}>
               <Trash2 size={13} />
             </Button>
@@ -224,6 +235,12 @@ export default function DashboardsViewerPage() {
               );
             })}
           </div>
+        )}
+
+        {showCollab && (
+          <Card className="p-4 sm:p-5">
+            <CollabPanel resourceType="dashboard" resourceId={active.id} allowSharing />
+          </Card>
         )}
 
         <ConfirmDialog

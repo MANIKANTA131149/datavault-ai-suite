@@ -27,6 +27,14 @@ export interface AgentStep {
    * Surfaced in the UI under each step to make the agent's reasoning visible.
    */
   reasoning?: string;
+  /**
+   * Coarse confidence in a FINAL answer, derived from objective run signals
+   * (empty result, self-heal retries, whether verification passed). Optional and
+   * purely additive — only set on final steps from runSheetAgent; the UI shows a
+   * subtle banner for "medium"/"low" so a shaky answer isn't presented as certain.
+   */
+  confidence?: "high" | "medium" | "low";
+  confidenceReason?: string;
 }
 
 export interface HitlController {
@@ -6635,6 +6643,26 @@ export async function* runSheetAgent(
       const observations = formatObservations(detectAnomalies(result.rows as Record<string, unknown>[]));
       if (observations) narrative = (narrative || "").trim() + observations;
     } catch { /* observations are best-effort */ }
+
+    // Coarse, objective confidence — no extra LLM call. We only DROP from "high"
+    // when something concrete suggests caution, so a clean run stays confident.
+    let confidence: "high" | "medium" | "low" = "high";
+    let confidenceReason: string | undefined;
+    const rowCount = result.rows?.length ?? 0;
+    if (rowCount === 0) {
+      confidence = "low";
+      confidenceReason = "The query returned no rows — the filters may be too narrow or the data may not contain a match.";
+    } else if (healAttempts >= 2) {
+      confidence = "low";
+      confidenceReason = "It took several correction attempts to run this — double-check the result against your expectations.";
+    } else if (healAttempts === 1) {
+      confidence = "medium";
+      confidenceReason = "The first attempt needed a correction before it ran. The result looks valid but is worth a glance.";
+    } else if (!verificationUsed) {
+      confidence = "medium";
+      confidenceReason = "Answered directly without a separate verification pass.";
+    }
+
     return {
       turn,
       command: "ExecuteFinalQuery",
@@ -6646,6 +6674,8 @@ export async function* runSheetAgent(
       tokens,
       durationMs,
       isFinal: true,
+      confidence,
+      confidenceReason,
     };
   };
 

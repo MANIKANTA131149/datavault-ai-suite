@@ -63,6 +63,14 @@ async function doConnect() {
   client = c;
   db = c.db("DataVault");
   console.log("✅ Connected to MongoDB Atlas (DataVault)");
+
+  // Best-effort, non-blocking index/TTL sweep. Never affects request latency
+  // or startup success — failures are logged and swallowed inside.
+  try {
+    const { ensureIndexes } = require("./lib/ensure-indexes");
+    ensureIndexes(db).catch((e) => console.warn("ensureIndexes failed (non-fatal):", e.message));
+  } catch { /* lib missing — ignore */ }
+
   return db;
 }
 
