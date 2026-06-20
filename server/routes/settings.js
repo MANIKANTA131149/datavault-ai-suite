@@ -16,6 +16,7 @@ router.get("/", async (req, res) => {
             theme: doc.theme ?? "dark",
             compactMode: doc.compactMode ?? false,
             codeFont: doc.codeFont ?? "jetbrains",
+            tracingEnabled: doc.tracingEnabled ?? false,
             providerConfigs: doc.providerConfigs ?? {},
             activeProvider: doc.activeProvider ?? undefined,
             activeModel: doc.activeModel ?? undefined,
@@ -38,6 +39,7 @@ router.put("/", async (req, res) => {
       theme,
       compactMode,
       codeFont,
+      tracingEnabled,
       providerConfigs,
       activeProvider,
       activeModel,
@@ -46,23 +48,25 @@ router.put("/", async (req, res) => {
       selectedTable,
     } = req.body;
     const db = await getDb();
+    const $set = {
+      userId: req.userId,
+      theme,
+      compactMode,
+      codeFont,
+      providerConfigs: providerConfigs ?? {},
+      activeProvider,
+      activeModel,
+      selectedDatasetId,
+      selectedSheet,
+      selectedTable,
+      updatedAt: new Date().toISOString(),
+    };
+    // Only persist tracingEnabled when the client actually sends it, so an
+    // older client omitting the field doesn't clobber a saved preference.
+    if (typeof tracingEnabled === "boolean") $set.tracingEnabled = tracingEnabled;
     await db.collection("settings").updateOne(
       { userId: req.userId },
-      {
-        $set: {
-          userId: req.userId,
-          theme,
-          compactMode,
-          codeFont,
-          providerConfigs: providerConfigs ?? {},
-          activeProvider,
-          activeModel,
-          selectedDatasetId,
-          selectedSheet,
-          selectedTable,
-          updatedAt: new Date().toISOString(),
-        },
-      },
+      { $set },
       { upsert: true }
     );
     res.json({ success: true });

@@ -20,6 +20,14 @@ async function ensureIndexes(db) {
     ["eval_runs", { userId: 1, ts: -1 }, {}],
     ["schedules", { enabled: 1, nextRun: 1 }, {}],
 
+    // Per-user resource lists (hit on every page load of their respective pages)
+    ["datasets", { userId: 1, uploadDate: -1 }, {}],
+    ["connections", { userId: 1 }, {}],
+    ["deployments", { userId: 1, createdAt: -1 }, {}],
+    ["query_logs", { userId: 1, executedAt: -1 }, {}],
+    // Public deployment lookups + per-deployment daily token budget.
+    ["deployment_token_logs", { deployId: 1, dateStr: 1 }, {}],
+
     // TTL: auto-expire cache + bound trace/usage growth.
     ["llm_cache", { expiresAt: 1 }, { expireAfterSeconds: 0 }],
     // 90-day retention on traces (TTL on an ISO-string date won't work; use a

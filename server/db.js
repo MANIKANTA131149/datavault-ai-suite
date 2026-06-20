@@ -1,6 +1,9 @@
 const { MongoClient, ServerApiVersion } = require("mongodb");
 
 const uri = process.env.MONGODB_URI;
+// Database name is configurable via .env (MONGODB_DB). Falls back to the
+// historical default "DataVault" so existing deployments are unaffected.
+const DB_NAME = process.env.MONGODB_DB || "DataVault";
 
 // ── Singleton state ──────────────────────────────────────────────────────────
 let db = null;
@@ -61,8 +64,8 @@ async function doConnect() {
 
   await c.connect();
   client = c;
-  db = c.db("DataVault");
-  console.log("✅ Connected to MongoDB Atlas (DataVault)");
+  db = c.db(DB_NAME);
+  console.log(`✅ Connected to MongoDB Atlas (${DB_NAME})`);
 
   // Best-effort, non-blocking index/TTL sweep. Never affects request latency
   // or startup success — failures are logged and swallowed inside.

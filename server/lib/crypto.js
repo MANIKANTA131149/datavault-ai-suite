@@ -1,7 +1,35 @@
-// Robust cryptographic utility using a byte-based RC4 stream cipher.
-// CommonJS implementation for Node.js.
+// Request/response OBFUSCATION layer using a byte-based RC4 stream cipher.
+//
+// IMPORTANT: this is NOT confidentiality. The same key ships in the frontend
+// bundle, so anyone can extract it. Treat this purely as a lightweight
+// obfuscation/tamper-nuisance layer on top of TLS — TLS is what actually
+// protects the payload in transit. Do not describe this as "encryption" in
+// any user-facing or compliance context.
+//
+// In production the key MUST be set explicitly (API_ENCRYPTION_KEY) and match
+// the frontend's VITE_API_ENCRYPTION_KEY. The hardcoded fallback exists only so
+// local dev works out of the box; using it in a deployed environment is a
+// misconfiguration and we fail fast on it below.
+const FALLBACK_DEV_KEY = "datavault-ai-suite-shared-secret-key-2026-safe";
+const DEFAULT_KEY = process.env.API_ENCRYPTION_KEY || FALLBACK_DEV_KEY;
 
-const DEFAULT_KEY = process.env.API_ENCRYPTION_KEY || "datavault-ai-suite-shared-secret-key-2026-safe";
+const usingFallbackKey = !process.env.API_ENCRYPTION_KEY;
+const inLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+if (usingFallbackKey) {
+  if (inLambda) {
+    // Refuse to run in a deployed environment with the public default key.
+    throw new Error(
+      "API_ENCRYPTION_KEY is not set. Refusing to start with the public default " +
+      "obfuscation key in a deployed environment. Set API_ENCRYPTION_KEY (and the " +
+      "matching frontend VITE_API_ENCRYPTION_KEY)."
+    );
+  }
+  console.warn(
+    "⚠️  API_ENCRYPTION_KEY is not set — using the public dev fallback key. " +
+    "This is fine for local dev only; set it before deploying."
+  );
+}
 
 function rc4Bytes(bytes, key) {
   const s = new Array(256);
@@ -31,7 +59,8 @@ function rc4Bytes(bytes, key) {
 }
 
 /**
- * Encrypts cleartext into a secure Base64 string
+ * Obfuscates cleartext into a Base64 string (RC4 + base64). Not confidentiality
+ * — see the file header. TLS is the real protection in transit.
  */
 function encrypt(text, key = DEFAULT_KEY) {
   try {
@@ -45,7 +74,7 @@ function encrypt(text, key = DEFAULT_KEY) {
 }
 
 /**
- * Decrypts a secure Base64 string back into cleartext
+ * Reverses the obfuscation: Base64 string back into cleartext.
  */
 function decrypt(base64, key = DEFAULT_KEY) {
   try {

@@ -9,6 +9,7 @@ interface SettingsState {
   theme: Theme;
   compactMode: boolean;
   codeFont: CodeFont;
+  tracingEnabled: boolean;
   loading: boolean;
   hasFetched: boolean;
 
@@ -20,6 +21,7 @@ interface SettingsState {
   setTheme: (theme: Theme) => void;
   setCompactMode: (v: boolean) => void;
   setCodeFont: (font: CodeFont) => void;
+  setTracingEnabled: (v: boolean) => void;
 
   setSelectedDatasetId: (id: string) => void;
   setSelectedSheet: (sheet: string) => void;
@@ -68,6 +70,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   theme: "dark",
   compactMode: false,
   codeFont: "jetbrains",
+  tracingEnabled: false,
   loading: false,
   hasFetched: false,
 
@@ -85,6 +88,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   setCompactMode: (compactMode: boolean) => set({ compactMode }),
   setCodeFont: (codeFont: CodeFont) => set({ codeFont }),
+
+  setTracingEnabled: (tracingEnabled: boolean) => {
+    set({ tracingEnabled });
+    // Persist to MongoDB in the background (consistent with workspace setters).
+    import("./llm-store").then(({ useLLMStore }) => {
+      get().saveSettings(useLLMStore.getState().providerConfigs).catch(() => {});
+    });
+  },
 
   setSelectedDatasetId: (selectedDatasetId: string) => {
     set({ selectedDatasetId });
@@ -165,6 +176,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
           theme,
           compactMode: (data.compactMode as boolean) ?? false,
           codeFont: (data.codeFont as CodeFont) || "jetbrains",
+          tracingEnabled: (data.tracingEnabled as boolean) ?? false,
           selectedDatasetId,
           selectedSheet,
           selectedTable,
@@ -213,7 +225,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   saveSettings: async (providerConfigs = {}) => {
-    const { theme, compactMode, codeFont, selectedDatasetId, selectedSheet, selectedTable } = get();
+    const { theme, compactMode, codeFont, tracingEnabled, selectedDatasetId, selectedSheet, selectedTable } = get();
     const userId = useAuthStore.getState().user?.id || "anonymous";
     const { useLLMStore } = await import("./llm-store");
     const llm = useLLMStore.getState();
@@ -237,6 +249,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       theme,
       compactMode,
       codeFont,
+      tracingEnabled,
       providerConfigs,
       activeProvider,
       activeModel,
