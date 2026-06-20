@@ -92,6 +92,30 @@ function buildColumnInfo(rows, hints = {}) {
   });
 }
 
+// ─── Identifier safety ───────────────────────────────────────────────────────
+// Table/schema names arrive from the request body and are interpolated into SQL
+// for the operation/preview paths (the raw-SQL path is separately guarded by
+// validateReadOnlySql). A name segment may only contain word chars; dotted
+// schema.table is allowed. Anything else (quotes, spaces, semicolons, comment
+// markers, parens) is rejected before it can reach a query string. This is the
+// single choke point for every adapter's getColumns/fetchRows/countTable.
+const IDENTIFIER_SEGMENT = /^[A-Za-z0-9_$]+$/;
+
+function assertSafeTableName(rawName) {
+  const name = String(rawName == null ? "" : rawName).trim();
+  if (!name) throw new Error("Table name is required.");
+  if (name.length > 256) throw new Error("Table name is too long.");
+  // Strip optional surrounding quotes/brackets a UI might send, then split on dots.
+  const segments = name.replace(/[`"'[\]]/g, "").split(".");
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!trimmed || !IDENTIFIER_SEGMENT.test(trimmed)) {
+      throw new Error(`Illegal table name: ${rawName}`);
+    }
+  }
+  return name;
+}
+
 function splitQualifiedName(value, fallbackSchema = "") {
   const cleaned = String(value || "").replace(/[`"'[\]]/g, "").trim();
   if (!cleaned) return { schema: fallbackSchema, name: "" };
@@ -242,13 +266,18 @@ async function mapWithConcurrency(items, limit, mapper) {
 
 async function createPostgresLikeAdapter(config) {
   const { Client } = await loadModule("pg");
+  // TLS: when SSL is enabled, verify the server certificate by default.
+  // Self-signed/internal certs require the user to explicitly opt out via
+  // allowInsecureTls — we never silently skip verification.
+  const sslEnabled = config.ssl === "true" || config.ssl === true;
+  const allowInsecureTls = config.allowInsecureTls === "true" || config.allowInsecureTls === true;
   const client = new Client({
     host: config.host,
     port: Number(config.port || 5432),
     database: config.database,
     user: config.username,
     password: config.password,
-    ssl: config.ssl === "true" ? { rejectUnauthorized: false } : undefined,
+    ssl: sslEnabled ? { rejectUnauthorized: !allowInsecureTls } : undefined,
   });
   await client.connect();
 
@@ -448,14 +477,18 @@ async function createMySqlAdapter(config) {
 
 async function createSqlServerAdapter(config) {
   const sql = await loadModule("mssql");
+  // TLS: encrypt the connection by default and verify the certificate. Users
+  // connecting to a server with a self-signed cert must explicitly opt out via
+  // allowInsecureTls; we no longer trust every cert blindly.
+  const allowInsecureTls = config.allowInsecureTls === "true" || config.allowInsecureTls === true;
   const pool = await sql.connect({
     server: config.host,
     database: config.database,
     user: config.username,
     password: config.password,
     options: {
-      trustServerCertificate: true,
-      encrypt: false,
+      encrypt: true,
+      trustServerCertificate: allowInsecureTls,
     },
   });
 
@@ -657,7 +690,7 @@ async function createMongoAdapter(config) {
         if (op === "<") return { [column]: { $lt: resolvedVal } };
         if (op === ">=") return { [column]: { $gte: resolvedVal } };
         if (op === "<=") return { [column]: { $lte: resolvedVal } };
-        if (op === "contains") return { [column]: { $regex: value, $options: "i" } };
+        if (op === "contains") return { [column]: { $regex: escapeRegExp(value), $options: "i" } };
         if (op === "starts_with") return { [column]: { $regex: "^" + escapeRegExp(value), $options: "i" } };
         if (op === "ends_with") return { [column]: { $regex: escapeRegExp(value) + "$", $options: "i" } };
         if (op === "is_null") return { $or: [{ [column]: null }, { [column]: { $exists: false } }] };
@@ -1672,6 +1705,8 @@ async function getLiveSchema(conn, options = {}) {
     includeCounts = false,
   } = options;
 
+  if (tableName) assertSafeTableName(tableName);
+
   return withAdapter(conn, async (adapter) => {
     const listedTables = await adapter.listTables();
     const filteredTables = tableName
@@ -1718,6 +1753,7 @@ async function getLiveSchema(conn, options = {}) {
 }
 
 async function previewLiveTable(conn, tableName, limit = 100) {
+  assertSafeTableName(tableName);
   return withAdapter(conn, async (adapter) => {
     const rowCountPromise = adapter.countTable
       ? adapter.countTable(tableName).catch(() => undefined)
@@ -1738,6 +1774,7 @@ async function previewLiveTable(conn, tableName, limit = 100) {
 }
 
 async function executeLiveOperation(conn, tableName, operation, params = {}) {
+  assertSafeTableName(tableName);
   return withAdapter(conn, async (adapter) => {
     if (adapter.executeOperation) {
       return adapter.executeOperation(tableName, operation, params);
@@ -1803,4 +1840,6 @@ module.exports = {
   previewLiveTable,
   executeLiveOperation,
   executeLiveSql,
+  // Exported for unit testing of the identifier-safety boundary.
+  assertSafeTableName,
 };

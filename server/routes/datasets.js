@@ -236,18 +236,22 @@ router.delete("/:id", async (req, res) => {
   try {
     const db = await getDb();
     const dataset = await db.collection("datasets").findOne({ _id: req.params.id, userId: req.userId });
-    if (dataset) {
-      await db.collection("deployments").updateMany(
-        { userId: req.userId, "snapshot.selectedDatasetId": req.params.id },
-        {
-          $set: {
-            status: "broken",
-            statusReason: `Dataset "${dataset.fileName}" was deleted`,
-            updatedAt: new Date().toISOString(),
-          },
-        }
-      );
-    }
+    if (!dataset) return res.status(404).json({ error: "Dataset not found" });
+
+    // Fail-safe ordering: mark dependent deployments "broken" BEFORE deleting the
+    // dataset. If we crash between the two ops, deployments are left in the safe
+    // (broken) state rather than silently pointing at a deleted dataset. The
+    // updateMany is idempotent, so a retry is harmless.
+    await db.collection("deployments").updateMany(
+      { userId: req.userId, "snapshot.selectedDatasetId": req.params.id },
+      {
+        $set: {
+          status: "broken",
+          statusReason: `Dataset "${dataset.fileName}" was deleted`,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
     await db.collection("datasets").deleteOne({ _id: req.params.id, userId: req.userId });
     res.json({ success: true });
     logAudit(req.userId, req.userEmail || "", "dataset.delete", { id: req.params.id }, "warn");
