@@ -273,6 +273,46 @@ async function signedBedrockInvoke({ accessKeyId, secretAccessKey, region, model
   });
 }
 
+// ─── Per-deployment daily token budget ──────────────────────────────────────
+// Public chat endpoints spend the deployer's LLM credentials with no logged-in
+// user to rate-limit on. We cap total tokens per deployment per UTC day in a
+// dedicated collection. Default is generous but finite; owners can override via
+// snapshot.dailyTokenCap. A cap of 0 / null is treated as the default, never
+// "unlimited" — public spend always has a ceiling.
+const DEFAULT_PUBLIC_DAILY_TOKEN_CAP = 500000; // 500k tokens / deployment / day
+
+function deploymentDayString() {
+  return new Date().toISOString().split("T")[0]; // UTC YYYY-MM-DD
+}
+
+function resolveDeploymentTokenCap(snapshot) {
+  const raw = Number(snapshot && snapshot.dailyTokenCap);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PUBLIC_DAILY_TOKEN_CAP;
+}
+
+// Returns { allowed, tokensUsed, cap }. Read-only check before the upstream call.
+async function checkDeploymentTokenBudget(db, deployId, snapshot) {
+  const cap = resolveDeploymentTokenCap(snapshot);
+  const dateStr = deploymentDayString();
+  const log = await db.collection("deployment_token_logs").findOne({ deployId, dateStr });
+  const tokensUsed = log ? log.tokensUsed || 0 : 0;
+  return { allowed: tokensUsed < cap, tokensUsed, cap };
+}
+
+// Records token spend after an upstream call. Fire-and-forget safe.
+async function recordDeploymentTokens(db, deployId, promptTokens, completionTokens) {
+  const total = (Number(promptTokens) || 0) + (Number(completionTokens) || 0);
+  if (total <= 0) return;
+  await db.collection("deployment_token_logs").updateOne(
+    { deployId, dateStr: deploymentDayString() },
+    {
+      $inc: { tokensUsed: total, requests: 1 },
+      $setOnInsert: { createdAt: new Date().toISOString() },
+    },
+    { upsert: true }
+  );
+}
+
 // Helper to scrub API keys from returning back to client
 function sanitizeSnapshot(snapshot) {
   if (!snapshot) return {};
@@ -337,9 +377,11 @@ router.post("/", authMiddleware, async (req, res) => {
     if (sourceId) {
       if (sourceId.startsWith("conn:")) {
         const connId = sourceId.slice(5);
-        const connection = await db
-          .collection("connections")
-          .findOne({ _id: new ObjectId(connId), userId: req.userId });
+        const connection = ObjectId.isValid(connId)
+          ? await db
+              .collection("connections")
+              .findOne({ _id: new ObjectId(connId), userId: req.userId })
+          : null;
         if (connection) {
           enrichedSnapshot.sourceType = "connection";
           enrichedSnapshot.connectionSnapshot = {
@@ -454,9 +496,11 @@ router.post("/:id/redeploy", authMiddleware, async (req, res) => {
     if (sourceId) {
       if (sourceId.startsWith("conn:")) {
         const connId = sourceId.slice(5);
-        const connection = await db
-          .collection("connections")
-          .findOne({ _id: new ObjectId(connId), userId: req.userId });
+        const connection = ObjectId.isValid(connId)
+          ? await db
+              .collection("connections")
+              .findOne({ _id: new ObjectId(connId), userId: req.userId })
+          : null;
         if (connection) {
           enrichedSnapshot.sourceType = "connection";
           enrichedSnapshot.connectionSnapshot = {
@@ -572,10 +616,11 @@ router.get("/public/:id", async (req, res) => {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
-    // Increment chats count when public page loads as a simple metric
+    // Track page views separately from actual chats. chatsCount is incremented
+    // per real chat message in the /chat handler, not on every page load.
     await db.collection("deployments").updateOne(
       { _id: req.params.id },
-      { $inc: { chatsCount: 1 } }
+      { $inc: { viewsCount: 1 } }
     );
 
     res.json({
@@ -624,6 +669,14 @@ router.post("/public/:id/chat", async (req, res) => {
     const deployment = await db.collection("deployments").findOne({ _id: req.params.id });
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
+    // Kill-switch: a deployment the owner disabled/broke must not spend their
+    // LLM credentials. (The /execute sibling already enforced this; /chat did not.)
+    if (deployment.status !== "active") {
+      return res.status(403).json({
+        error: deployment.statusReason || "This chat has been disabled by its owner.",
+      });
+    }
+
     const snapshot = deployment.snapshot;
     const provider = snapshot.activeProvider;
     const model = snapshot.activeModel;
@@ -637,6 +690,21 @@ router.post("/public/:id/chat", async (req, res) => {
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: "messages array is required" });
     }
+
+    // Per-deployment daily token budget: bounds public spend even when the
+    // per-IP rate limit is evaded by distributed callers.
+    const budget = await checkDeploymentTokenBudget(db, req.params.id, snapshot);
+    if (!budget.allowed) {
+      return res.status(429).json({
+        error: "This chat has reached its daily usage limit. Please try again tomorrow.",
+        code: "DEPLOYMENT_DAILY_LIMIT_REACHED",
+      });
+    }
+
+    // Count an actual chat message (page views are tracked separately as viewsCount).
+    db.collection("deployments")
+      .updateOne({ _id: req.params.id }, { $inc: { chatsCount: 1 } })
+      .catch(() => {});
 
     // Call upstream provider based on snapshotted key
     if (provider === "bedrock") {
@@ -666,6 +734,7 @@ router.post("/public/:id/chat", async (req, res) => {
 
       const data = JSON.parse(text || "{}");
       const parsed = parser(data);
+      await recordDeploymentTokens(db, req.params.id, parsed.inputTokens, parsed.outputTokens);
       return res.json({
         choices: [{ message: { role: "assistant", content: parsed.content } }],
         usage: {
@@ -720,6 +789,7 @@ router.post("/public/:id/chat", async (req, res) => {
       }
 
       const data = JSON.parse(text || "{}");
+      await recordDeploymentTokens(db, req.params.id, data.usage?.input_tokens, data.usage?.output_tokens);
       return res.json({
         choices: [{ message: { role: "assistant", content: data.content?.[0]?.text || "" } }],
         usage: {
@@ -759,6 +829,7 @@ router.post("/public/:id/chat", async (req, res) => {
       }
 
       const data = JSON.parse(text || "{}");
+      await recordDeploymentTokens(db, req.params.id, data.meta?.tokens?.input_tokens, data.meta?.tokens?.output_tokens);
       return res.json({
         choices: [{ message: { role: "assistant", content: data.text || "" } }],
         usage: {
@@ -794,6 +865,12 @@ router.post("/public/:id/chat", async (req, res) => {
     });
 
     const text = await upstream.text();
+    if (upstream.ok) {
+      try {
+        const usage = JSON.parse(text || "{}").usage;
+        await recordDeploymentTokens(db, req.params.id, usage?.prompt_tokens, usage?.completion_tokens);
+      } catch { /* non-JSON or no usage — skip metering, don't fail the response */ }
+    }
     res.status(upstream.status);
     res.type(upstream.headers.get("content-type") || "application/json");
     return res.send(text);

@@ -29,6 +29,9 @@ const SQL_OPERATION_DB_TYPES = new Set([
 ]);
 
 async function loadConnection(req) {
+  // A malformed connectionId would make `new ObjectId()` throw and surface as a
+  // 500. Treat an invalid id as "not found" (it can never match a real doc).
+  if (!ObjectId.isValid(req.params.connectionId)) return null;
   const db = await getDb();
   return db
     .collection("connections")

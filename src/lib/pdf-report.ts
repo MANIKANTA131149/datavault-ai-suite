@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+import { chartToRasterDataUrl } from "@/lib/chart-export";
 
 export interface PDFReportOptions {
   title: string;
@@ -7,6 +8,7 @@ export interface PDFReportOptions {
   userName?: string;
   datasetName?: string;
   resultElementId?: string; // ID of DOM element to screenshot
+  chartElement?: HTMLElement | null; // preferred: native-SVG chart node (sharp, theme-safe)
   narrative?: string;
   rows?: Record<string, any>[];
 }
@@ -44,6 +46,7 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
     userName = "Querify User",
     datasetName = "",
     resultElementId,
+    chartElement,
     narrative,
     rows = [],
   } = opts;
@@ -121,27 +124,43 @@ export async function generatePDF(opts: PDFReportOptions): Promise<void> {
     y += queryBoxH + 4;
   }
 
-  // ── Chart screenshot (if element exists) ───────────────────────────────────
-  if (resultElementId) {
-    const el = document.getElementById(resultElementId);
-    if (el) {
+  // ── Chart image ─────────────────────────────────────────────────────────────
+  // Prefer the native-SVG path (sharp, vector-quality, theme-safe). The PDF page
+  // is white, so we force the "light" export theme — this is what prevents the
+  // old "black chart in dark mode" problem in the report. Falls back to
+  // html2canvas only if no chart element / SVG was provided.
+  const chartNode = chartElement || (resultElementId ? document.getElementById(resultElementId) : null);
+  if (chartNode) {
+    let imgData: string | null = null;
+    let imgPxW = 0;
+    let imgPxH = 0;
+    try {
+      const raster = await chartToRasterDataUrl(chartNode as HTMLElement, { theme: "light", format: "png", scale: 3 });
+      if (raster) { imgData = raster.dataUrl; imgPxW = raster.width; imgPxH = raster.height; }
+    } catch { /* fall through to html2canvas */ }
+
+    if (!imgData) {
       try {
-        const canvas = await html2canvas(el, {
-          scale: 2,
+        const canvas = await html2canvas(chartNode as HTMLElement, {
+          scale: Math.max(2, (window.devicePixelRatio || 1) * 2),
           backgroundColor: "#ffffff",
           useCORS: true,
           logging: false,
         });
-        const imgData = canvas.toDataURL("image/png");
-        const imgW = pageW - 28;
-        const imgH = (canvas.height * imgW) / canvas.width;
-        const maxH = pageH - y - 30;
-        const finalH = Math.min(imgH, maxH);
-        doc.addImage(imgData, "PNG", 14, y, imgW, finalH);
-        y += finalH + 6;
-      } catch {
-        // skip screenshot if it fails
-      }
+        imgData = canvas.toDataURL("image/png");
+        imgPxW = canvas.width;
+        imgPxH = canvas.height;
+      } catch { /* skip chart if both paths fail */ }
+    }
+
+    if (imgData && imgPxW && imgPxH) {
+      const imgW = pageW - 28;
+      const imgH = (imgPxH * imgW) / imgPxW;
+      const maxH = pageH - y - 30;
+      const finalH = Math.min(imgH, maxH);
+      addPageIfNeeded(finalH + 6);
+      doc.addImage(imgData, "PNG", 14, y, imgW, finalH, undefined, "FAST");
+      y += finalH + 6;
     }
   }
 

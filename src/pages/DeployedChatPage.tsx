@@ -1167,6 +1167,34 @@ export default function DeployedChatPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(bodyObj),
         });
+
+        // Surface the backend's kill-switch (403) and daily-budget (429) states
+        // as clean, human-readable messages instead of leaking the raw upstream
+        // provider error body to the visitor. Other statuses pass through so
+        // callLLM's own handling is unchanged.
+        if (proxyRes.status === 403 || proxyRes.status === 429) {
+          let friendly =
+            proxyRes.status === 429
+              ? "This assistant has reached its usage limit for today. Please check back tomorrow."
+              : "This assistant has been disabled by its owner.";
+          try {
+            const data = await proxyRes.clone().json();
+            if (data?.error) friendly = data.error;
+          } catch { /* keep the default friendly message */ }
+          throw new Error(friendly);
+        }
+
+        // Any other upstream failure: don't leak raw provider error bodies
+        // (which can contain request echoes) to a public visitor. Replace the
+        // response body with a generic message; log detail to the console.
+        if (!proxyRes.ok) {
+          const detail = await proxyRes.clone().text().catch(() => "");
+          console.error(`[deployed-chat] upstream error ${proxyRes.status}:`, detail);
+          throw new Error(
+            "The assistant is temporarily unavailable. Please try again in a moment."
+          );
+        }
+
         return proxyRes;
       }
       return originalFetch(inputVal, init);
@@ -1645,7 +1673,7 @@ export default function DeployedChatPage() {
         </header>
 
         {/* Chat Feed */}
-        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-5 pb-28 space-y-6 scrollbar-thin w-full max-w-5xl mx-auto relative z-10">
+        <div ref={chatScrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-busy={isRunning} aria-label="Conversation" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-5 pb-28 space-y-6 scrollbar-thin w-full max-w-5xl mx-auto relative z-10">
           {isBroken && (
             <div className="rounded-xl border border-red-200/50 dark:border-red-950/50 bg-red-500/5 p-4 text-center text-xs space-y-2 max-w-md mx-auto">
               <AlertTriangle size={20} className="text-red-500 mx-auto" />
@@ -1841,6 +1869,7 @@ export default function DeployedChatPage() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  aria-label="Ask a question about your data"
                   placeholder={isBroken ? "Chatbot is currently offline." : isRunning ? "Analysing database..." : `Ask anything about columns...`}
                   disabled={isRunning || isBroken}
                   className="bg-transparent border-0 resize-none min-h-[40px] max-h-[120px] pr-10 text-xs sm:text-sm leading-normal focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-2"
@@ -1854,6 +1883,8 @@ export default function DeployedChatPage() {
                   disabled={isBroken}
                   size="icon"
                   title="Voice search"
+                  aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                  aria-pressed={isListening}
                   className={cn("h-[40px] w-[40px] rounded-[18px] border-zinc-200 dark:border-zinc-800 transition-all duration-300", isListening && "bg-red-500/10 text-red-500 border-red-500/30")}
                 >
                   <Mic size={15} />
@@ -1864,13 +1895,14 @@ export default function DeployedChatPage() {
                   size="icon"
                   className="h-[40px] w-[40px] rounded-[18px] shrink-0 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-zinc-50 dark:text-zinc-900 transition-all"
                   title={isRunning ? "Query in progress" : "Send query"}
+                  aria-label={isRunning ? "Query in progress" : "Send query"}
                 >
                   {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send size={15} />}
                 </Button>
               </div>
             </div>
             <p className="text-[10px] text-zinc-400 text-center mt-2 font-mono">
-              Securely powered by <span className="font-bold text-foreground">Querify.in</span> · Snapshotted credentials are fully encrypted in memory.
+              Securely powered by <span className="font-bold text-foreground">Querify.in</span> · Credentials are never exposed to this page.
             </p>
           </div>
         </footer>

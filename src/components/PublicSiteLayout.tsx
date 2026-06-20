@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, ExternalLink, Menu, Moon, Shield, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { ScrollProgress, SiteBackground, CursorGlow } from "@/components/site-motion";
+import { ScrollProgress, SiteBackground } from "@/components/site-motion";
 import { cn } from "@/lib/utils";
 
 const PUBLIC_THEME_KEY = "querify-site-theme";
@@ -274,7 +274,6 @@ export function PublicSiteLayout({ children }: { children: ReactNode }) {
   return (
     <div className="site-root min-h-screen bg-background text-foreground">
       <SiteBackground />
-      <CursorGlow />
       <ScrollProgress />
 
       <SiteNav theme={theme} onToggleTheme={() => setTheme((c) => (c === "dark" ? "light" : "dark"))} />
