@@ -22,7 +22,6 @@ export default defineConfig(({ mode }) => ({
   build: {
     sourcemap: false,
     rollupOptions: {
-      maxParallelFileOps: 2,
       output: {
         // Split heavy, independently-cacheable vendor libs into their own
         // chunks so a page that doesn't use them (e.g. the marketing site)
