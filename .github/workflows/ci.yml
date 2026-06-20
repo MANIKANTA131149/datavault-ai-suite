@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # --ignore-scripts mirrors amplify.yml and avoids the duckdb-wasm/postinstall
+      # native steps that aren't needed to lint/test.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Lint is report-only for now: the codebase carries a large pre-existing
+      # backlog of @typescript-eslint/no-explicit-any errors. Surfacing them
+      # without blocking lets us burn the backlog down over time while still
+      # gating on tests + audit. Flip `|| true` off once the backlog is cleared.
+      - name: Lint (report-only)
+        run: npm run lint || true
+
+      - name: Test
+        run: npm test
+
+      # Fail the build on a known high/critical CVE in a production dependency.
+      # `|| true` is intentionally NOT used — we want this to gate.
+      - name: Audit (high+)
+        run: npm audit --omit=dev --audit-level=high
+
+  build:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Build frontend
+        run: npm run build

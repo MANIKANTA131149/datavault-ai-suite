@@ -18,12 +18,12 @@ import { List, type RowComponentProps } from "react-window";
 import {
   Send, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Zap, Clock, Copy, Download, PanelRightClose, PanelRightOpen,
   Settings2, Search, Eye, X, Database, Table2, Bookmark, BookmarkPlus, Sparkles, Lightbulb,
-  LayoutTemplate, RefreshCw, FileJson, FileText, Code2, TrendingUp,
+  LayoutTemplate, RefreshCw, FileText, TrendingUp,
   MessageSquarePlus, Trash2, BarChart3, FileDown, Layout, Maximize2, Minimize2, Star, Rows3, Palette,
   Share2, Mic, AudioWaveform, Globe, Loader2, Layers, AlertTriangle,
   GripVertical, Filter, Bell, BellOff, Pin, Columns, ChevronUp,
   SlidersHorizontal, ListFilter, BarChart2, Crosshair, Flame, FunctionSquare, CheckSquare, Square,
-  FlipHorizontal, Sigma, Hash, Info,
+  FlipHorizontal, Sigma, Hash, Info, Activity,
 } from "lucide-react";
 import { HitlPanel, HitlQuickChoices } from "@/components/HitlPanel";
 import { ShareCard } from "@/components/ShareCard";
@@ -69,7 +69,8 @@ import { toast } from "@/lib/toast";
 import { getApiBaseUrl } from "@/lib/api-base";
 import { api } from "@/lib/api-client";
 import { generatePDF } from "@/lib/pdf-report";
-import html2canvas from "html2canvas";
+import { ExportMenu } from "@/components/ExportMenu";
+import { downloadChartRaster, detectTheme } from "@/lib/chart-export";
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, CartesianGrid,
   XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Legend as RechartsLegend, LabelList,
@@ -580,63 +581,6 @@ function getFinalStep(steps?: AgentStep[]) {
 }
 
 // ─── Export Utilities ─────────────────────────────────────────────────────────
-function exportJSON(result: any, filename = "result.json") {
-  const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
-function exportMarkdown(result: any, query: string, filename = "result.md") {
-  let md = `# Query Result\n\n**Query:** ${query}\n\n**Date:** ${new Date().toLocaleString()}\n\n`;
-  // Hybrid {rows, narrative}: insight text first, then the table.
-  if (result && !Array.isArray(result) && typeof result === "object" && Array.isArray(result.rows) && result.narrative !== undefined) {
-    md += `${String(result.narrative)}\n\n`;
-    result = result.rows;
-  }
-  if (Array.isArray(result) && result.length > 0 && typeof result[0] === "object") {
-    const headers = Object.keys(result[0]);
-    md += `| ${headers.join(" | ")} |\n| ${headers.map(() => "---").join(" | ")} |\n`;
-    for (const row of result) {
-      md += `| ${headers.map((h) => formatCellDisplay(row[h])).join(" | ")} |\n`;
-    }
-  } else if (result?.narrative) {
-    md += result.narrative;
-  } else if (!Array.isArray(result)) {
-    md += "```json\n" + JSON.stringify(result, null, 2) + "\n```";
-  }
-  const blob = new Blob([md], { type: "text/markdown" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
-function exportHTML(result: any, query: string, filename = "result.html") {
-  let tableHtml = "";
-  // Hybrid {rows, narrative}: insight paragraph above the table.
-  if (result && !Array.isArray(result) && typeof result === "object" && Array.isArray(result.rows) && result.narrative !== undefined) {
-    tableHtml += `<p style="font-family:sans-serif;font-size:14px;line-height:1.5">${String(result.narrative).replace(/</g, "&lt;")}</p>`;
-    result = result.rows;
-  }
-  if (Array.isArray(result) && result.length > 0 && typeof result[0] === "object") {
-    const headers = Object.keys(result[0]);
-    tableHtml += `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-family:sans-serif;font-size:13px">
-      <thead style="background:#f0f0f0"><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
-      <tbody>${result.map((row: any) => `<tr>${headers.map((h) => `<td>${row[h] ?? ""}</td>`).join("")}</tr>`).join("")}</tbody>
-    </table>`;
-  } else {
-    tableHtml += `<pre style="font-family:monospace">${JSON.stringify(result, null, 2)}</pre>`;
-  }
-  const html = `<!DOCTYPE html><html><head><title>Querify Export</title></head><body>
-    <h2 style="font-family:sans-serif">Query: ${query}</h2>
-    <p style="font-family:sans-serif;color:#888">${new Date().toLocaleString()}</p>
-    ${tableHtml}</body></html>`;
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
 function exportCSV(result: any, filename = "result.csv") {
   const rows: Record<string, any>[] = Array.isArray(result) ? result : [];
   if (rows.length === 0) return;
@@ -1881,15 +1825,29 @@ const ResultPanel = memo(function ResultPanel({
     setSortDir("asc");
   };
 
+  // Native-SVG, high-DPI, theme-safe chart download (replaces html2canvas — no
+  // more blurry/black/collapsed exports). Quick-action button; full options
+  // live in the export modal.
   const downloadChartImage = async () => {
     if (!chartRef.current) return;
-    const canvas = await html2canvas(chartRef.current, { backgroundColor: null, scale: 2 });
-    const url = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "datavault-chart.png";
-    a.click();
-    toast.success("Chart image downloaded");
+    try {
+      await downloadChartRaster(chartRef.current, "querify-chart.png", { theme: detectTheme(), format: "png", scale: 3 });
+      toast.success("Chart image downloaded");
+    } catch (err: any) {
+      toast.error(err?.message || "Could not export chart");
+    }
+  };
+
+  // Branded, presentation-ready PDF using the sharp native-SVG chart node.
+  const downloadReport = async () => {
+    await generatePDF({
+      title: query || "Query result",
+      query,
+      datasetName,
+      chartElement: isChartable ? chartRef.current : null,
+      narrative: hybridNarrative || (isNarrative ? String((result as any).narrative) : undefined),
+      rows: Array.isArray(rows) ? rows : [],
+    });
   };
 
   const runExport = async (format: "csv" | "json" | "markdown" | "html", action: () => void, label: string) => {
@@ -1933,27 +1891,18 @@ const ResultPanel = memo(function ResultPanel({
         </div>
       </div>
 
-      {showExport && (
-        <div className="shrink-0 p-3 border-b border-border bg-card/40 space-y-2">
-          <p className="text-xs text-muted-foreground font-medium">Export As</p>
-          <div className="flex flex-wrap gap-1.5">
-            {isArray && (
-              <button onClick={() => runExport("csv", () => exportCSV(result), "CSV")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
-                <BarChart3 size={10} /> CSV
-              </button>
-            )}
-            <button onClick={() => runExport("json", () => exportJSON(result), "JSON")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
-              <FileJson size={10} /> JSON
-            </button>
-            <button onClick={() => runExport("markdown", () => exportMarkdown(result, query), "Markdown")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
-              <FileText size={10} /> Markdown
-            </button>
-            <button onClick={() => runExport("html", () => exportHTML(result, query), "HTML")} className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-card border border-border text-muted-foreground hover:text-foreground">
-              <Code2 size={10} /> HTML
-            </button>
-          </div>
-        </div>
-      )}
+      <ExportMenu
+        open={showExport}
+        onOpenChange={setShowExport}
+        getChartNode={() => chartRef.current}
+        result={result}
+        query={query}
+        title={query || datasetName || "Query result"}
+        onDownloadReport={downloadReport}
+        checkExport={checkExport}
+        hasChart={isChartable}
+        hasTable={isArray || (result && typeof result === "object" && Array.isArray((result as any).rows))}
+      />
 
       <div className="min-w-0 min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
         {hybridNarrative && (
@@ -3405,7 +3354,7 @@ function SaveInsightDialog({
 export default function QueryPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { datasets, getDataset } = useDatasetStore();
+  const { datasets, getDataset, loading: datasetsLoading } = useDatasetStore();
   const { connections } = useConnectionStore();
   const { activeProvider, activeModel, temperature, maxTokens, systemPrompt, setActiveProvider, setActiveModel, setTemperature, setMaxTokens, setSystemPrompt, getApiKey, providerConfigs, setProviderConfig } = useLLMStore();
   const { addEntry, entries } = useHistoryStore();
@@ -3554,6 +3503,8 @@ export default function QueryPage() {
     setSelectedDatasetId,
     setSelectedSheet,
     setSelectedTable,
+    tracingEnabled,
+    setTracingEnabled,
   } = useSettingsStore();
 
   useEffect(() => {
@@ -3562,6 +3513,26 @@ export default function QueryPage() {
       setSelectedDatasetId(urlDataset);
     }
   }, [searchParams, selectedDatasetId, setSelectedDatasetId]);
+
+  // Guard against a STALE selectedDatasetId. selectedDatasetId is persisted in
+  // localStorage + server settings, so it can outlive the dataset it points at
+  // (e.g. after the DB was cleared/switched, or the dataset was deleted on
+  // another device). Once datasets have loaded, if the selected id is neither a
+  // live DB connection (conn:) nor a real dataset, drop it and fall back to the
+  // first available dataset — preventing a guaranteed 404 on /datasets/:id/data.
+  useEffect(() => {
+    if (datasetsLoading) return;                         // wait until the list is real
+    if (!selectedDatasetId) return;                      // nothing selected — fine
+    if (selectedDatasetId.startsWith("conn:")) return;   // a DB connection, not a dataset
+    const exists = datasets.some((d) => d.id === selectedDatasetId);
+    if (exists) return;                                  // selection is valid
+    // Stale id → recover gracefully.
+    const fallback = datasets[0]?.id || "";
+    setSelectedDatasetId(fallback);
+    if (fallback) {
+      toast.info("Your previously selected dataset is no longer available — switched to your latest one.");
+    }
+  }, [datasetsLoading, datasets, selectedDatasetId, setSelectedDatasetId]);
   const [dbSchema, setDbSchema] = useState<DatabaseSchema | null>(null);
   const [loadingDbSchema, setLoadingDbSchema] = useState(false);
 
@@ -4212,7 +4183,14 @@ export default function QueryPage() {
     }
     if (cancelRequestedRef.current) return;
     if (!workbookSheets || !workbookSheets[selectedSheet]) {
-      toast.error("Dataset data unavailable. Please re-upload the file.");
+      // Distinguish "stale id (no longer in the DB)" from "data genuinely empty".
+      const stillExists = datasets.some((d) => d.id === selectedDatasetId);
+      if (!stillExists) {
+        toast.error("That dataset is no longer available. Pick a dataset from the list (or re-upload).");
+        setSelectedDatasetId(datasets[0]?.id || "");
+      } else {
+        toast.error("Dataset data unavailable. Please re-upload the file.");
+      }
       setIsRunning(false);
       return;
     }
@@ -4289,25 +4267,28 @@ export default function QueryPage() {
       }
 
       // F-OBS: persist a trace of this run for the Traces page (fire-and-forget;
-      // never blocks or fails the answer).
-      tracesApi.record({
-        question,
-        steps: steps.map((s) => ({
-          command: s.command,
-          summary: typeof s.result === "string" ? s.result.slice(0, 500) : "",
-          reasoning: (s as { reasoning?: string }).reasoning,
-          sql: (s.args as { sql?: string })?.sql,
-          final: s.isFinal,
-          tokens: (s.tokens?.input || 0) + (s.tokens?.output || 0),
-          latencyMs: s.durationMs,
-        })),
-        totalTokens,
-        latencyMs: Date.now() - startTime,
-        model: activeModel,
-        provider: activeProvider,
-        status: steps.some((s) => s.command === "Error") ? "error" : "ok",
-        datasetId: selectedDatasetId,
-      });
+      // never blocks or fails the answer). Opt-in — only when the user has
+      // enabled tracing in Settings, so we don't record every query by default.
+      if (useSettingsStore.getState().tracingEnabled) {
+        tracesApi.record({
+          question,
+          steps: steps.map((s) => ({
+            command: s.command,
+            summary: typeof s.result === "string" ? s.result.slice(0, 500) : "",
+            reasoning: (s as { reasoning?: string }).reasoning,
+            sql: (s.args as { sql?: string })?.sql,
+            final: s.isFinal,
+            tokens: (s.tokens?.input || 0) + (s.tokens?.output || 0),
+            latencyMs: s.durationMs,
+          })),
+          totalTokens,
+          latencyMs: Date.now() - startTime,
+          model: activeModel,
+          provider: activeProvider,
+          status: steps.some((s) => s.command === "Error") ? "error" : "ok",
+          datasetId: selectedDatasetId,
+        });
+      }
     } catch (err: any) {
       console.error("Query run failed:", err);
       const message = formatRunError(err);
@@ -5438,44 +5419,55 @@ export default function QueryPage() {
                     </div>
                   )}
 
-                  {/* Ghost text + Textarea */}
-                  <div className="relative px-4 pt-3 pb-0">
-                    {activeSuggestion && !isRunning && !isListening && (
-                      <div
-                        aria-hidden
-                        className="pointer-events-none absolute inset-0 select-none whitespace-pre-wrap break-words px-4 pt-3 text-sm leading-[1.5] font-normal"
-                        style={{ fontFamily: "inherit" }}
-                      >
-                        <span className="text-transparent">{input}</span>
-                        <span className="text-muted-foreground/30">{activeSuggestion}</span>
-                      </div>
-                    )}
-                    <textarea
-                      ref={textareaRef}
-                      value={input}
-                      maxLength={QUERY_MAX_CHARS}
-                      onChange={(e) => {
-                        setInput(e.target.value.slice(0, QUERY_MAX_CHARS));
-                        const el = e.target;
-                        el.style.height = "auto";
-                        el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-                      }}
-                      onKeyDown={handleKeyDown}
-                      placeholder={isRunning ? "Query is running..." : "Ask a question about your data..."}
-                      disabled={isRunning}
-                      rows={1}
-                      style={{ wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "pre-wrap", border: "none", outline: "none", boxShadow: "none", appearance: "none" }}
-                      className="w-full bg-transparent resize-none min-h-[28px] max-h-[200px] overflow-y-auto py-0 px-0 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-60"
-                    />
-                  </div>
-
-                  {/* Bottom action bar — mic + send grouped right */}
-                  <div className="flex items-center justify-end gap-2 px-3 pb-3 pt-2">
+                  {/* Single-row composer: textarea + inline mic/send */}
+                  <div className="flex items-end gap-2 px-3 py-2">
+                    <div className="relative flex-1 min-w-0">
+                      {activeSuggestion && !isRunning && !isListening && (
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute inset-0 select-none whitespace-pre-wrap break-words text-sm leading-[1.5] font-normal"
+                          style={{ fontFamily: "inherit" }}
+                        >
+                          <span className="text-transparent">{input}</span>
+                          <span className="text-muted-foreground/30">{activeSuggestion}</span>
+                        </div>
+                      )}
+                      <textarea
+                        ref={textareaRef}
+                        value={input}
+                        maxLength={QUERY_MAX_CHARS}
+                        aria-label="Ask a question about your data"
+                        onChange={(e) => {
+                          setInput(e.target.value.slice(0, QUERY_MAX_CHARS));
+                          const el = e.target;
+                          el.style.height = "auto";
+                          el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+                        }}
+                        onKeyDown={handleKeyDown}
+                        placeholder={isRunning ? "Query is running..." : "Ask a question about your data..."}
+                        disabled={isRunning}
+                        rows={1}
+                        style={{ wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "pre-wrap", border: "none", outline: "none", boxShadow: "none", appearance: "none" }}
+                        className="block w-full bg-transparent resize-none min-h-[24px] max-h-[200px] overflow-y-auto py-1 px-0 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTracingEnabled(!tracingEnabled)}
+                      aria-pressed={tracingEnabled}
+                      title={tracingEnabled ? "Tracing on — this run will be recorded on the Traces page. Click to turn off." : "Tracing off — runs are not recorded. Click to record runs on the Traces page."}
+                      className={`flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2 sm:px-2.5 text-xs font-medium transition-colors ${tracingEnabled ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50"}`}
+                    >
+                      <Activity size={15} className={tracingEnabled ? "animate-pulse" : ""} />
+                      <span className="hidden sm:inline">Trace</span>
+                    </button>
                     <button
                       type="button"
                       onClick={handleSpeech}
                       title={isListening ? "Stop listening" : "Voice input"}
-                      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${isListening ? "text-red-500 bg-red-500/10" : "text-foreground hover:bg-muted/50"}`}
+                      aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                      aria-pressed={isListening}
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${isListening ? "text-red-500 bg-red-500/10" : "text-foreground hover:bg-muted/50"}`}
                     >
                       <Mic size={17} className={isListening ? "animate-pulse" : ""} />
                     </button>
@@ -5484,7 +5476,8 @@ export default function QueryPage() {
                       onClick={isRunning ? handleStopQuery : () => handleSend()}
                       disabled={!isRunning && !input.trim()}
                       title={isRunning ? "Stop" : "Send"}
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-opacity disabled:opacity-20 hover:opacity-80"
+                      aria-label={isRunning ? "Stop query" : "Send query"}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-opacity disabled:opacity-20 hover:opacity-80"
                     >
                       {isRunning ? <X size={15} /> : <ArrowUp size={16} />}
                     </button>
