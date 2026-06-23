@@ -112,8 +112,8 @@ export interface PaymentRecord {
 
 export const cashfreeApi = {
   pricing: () => api.get<PricingResponse>("/cashfree/pricing"),
-  createOrder: (tier: string, cycle: "monthly" | "annual") =>
-    api.post<CreateOrderResponse>("/cashfree/create-order", { tier, cycle }),
+  createOrder: (tier: string, cycle: "monthly" | "annual", phone: string) =>
+    api.post<CreateOrderResponse>("/cashfree/create-order", { tier, cycle, phone }),
   verify: (orderId: string) => api.get<VerifyResponse>(`/cashfree/verify/${orderId}`),
   payments: () => api.get<PaymentRecord[]>("/cashfree/payments"),
 };
@@ -141,9 +141,10 @@ export async function openCheckout(opts: {
 export async function runCheckout(
   tier: string,
   cycle: "monthly" | "annual",
+  phone: string,
   opts?: { onModalClosed?: () => void },
 ): Promise<VerifyResponse> {
-  const order = await cashfreeApi.createOrder(tier, cycle);
+  const order = await cashfreeApi.createOrder(tier, cycle, phone);
   await openCheckout({ paymentSessionId: order.paymentSessionId, env: order.env });
   opts?.onModalClosed?.();
   // Verify with the server (source of truth). Poll briefly in case the webhook
