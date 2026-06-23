@@ -106,7 +106,7 @@ async function createOrder({
     customer_details: {
       customer_id: customer.id,
       customer_email: customer.email || undefined,
-      customer_phone: customer.phone || "9999999999", // Cashfree requires a phone; placeholder if unknown
+      customer_phone: customer.phone, // validated + required by the create-order route
       customer_name: customer.name || undefined,
     },
     order_meta: {

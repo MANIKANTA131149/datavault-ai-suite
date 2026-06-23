@@ -50,6 +50,18 @@ function returnUrlFor() {
   return `${base}/app/pricing?cf_order={order_id}`;
 }
 
+// Validate + normalize a customer mobile number to the 10-digit form Cashfree
+// expects (Indian numbers). Strips spaces, dashes, and a leading +91/91/0.
+// Returns "" if it isn't a plausible 10-digit mobile so the caller can reject.
+function normalizePhone(raw) {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  // Indian mobile numbers are 10 digits starting 6-9.
+  return /^[6-9]\d{9}$/.test(digits) ? digits : "";
+}
+
 // GET /pricing — pricing table + Cashfree env/configured flag for the UI.
 router.get("/pricing", (_req, res) => {
   res.json({
@@ -61,12 +73,14 @@ router.get("/pricing", (_req, res) => {
   });
 });
 
-// POST /create-order — body: { tier, cycle }
+// POST /create-order — body: { tier, cycle, phone }
 // Server computes the amount authoritatively; the client cannot set the price.
+// `phone` is validated server-side and is required (Cashfree needs a real one).
 router.post("/create-order", async (req, res) => {
   try {
     const tier = String(req.body?.tier || "");
     const cycle = normalizeCycle(req.body?.cycle);
+    const phone = normalizePhone(req.body?.phone);
 
     if (!PLAN_TIERS.includes(tier)) {
       return res.status(400).json({ error: "Invalid plan tier" });
@@ -76,6 +90,9 @@ router.post("/create-order", async (req, res) => {
     }
     if (!BILLING_CYCLES.includes(cycle)) {
       return res.status(400).json({ error: "Invalid billing cycle" });
+    }
+    if (!phone) {
+      return res.status(400).json({ error: "A valid 10-digit mobile number is required for payment" });
     }
     if (!cashfree.isConfigured()) {
       return res.status(503).json({ error: "Payments are not configured. Please try again later." });
@@ -89,6 +106,11 @@ router.post("/create-order", async (req, res) => {
     const db = await getDb();
     const user = await db.collection("users").findOne({ _id: req.userId });
     if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Remember the phone on the user so we can pre-fill it next time.
+    if (phone && phone !== user.phone) {
+      await db.collection("users").updateOne({ _id: req.userId }, { $set: { phone } });
+    }
 
     const orderId = newOrderId(req.userId);
 
@@ -112,7 +134,7 @@ router.post("/create-order", async (req, res) => {
         customer: {
           id: user.cashfreeCustomerId || stableCustomerId(req.userId),
           email: user.email || req.userEmail || "",
-          phone: user.phone || "9999999999",
+          phone,
           name: user.name || req.userName || "",
         },
         returnUrl: returnUrlFor(),

@@ -15,6 +15,7 @@ import {
   Lock,
   Mail,
   MessageSquare,
+  Phone,
   RefreshCw,
   Shield,
   Sparkles,
@@ -29,6 +30,16 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePlanStore } from "@/stores/plan-store";
 import { api } from "@/lib/api-client";
@@ -206,6 +217,9 @@ function PlanCard({
   const thisIdx = PLAN_TIERS.indexOf(plan.tier);
   const isUpgrade = thisIdx > currentIdx;
   const [processing, setProcessing] = useState(false);
+  const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [phoneError, setPhoneError] = useState("");
 
   // Prices come from the server (single source of truth). Fall back to the
   // static TIER_META strings only until the live pricing has loaded.
@@ -223,7 +237,8 @@ function PlanCard({
   const hasAnnualDiscount =
     billingCycle === "annual" && plan.tier !== "free" && !livePlan?.contactSales && displayPrice !== "Custom";
 
-  const handleUpgrade = async () => {
+  // Step 1: Upgrade click → validate eligibility, then open the phone dialog.
+  const handleUpgrade = () => {
     if (plan.tier === "enterprise" || livePlan?.contactSales) {
       toast.info("Enterprise inquiries", {
         description: "Contact gantamanikanta678@gmail.com for a custom enterprise plan tailored to your organization.",
@@ -236,9 +251,21 @@ function PlanCard({
       });
       return;
     }
+    setPhoneError("");
+    setPhoneDialogOpen(true);
+  };
+
+  // Step 2: Phone submitted → validate, then run the real Cashfree checkout.
+  const handlePhoneSubmit = async () => {
+    const digits = phone.replace(/\D/g, "").replace(/^(91|0)/, "");
+    if (!/^[6-9]\d{9}$/.test(digits)) {
+      setPhoneError("Enter a valid 10-digit Indian mobile number.");
+      return;
+    }
+    setPhoneDialogOpen(false);
     setProcessing(true);
     try {
-      const result = await runCheckout(plan.tier, billingCycle);
+      const result = await runCheckout(plan.tier, billingCycle, digits);
       if (result.status === "PAID" && result.applied) {
         toast.success(`Upgraded to ${plan.name}`, {
           description: "Your new plan is active. Enjoy the higher limits!",
@@ -359,6 +386,46 @@ function PlanCard({
           )}
         </div>
       </Card>
+
+      {/* Phone collection — required by the payment gateway before checkout */}
+      <Dialog open={phoneDialogOpen} onOpenChange={(o) => { setPhoneDialogOpen(o); if (!o) setPhoneError(""); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                <Phone size={14} className="text-primary" />
+              </span>
+              Mobile number
+            </DialogTitle>
+            <DialogDescription>
+              We need your mobile number to process the payment for the {plan.name} plan.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="cf-phone" className="text-xs">Mobile number</Label>
+            <div className="flex items-center gap-2">
+              <span className="flex h-10 shrink-0 items-center rounded-md border border-border bg-muted/40 px-3 text-sm text-muted-foreground">+91</span>
+              <Input
+                id="cf-phone"
+                inputMode="numeric"
+                autoFocus
+                placeholder="10-digit number"
+                value={phone}
+                maxLength={14}
+                onChange={(e) => { setPhone(e.target.value); if (phoneError) setPhoneError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handlePhoneSubmit(); }}
+              />
+            </div>
+            {phoneError && <p className="text-xs text-destructive">{phoneError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPhoneDialogOpen(false)} className="text-xs">Cancel</Button>
+            <Button onClick={handlePhoneSubmit} className="gap-1.5 text-xs font-semibold">
+              Continue to payment <ArrowRight size={13} />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }
