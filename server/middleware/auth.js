@@ -23,7 +23,17 @@ async function authMiddleware(req, res, next) {
     req.userRole    = "viewer";
     next();
   } catch (err) {
-    console.error("Clerk token verification failed:", err?.message);
+    // An expired token is routine: Clerk tokens live ~60s and the client
+    // auto-refreshes, so the occasional request races past expiry. Log it
+    // quietly and signal "expired" so the client knows to retry with a fresh
+    // token rather than treating it as a hard auth failure.
+    const message = err?.message || "";
+    const isExpired = /expired/i.test(message);
+    if (isExpired) {
+      console.warn("Clerk token expired (client will refresh & retry)");
+      return res.status(401).json({ error: "Token expired", code: "TOKEN_EXPIRED" });
+    }
+    console.error("Clerk token verification failed:", message);
     return res.status(401).json({ error: "Unauthorized — invalid token" });
   }
 }

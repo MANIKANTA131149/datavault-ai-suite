@@ -12,6 +12,7 @@ const { runStoredQuery } = require("./lib/query-runner");
 const { recordUsage } = require("./lib/metering");
 const { recordLineage } = require("./lib/lineage");
 const { evaluateCondition, dispatchAction } = require("./lib/automation-actions");
+const { downgradeExpiredPlans, flagPastDuePlans } = require("./lib/subscriptions");
 
 const BATCH_LIMIT = 25;
 
@@ -247,8 +248,23 @@ async function runScheduler() {
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
   const [schedules, alerts] = [await runDueSchedules(db, nowIso), await evaluateDueAlerts(db, now)];
-  console.log(`scheduler tick: ${schedules} schedules run, ${alerts} alerts evaluated`);
-  return { schedules, alerts };
+
+  // Billing lifecycle: flag plans inside their grace window as past_due, then
+  // downgrade any whose grace window has fully elapsed. Isolated so a billing
+  // error never aborts schedules/alerts.
+  let pastDue = 0;
+  let downgraded = 0;
+  try {
+    pastDue = await flagPastDuePlans(db, new Date(now));
+    downgraded = await downgradeExpiredPlans(db, new Date(now));
+  } catch (err) {
+    console.error("billing lifecycle pass failed:", err.message);
+  }
+
+  console.log(
+    `scheduler tick: ${schedules} schedules run, ${alerts} alerts evaluated, ${pastDue} past_due, ${downgraded} downgraded`
+  );
+  return { schedules, alerts, pastDue, downgraded };
 }
 
 module.exports.handler = async () => {

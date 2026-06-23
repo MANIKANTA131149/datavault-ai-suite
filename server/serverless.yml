@@ -36,6 +36,15 @@ provider:
     VITE_AWS_ACCESS_KEY_ID: ${env:VITE_AWS_ACCESS_KEY_ID, ""}
     VITE_AWS_SECRET_ACCESS_KEY: ${env:VITE_AWS_SECRET_ACCESS_KEY, ""}
     VITE_AWS_REGION: ${env:VITE_AWS_REGION, "us-east-1"}
+    # Cashfree Payments — required for checkout + webhook signature verification.
+    # Use sandbox keys with CASHFREE_ENV=sandbox; switch to live keys + production
+    # when going live. CASHFREE_SECRET_KEY is ALSO the webhook-signature key.
+    CASHFREE_ENV: ${env:CASHFREE_ENV, "sandbox"}
+    CASHFREE_APP_ID: ${env:CASHFREE_APP_ID, ""}
+    CASHFREE_SECRET_KEY: ${env:CASHFREE_SECRET_KEY, ""}
+    # Public API host Cashfree should POST webhooks to (the order's notify_url).
+    # e.g. https://tyer9wrngj.execute-api.us-east-1.amazonaws.com  (no trailing slash)
+    PUBLIC_API_URL: ${env:PUBLIC_API_URL, ""}
 
 package:
   patterns:

@@ -38,6 +38,7 @@ const templatesRoutes = require("./routes/templates");
 const metricsRoutes = require("./routes/metrics");
 const evalRoutes = require("./routes/eval");
 const collabRoutes = require("./routes/collab");
+const cashfreeRoutes = require("./routes/cashfree");
 
 const app = express();
 
@@ -93,11 +94,15 @@ app.use(
 
 // ─── Body parsing ──────────────────────────────────────────────────────────────
 // 5mb default; only dataset uploads (workbook JSON) get the large limit.
+// Webhook paths are EXCLUDED here: they need the raw request body for HMAC
+// signature verification and apply their own express.raw() further down.
 const stdJson = express.json({ limit: "5mb" });
 const bigJson = express.json({ limit: "50mb" });
-app.use((req, res, next) =>
-  /^\/(api\/)?datasets(\/|$)/.test(req.path) ? bigJson(req, res, next) : stdJson(req, res, next)
-);
+const RAW_BODY_PATHS = /^\/(api\/)?(cashfree\/webhook|webhooks\/clerk)(\/|$)/;
+app.use((req, res, next) => {
+  if (RAW_BODY_PATHS.test(req.path)) return next(); // leave raw for webhook handlers
+  return /^\/(api\/)?datasets(\/|$)/.test(req.path) ? bigJson(req, res, next) : stdJson(req, res, next);
+});
 
 const encryptionMiddleware = require("./middleware/encryption");
 app.use(encryptionMiddleware);
@@ -181,12 +186,19 @@ function mountApiRoutes(basePath) {
   app.use(`${basePath}/metrics`, apiLimiter, metricsRoutes);
   app.use(`${basePath}/eval`, apiLimiter, evalRoutes);
   app.use(`${basePath}/collab`, apiLimiter, collabRoutes);
+  app.use(`${basePath}/cashfree`, apiLimiter, cashfreeRoutes);
 }
 
 // Clerk webhooks — must be mounted BEFORE general JSON body parsing touches the path.
 // The handler uses its own express.raw() to read the raw Buffer for signature verification.
 app.use("/api/webhooks/clerk", clerkWebhookRoutes);
 app.use("/webhooks/clerk", clerkWebhookRoutes);
+
+// Cashfree payment webhook — also needs the RAW body for HMAC signature
+// verification, so it must be mounted before express.json() touches the path.
+// The router applies its own express.raw().
+app.use("/api/cashfree/webhook", cashfreeRoutes.webhookRouter);
+app.use("/cashfree/webhook", cashfreeRoutes.webhookRouter);
 
 // Primary API routes.
 mountApiRoutes("/api");

@@ -60,7 +60,7 @@ export function CommandPalette() {
 
       // ⌘Q / Ctrl+Q → jump straight to a new query (advertised in the footer
       // and the shortcuts panel). Skipped while typing in a field.
-      if (e.key.toLowerCase() === "q" && (e.metaKey || e.ctrlKey)) {
+      if (e.key?.toLowerCase() === "q" && (e.metaKey || e.ctrlKey)) {
         if (typing) return;
         e.preventDefault();
         setOpen(false);

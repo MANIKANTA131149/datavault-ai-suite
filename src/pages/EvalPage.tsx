@@ -100,7 +100,7 @@ export default function EvalPage() {
   const datasetName = (id: string | null) => datasets.find((d) => d.id === id)?.displayName || datasets.find((d) => d.id === id)?.fileName || "dataset";
 
   return (
-    <div className="space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Evaluation Suite"
         titleIcon={FlaskConical}
