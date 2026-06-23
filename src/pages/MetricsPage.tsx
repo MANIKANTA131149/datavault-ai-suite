@@ -109,7 +109,7 @@ export default function MetricsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Certified Metrics"
         titleIcon={ShieldCheck}

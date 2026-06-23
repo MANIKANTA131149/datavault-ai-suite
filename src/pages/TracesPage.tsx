@@ -49,7 +49,7 @@ export default function TracesPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Agent Traces"
         titleIcon={Activity}

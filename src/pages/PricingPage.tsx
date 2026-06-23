@@ -23,6 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { runCheckout, cashfreeApi, type PricingResponse, type PaymentRecord } from "@/lib/cashfree-client";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,17 @@ const stagger = {
   visible: { transition: { staggerChildren: 0.08, delayChildren: 0.04 } },
 };
 
+/* ─── Currency formatting ─────────────────────────────────────────────────── */
+
+/** Format whole rupees as "₹1,500" (no decimals for clean tier pricing). */
+function formatINR(amount: number): string {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
 /* ─── Tier visual configuration ──────────────────────────────────────────── */
 
 interface TierMeta {
@@ -82,8 +94,8 @@ const TIER_META: Record<PlanTier, TierMeta> = {
   },
   standard: {
     icon: Sparkles,
-    price: "$29",
-    annualPrice: "$23",
+    price: "₹1,500",
+    annualPrice: "₹1,200",
     period: "/ month",
     tagline: "For individuals and small teams getting started",
     accent: "text-blue-400",
@@ -93,8 +105,8 @@ const TIER_META: Record<PlanTier, TierMeta> = {
   },
   professional: {
     icon: Crown,
-    price: "$79",
-    annualPrice: "$63",
+    price: "₹2,500",
+    annualPrice: "₹2,000",
     period: "/ month",
     tagline: "Advanced capabilities for growing organizations",
     accent: "text-purple-400",
@@ -170,79 +182,22 @@ const FAQ_ITEMS = [
   },
 ];
 
-/* ─── Trust badge strip ───────────────────────────────────────────────────── */
-
-const TRUST_BADGES = [
-  { icon: Lock, label: "AES-256 Encryption" },
-  { icon: Shield, label: "SOC 2 Ready" },
-  { icon: Globe, label: "GDPR Compliant" },
-  { icon: RefreshCw, label: "99.9% Uptime SLA" },
-  { icon: Users, label: "Role-Based Access" },
-];
-
-/* ─── Usage gauge bar ────────────────────────────────────────────────────── */
-
-function UsageBar({ label, used, limit, icon: Icon }: { label: string; used: number; limit: number | null; icon: typeof Database }) {
-  const unlimited = isUnlimited(limit);
-  const pct = unlimited ? 0 : Math.min(100, Math.round((used / (limit as number)) * 100));
-  const isNearLimit = !unlimited && pct >= 80;
-  const isExhausted = !unlimited && pct >= 100;
-
-  const barColor = isExhausted ? "bg-rose-500" : isNearLimit ? "bg-amber-500" : "bg-primary";
-  const badgeColor = isExhausted
-    ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
-    : isNearLimit
-    ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-    : "border-primary/30 bg-primary/10 text-primary";
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
-            <Icon size={12} />
-          </div>
-          <span className="text-[13px] font-medium text-foreground">{label}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[12px] font-mono text-muted-foreground">
-            {used.toLocaleString()} / {unlimited ? "Unlimited" : (limit as number).toLocaleString()}
-          </span>
-          {!unlimited && (
-            <span className={cn("rounded-full border px-2 py-0 text-[10px] font-bold tabular-nums", badgeColor)}>
-              {pct}%
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full border border-border/60 bg-background-secondary">
-        <motion.div
-          className={cn("h-full rounded-full", barColor)}
-          initial={{ width: 0 }}
-          animate={{ width: unlimited ? "2%" : `${Math.max(2, pct)}%` }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
-        />
-      </div>
-      {isExhausted && (
-        <p className="text-[11px] font-medium text-rose-400">Limit reached — upgrade to continue.</p>
-      )}
-      {isNearLimit && !isExhausted && (
-        <p className="text-[11px] font-medium text-amber-400">Approaching limit — consider upgrading.</p>
-      )}
-    </div>
-  );
-}
-
 /* ─── Plan card ──────────────────────────────────────────────────────────── */
 
 function PlanCard({
   plan,
   currentTier,
   billingCycle,
+  pricing,
+  paymentsReady,
+  onUpgraded,
 }: {
   plan: PlanDefinition;
   currentTier: PlanTier;
   billingCycle: "monthly" | "annual";
+  pricing: PricingResponse | null;
+  paymentsReady: boolean;
+  onUpgraded: () => void;
 }) {
   const meta = TIER_META[plan.tier];
   const Icon = meta.icon;
@@ -250,20 +205,65 @@ function PlanCard({
   const currentIdx = PLAN_TIERS.indexOf(currentTier);
   const thisIdx = PLAN_TIERS.indexOf(plan.tier);
   const isUpgrade = thisIdx > currentIdx;
+  const [processing, setProcessing] = useState(false);
 
-  const displayPrice = billingCycle === "annual" ? meta.annualPrice : meta.price;
+  // Prices come from the server (single source of truth). Fall back to the
+  // static TIER_META strings only until the live pricing has loaded.
+  const livePlan = pricing?.plans?.[plan.tier];
+  let displayPrice = billingCycle === "annual" ? meta.annualPrice : meta.price;
+  if (livePlan) {
+    if (plan.tier === "free") displayPrice = "Free";
+    else if (livePlan.contactSales) displayPrice = "Custom";
+    else if (billingCycle === "annual") displayPrice = formatINR(livePlan.annual.perMonth);
+    else displayPrice = formatINR(livePlan.monthly.amount);
+  }
+
+  const annualSavingsPct = livePlan?.annual.savingsPct ?? 20;
+  const monthlyForStrike = livePlan ? formatINR(livePlan.monthly.amount) : meta.price;
   const hasAnnualDiscount =
-    billingCycle === "annual" && meta.price !== "Free" && meta.price !== "Custom";
+    billingCycle === "annual" && plan.tier !== "free" && !livePlan?.contactSales && displayPrice !== "Custom";
 
-  const handleUpgrade = () => {
-    if (plan.tier === "enterprise") {
+  const handleUpgrade = async () => {
+    if (plan.tier === "enterprise" || livePlan?.contactSales) {
       toast.info("Enterprise inquiries", {
         description: "Contact gantamanikanta678@gmail.com for a custom enterprise plan tailored to your organization.",
       });
-    } else {
-      toast.info("Upgrade request received", {
-        description: `Your request to upgrade to the ${plan.name} plan has been noted. Please send your request to gantamanikanta678@gmail.com`,
+      return;
+    }
+    if (!paymentsReady) {
+      toast.error("Payments are not available right now", {
+        description: "Please try again in a moment or contact support.",
       });
+      return;
+    }
+    setProcessing(true);
+    try {
+      const result = await runCheckout(plan.tier, billingCycle);
+      if (result.status === "PAID" && result.applied) {
+        toast.success(`Upgraded to ${plan.name}`, {
+          description: "Your new plan is active. Enjoy the higher limits!",
+        });
+        onUpgraded();
+      } else if (result.status === "PAID") {
+        toast.success("Payment received", {
+          description: "We're activating your plan — it'll update shortly.",
+        });
+        onUpgraded();
+      } else if (result.status === "PENDING") {
+        toast.info("Payment is processing", {
+          description: "We'll update your plan automatically once it's confirmed.",
+        });
+      } else {
+        toast.error("Payment not completed", {
+          description: "No charge was made. You can try again anytime.",
+        });
+      }
+    } catch (err) {
+      toast.error("Checkout failed", {
+        description: (err as Error).message || "Something went wrong. Please try again.",
+      });
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -310,13 +310,13 @@ function PlanCard({
             )}
             {hasAnnualDiscount && (
               <span className="ml-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0 text-[10px] font-bold text-emerald-400">
-                −20%
+                −{annualSavingsPct}%
               </span>
             )}
           </div>
           {hasAnnualDiscount && (
             <p className="mt-[-12px] text-[11px] text-muted-foreground">
-              <span className="line-through">{meta.price}/mo</span>
+              <span className="line-through">{monthlyForStrike}/mo</span>
               {" · "}billed annually
             </p>
           )}
@@ -339,9 +339,18 @@ function PlanCard({
               Current Plan
             </Button>
           ) : isUpgrade ? (
-            <Button onClick={handleUpgrade} className="w-full gap-1.5 text-xs font-bold tracking-wider" variant="default" size="lg">
-              {plan.tier === "enterprise" ? "Contact Sales" : "Upgrade"}
-              <ArrowRight size={13} />
+            <Button onClick={handleUpgrade} disabled={processing} className="w-full gap-1.5 text-xs font-bold tracking-wider" variant="default" size="lg">
+              {processing ? (
+                <>
+                  <RefreshCw size={13} className="animate-spin" />
+                  Processing…
+                </>
+              ) : (
+                <>
+                  {plan.tier === "enterprise" ? "Contact Sales" : "Upgrade"}
+                  <ArrowRight size={13} />
+                </>
+              )}
             </Button>
           ) : (
             <Button variant="outline" disabled className="w-full cursor-not-allowed text-xs font-semibold opacity-50" size="lg">
@@ -369,6 +378,119 @@ function SectionHeading({ icon: Icon, title, subtitle }: { icon: typeof Shield; 
         </div>
       </div>
     </div>
+  );
+}
+
+/* ─── Billing history ─────────────────────────────────────────────────────── */
+
+const STATUS_STYLES: Record<string, string> = {
+  PAID: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  PENDING: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  FAILED: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  EXPIRED: "border-muted-foreground/30 bg-muted/40 text-muted-foreground",
+  USER_DROPPED: "border-muted-foreground/30 bg-muted/40 text-muted-foreground",
+  CREATE_FAILED: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+  AMOUNT_MISMATCH: "border-rose-500/30 bg-rose-500/10 text-rose-400",
+};
+
+function prettyStatus(s: string): string {
+  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function BillingHistory({ refreshKey }: { refreshKey: number }) {
+  const [payments, setPayments] = useState<PaymentRecord[] | null>(null);
+
+  useEffect(() => {
+    cashfreeApi.payments()
+      .then(setPayments)
+      .catch(() => setPayments([]));
+  }, [refreshKey]);
+
+  if (payments === null) {
+    return (
+      <Card className="rounded-[18px] p-6">
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-lg" />
+          ))}
+        </div>
+      </Card>
+    );
+  }
+
+  if (payments.length === 0) {
+    return (
+      <Card className="rounded-[18px] p-8 text-center">
+        <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+            <CreditCard size={18} className="text-primary" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No payments yet</p>
+          <p className="text-xs text-muted-foreground">
+            When you upgrade to a paid plan, your receipts and billing history will appear here.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="overflow-hidden rounded-[18px]">
+      {/* Desktop table */}
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border/60 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+              <th className="px-5 py-3 font-semibold">Date</th>
+              <th className="px-5 py-3 font-semibold">Plan</th>
+              <th className="px-5 py-3 font-semibold">Cycle</th>
+              <th className="px-5 py-3 font-semibold">Amount</th>
+              <th className="px-5 py-3 font-semibold">Status</th>
+              <th className="px-5 py-3 font-semibold">Valid until</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payments.map((p) => (
+              <tr key={p.orderId} className="border-b border-border/40 last:border-0">
+                <td className="px-5 py-3 text-muted-foreground">{new Date(p.createdAt).toLocaleDateString()}</td>
+                <td className="px-5 py-3 font-medium capitalize text-foreground">{p.tier}</td>
+                <td className="px-5 py-3 capitalize text-muted-foreground">{p.cycle}</td>
+                <td className="px-5 py-3 font-mono text-foreground">{formatINR(p.amount)}</td>
+                <td className="px-5 py-3">
+                  <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold", STATUS_STYLES[p.status] || STATUS_STYLES.EXPIRED)}>
+                    {prettyStatus(p.status)}
+                  </span>
+                </td>
+                <td className="px-5 py-3 text-muted-foreground">
+                  {p.periodEnd ? new Date(p.periodEnd).toLocaleDateString() : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="divide-y divide-border/40 sm:hidden">
+        {payments.map((p) => (
+          <div key={p.orderId} className="flex items-start justify-between gap-3 p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold capitalize text-foreground">{p.tier} · <span className="font-normal capitalize text-muted-foreground">{p.cycle}</span></p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{new Date(p.createdAt).toLocaleDateString()}</p>
+              {p.periodEnd && (
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Valid until {new Date(p.periodEnd).toLocaleDateString()}</p>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <span className="font-mono text-sm font-semibold text-foreground">{formatINR(p.amount)}</span>
+              <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-bold", STATUS_STYLES[p.status] || STATUS_STYLES.EXPIRED)}>
+                {prettyStatus(p.status)}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -409,22 +531,50 @@ function FaqItem({ item, open, onToggle }: { item: { q: string; a: string }; ope
 export default function PricingPage() {
   const { user } = useAuthStore();
   const { context, loading, fetchPlan } = usePlanStore();
+  const { hydrateRole } = useAuthStore();
   const [billingCycle, setBillingCycle] = useState<"monthly" | "annual">("monthly");
   const [openFaq, setOpenFaq] = useState<number | null>(null);
-  const [dailyTokens, setDailyTokens] = useState<{
-    tokensUsed: number;
-    limit: number;
-    percentage: number;
-  } | null>(null);
+  const [pricing, setPricing] = useState<PricingResponse | null>(null);
+  const [billingRefresh, setBillingRefresh] = useState(0);
 
   useEffect(() => { fetchPlan(); }, [fetchPlan]);
 
+  // Live pricing + Cashfree availability from the server (single source of truth).
   useEffect(() => {
-    if (user?.planTier !== "free") return;
-    api.get("/llm/token-usage")
-      .then((data) => { if (data) setDailyTokens(data as any); })
-      .catch((e) => console.error("Failed to fetch daily tokens:", e));
-  }, [user?.planTier]);
+    cashfreeApi.pricing()
+      .then(setPricing)
+      .catch((e) => console.error("Failed to load pricing:", e));
+  }, []);
+
+  // Refresh both the plan context and the auth-store user (tier badge) after a
+  // successful upgrade so the UI reflects the new plan immediately.
+  const refreshAfterUpgrade = () => {
+    fetchPlan();
+    hydrateRole();
+    setBillingRefresh((n) => n + 1);
+  };
+
+  // Handle the redirect-fallback case: if the modal redirected away and back,
+  // Cashfree appends ?cf_order=<id>. Verify it and clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("cf_order");
+    if (!orderId || orderId.includes("{")) return;
+    cashfreeApi.verify(orderId)
+      .then((res) => {
+        if (res.status === "PAID") {
+          toast.success("Payment successful", { description: "Your plan has been upgraded." });
+          refreshAfterUpgrade();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        params.delete("cf_order");
+        const clean = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+        window.history.replaceState({}, "", clean);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const currentTier: PlanTier = (user?.planTier as PlanTier) || "free";
   const currentPlan = PLAN_DEFINITIONS[currentTier];
@@ -441,86 +591,6 @@ export default function PricingPage() {
           { label: "Status", value: user?.planStatus === "active" ? "Active" : (user?.planStatus || "Active"), tone: "success" },
         ]}
       />
-
-      {/* ─── TRUST BADGES ──────────────────────────────────────────────────── */}
-      <motion.div
-        variants={stagger}
-        initial="hidden"
-        animate="visible"
-        className="flex flex-wrap items-center justify-center gap-3 rounded-[18px] border border-border/50 bg-card/50 px-6 py-4"
-      >
-        {TRUST_BADGES.map((badge) => {
-          const Icon = badge.icon;
-          return (
-            <motion.div
-              key={badge.label}
-              variants={fadeUp}
-              className="flex items-center gap-2 rounded-full border border-border/60 bg-background/60 px-3 py-1.5 text-xs text-muted-foreground"
-            >
-              <Icon size={12} className="text-primary/70" />
-              {badge.label}
-            </motion.div>
-          );
-        })}
-      </motion.div>
-
-      {/* ─── CURRENT USAGE ───────────────────────────────────────────────── */}
-      <motion.section
-        variants={stagger}
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, margin: "-60px" }}
-        className="space-y-6"
-      >
-        <motion.div variants={fadeUp}>
-          <SectionHeading
-            icon={Zap}
-            title="Current Period Usage"
-            subtitle="Resource consumption for the active billing cycle."
-          />
-        </motion.div>
-
-        <motion.div variants={fadeUp}>
-          <Card className="rounded-[18px] p-6">
-            {loading ? (
-              <div className="grid gap-6 py-2 md:grid-cols-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="space-y-2">
-                    <Skeleton className="h-3.5 w-36" />
-                    <Skeleton className="h-2 w-full rounded-full" />
-                    <Skeleton className="h-3 w-24" />
-                  </div>
-                ))}
-              </div>
-            ) : context ? (
-              <div className="grid gap-6 md:grid-cols-2">
-                <UsageBar
-                  label="Daily Tokens"
-                  used={currentTier === "free" && dailyTokens ? dailyTokens.tokensUsed : context.usage.monthlyTokens}
-                  limit={currentTier === "free" && dailyTokens ? dailyTokens.limit : currentPlan.monthlyTokens}
-                  icon={Zap}
-                />
-                <UsageBar
-                  label="Datasets"
-                  used={context.usage.datasets}
-                  limit={currentPlan.datasets}
-                  icon={Database}
-                />
-                <UsageBar
-                  label="Saved Insights"
-                  used={context.usage.insights}
-                  limit={currentPlan.insights}
-                  icon={Bookmark}
-                />
-              </div>
-            ) : (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                Unable to load usage data. Refresh to try again.
-              </p>
-            )}
-          </Card>
-        </motion.div>
-      </motion.section>
 
       {/* ─── PLAN CARDS ──────────────────────────────────────────────────── */}
       <motion.section
@@ -579,8 +649,31 @@ export default function PricingPage() {
               plan={PLAN_DEFINITIONS[tier]}
               currentTier={currentTier}
               billingCycle={billingCycle}
+              pricing={pricing}
+              paymentsReady={Boolean(pricing?.cashfree?.configured)}
+              onUpgraded={refreshAfterUpgrade}
             />
           ))}
+        </motion.div>
+      </motion.section>
+
+      {/* ─── BILLING HISTORY ─────────────────────────────────────────────── */}
+      <motion.section
+        variants={stagger}
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: "-60px" }}
+        className="space-y-6"
+      >
+        <motion.div variants={fadeUp}>
+          <SectionHeading
+            icon={CreditCard}
+            title="Billing History"
+            subtitle="Your past payments, receipts, and the period each one covered."
+          />
+        </motion.div>
+        <motion.div variants={fadeUp}>
+          <BillingHistory refreshKey={billingRefresh} />
         </motion.div>
       </motion.section>
 

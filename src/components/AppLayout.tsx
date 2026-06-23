@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/AppSidebar";
 import { GuidedTour } from "@/components/GuidedTour";
 import { KeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
+import { CommandPalette } from "@/components/CommandPalette";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { AccountMenu } from "@/components/AccountMenu";
 import { OrgSwitcher } from "@/components/OrgSwitcher";
@@ -555,6 +556,7 @@ export default function AppLayout() {
 
       {/* Global keyboard-shortcuts reference (opens with "?") */}
       <KeyboardShortcutsModal />
+      <CommandPalette />
     </div>
   );
 }

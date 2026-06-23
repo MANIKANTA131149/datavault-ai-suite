@@ -299,15 +299,45 @@ router.post("/:id/test", authMiddleware, async (req, res) => {
 
     res.json({ success: true, message: `Successfully connected to ${typeInfo.label}` });
   } catch (err) {
-    console.error("POST /connections/:id/test error:", err);
-    const db = await getDb();
-    await db.collection("connections").updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: { status: "error", lastTestedAt: new Date().toISOString() } }
-    );
-    res.status(500).json({ error: err.message || "Connection test failed" });
+    // A failed connection test is almost always a user-input problem (wrong
+    // host/port/credentials), not a server fault — so log it quietly and return
+    // 200 with success:false, matching the other failure branches above. This
+    // keeps the frontend handling uniform and avoids noisy 500 stack traces.
+    const message = friendlyDbError(err);
+    console.warn(`Connection test failed for ${req.params.id}: ${message}`);
+    try {
+      const db = await getDb();
+      await db.collection("connections").updateOne(
+        { _id: new ObjectId(req.params.id) },
+        { $set: { status: "error", lastTestedAt: new Date().toISOString() } }
+      );
+    } catch { /* status update is best-effort */ }
+    res.json({ success: false, message });
   }
 });
+
+// Map raw driver errors to a clear, user-facing explanation.
+function friendlyDbError(err) {
+  const code = err?.code;
+  const raw = err?.message || "Connection test failed";
+  switch (code) {
+    case "ENOTFOUND":
+      return `Host not found: "${err.hostname || "unknown"}". Check the hostname/server address.`;
+    case "ECONNREFUSED":
+      return "Connection refused. Check the port and that the database accepts remote connections.";
+    case "ETIMEDOUT":
+    case "ESOCKETTIMEDOUT":
+      return "Connection timed out. Check the host, port, and firewall/security-group rules.";
+    case "ER_ACCESS_DENIED_ERROR":
+    case "ELOGIN":
+      return "Access denied. Check the username and password.";
+    case "ER_BAD_DB_ERROR":
+    case "3D000":
+      return "Database not found. Check the database name.";
+    default:
+      return raw;
+  }
+}
 
 // ─── DELETE /api/connections/:id — soft-delete a connection ───────────────────
 router.delete("/:id", authMiddleware, async (req, res) => {

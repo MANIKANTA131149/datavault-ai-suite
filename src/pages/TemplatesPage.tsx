@@ -333,7 +333,7 @@ export default function TemplatesPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="page-shell page-enter space-y-6">
       <PageHeader
         title="Template Gallery"
         titleIcon={LayoutTemplate}

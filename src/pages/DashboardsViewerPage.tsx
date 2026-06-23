@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, ArrowLeft, Trash2, RefreshCw, Database, Loader2,
-  MessageSquare, AlertTriangle, Hash, Clock, TrendingUp, Activity, Users,
+  MessageSquare, AlertTriangle, Hash, Clock, TrendingUp, Activity, Users, X,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -129,7 +129,8 @@ export default function DashboardsViewerPage() {
   // ─── Detail view ─────────────────────────────────────────────────────────────
   if (active) {
     return (
-      <div className="page-shell page-enter space-y-6">
+      <div className="page-shell page-enter space-y-4">
+        {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <Button variant="outline" size="sm" className="h-8 border-border shrink-0" onClick={() => setActive(null)}>
@@ -171,77 +172,140 @@ export default function DashboardsViewerPage() {
           </div>
         </div>
 
-        {!active.datasetId ? (
-          <Card className="p-6">
-            <div className="mx-auto flex max-w-md flex-col items-center gap-3 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                <Database size={18} className="text-primary" />
+        {/* Body: panels + collab side-by-side on lg+, stacked on mobile */}
+        <div className={`flex gap-4 items-start ${showCollab ? "lg:flex-row flex-col" : ""}`}>
+          {/* Panels area */}
+          <div className="min-w-0 flex-1">
+            {!active.datasetId ? (
+              <Card className="p-6">
+                <div className="mx-auto flex max-w-md flex-col items-center gap-3 text-center">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <Database size={18} className="text-primary" />
+                  </div>
+                  <p className="text-sm font-semibold text-foreground">Which dataset does this dashboard belong to?</p>
+                  <p className="text-xs text-muted-foreground">Pick the dataset its queries were built for. Your choice is remembered.</p>
+                  <Select onValueChange={bindDataset}>
+                    <SelectTrigger className="w-full max-w-xs bg-card border-border"><SelectValue placeholder="Select dataset…" /></SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      {activeDatasets.map((d) => (
+                        <SelectItem key={d.id} value={d.id}><span className="block max-w-[260px] truncate">{d.displayName || d.fileName}</span></SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </Card>
+            ) : (
+              <div className={`grid grid-cols-1 items-start gap-4 sm:grid-cols-2 ${showCollab ? "lg:grid-cols-2 xl:grid-cols-2" : "lg:grid-cols-3 2xl:grid-cols-4"}`}>
+                {active.panels.map((panel, idx) => {
+                  const state = panelStates[panel.id] || { status: "loading" as const };
+                  const TypeIcon = CHART_TYPE_ICON[panel.chartType] ?? Hash;
+                  return (
+                    <motion.div
+                      key={panel.id}
+                      initial={{ opacity: 0, y: 14 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, delay: Math.min(idx * 0.07, 0.5), ease: [0.22, 1, 0.36, 1] }}
+                      className="min-w-0"
+                    >
+                      <Card className="flex min-w-0 flex-col overflow-hidden p-4 transition-shadow hover:shadow-[0_4px_20px_-10px_hsl(var(--primary)/0.2)]">
+                        <div className="mb-3 flex items-start justify-between gap-2">
+                          <div className="flex min-w-0 items-start gap-2">
+                            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                              <TypeIcon size={13} className="text-primary" />
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="truncate text-sm font-semibold leading-tight text-foreground" title={panel.title}>{panel.title}</h3>
+                              <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={panel.question}>{panel.question}</p>
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="shrink-0 border-border text-[10px] capitalize">{panel.chartType}</Badge>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          {state.status === "loading" && (
+                            <div className="flex h-[160px] flex-col items-center justify-center gap-2 text-muted-foreground">
+                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                              <span className="text-[11px]">Running query…</span>
+                            </div>
+                          )}
+                          {state.status === "error" && (
+                            <div className="flex h-[160px] flex-col items-center justify-center gap-2 rounded-lg border border-destructive/20 bg-destructive/5 text-center">
+                              <AlertTriangle size={16} className="text-destructive" />
+                              <p className="max-w-full break-words [overflow-wrap:anywhere] px-3 text-[11px] text-muted-foreground">{state.message}</p>
+                            </div>
+                          )}
+                          {state.status === "ready" && <PanelChart panel={panel} rows={state.rows} />}
+                        </div>
+                      </Card>
+                    </motion.div>
+                  );
+                })}
               </div>
-              <p className="text-sm font-semibold text-foreground">Which dataset does this dashboard belong to?</p>
-              <p className="text-xs text-muted-foreground">Pick the dataset its queries were built for. Your choice is remembered.</p>
-              <Select onValueChange={bindDataset}>
-                <SelectTrigger className="w-full max-w-xs bg-card border-border"><SelectValue placeholder="Select dataset…" /></SelectTrigger>
-                <SelectContent className="max-h-60">
-                  {activeDatasets.map((d) => (
-                    <SelectItem key={d.id} value={d.id}><span className="block max-w-[260px] truncate">{d.displayName || d.fileName}</span></SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-            {active.panels.map((panel, idx) => {
-              const state = panelStates[panel.id] || { status: "loading" as const };
-              const TypeIcon = CHART_TYPE_ICON[panel.chartType] ?? Hash;
-              return (
+            )}
+          </div>
+
+          {/* Collab panel — sidebar on lg+, bottom sheet on mobile */}
+          <AnimatePresence>
+            {showCollab && (
+              <>
+                {/* Mobile: fixed bottom sheet */}
                 <motion.div
-                  key={panel.id}
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: Math.min(idx * 0.07, 0.5), ease: [0.22, 1, 0.36, 1] }}
-                  className="min-w-0"
+                  key="collab-mobile"
+                  initial={{ y: "100%" }}
+                  animate={{ y: 0 }}
+                  exit={{ y: "100%" }}
+                  transition={{ type: "spring", damping: 28, stiffness: 300 }}
+                  className="lg:hidden fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl border-t border-border bg-card shadow-2xl"
+                  style={{ maxHeight: "70vh" }}
                 >
-                  <Card className="flex min-w-0 flex-col overflow-hidden p-4 transition-shadow hover:shadow-[0_4px_20px_-10px_hsl(var(--primary)/0.2)]">
-                    <div className="mb-3 flex items-start justify-between gap-2">
-                      <div className="flex min-w-0 items-start gap-2">
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <TypeIcon size={13} className="text-primary" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="truncate text-sm font-semibold leading-tight text-foreground" title={panel.title}>{panel.title}</h3>
-                          <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={panel.question}>{panel.question}</p>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="shrink-0 border-border text-[10px] capitalize">{panel.chartType}</Badge>
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                      <Users size={14} className="text-primary" />Share &amp; comments
+                    </span>
+                    <button onClick={() => setShowCollab(false)} className="rounded-lg p-1 text-muted-foreground hover:text-foreground">
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="overflow-y-auto p-4" style={{ maxHeight: "calc(70vh - 52px)" }}>
+                    <CollabPanel resourceType="dashboard" resourceId={active.id} allowSharing />
+                  </div>
+                </motion.div>
+                {/* Mobile backdrop */}
+                <motion.div
+                  key="collab-backdrop"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="lg:hidden fixed inset-0 z-40 bg-black/40"
+                  onClick={() => setShowCollab(false)}
+                />
+
+                {/* Desktop: sticky sidebar */}
+                <motion.div
+                  key="collab-sidebar"
+                  initial={{ opacity: 0, x: 24 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 24 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  className="hidden lg:block w-80 xl:w-96 shrink-0 sticky top-4"
+                >
+                  <Card className="p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                        <Users size={14} className="text-primary" />Share &amp; comments
+                      </span>
+                      <button onClick={() => setShowCollab(false)} className="rounded-lg p-1 text-muted-foreground hover:text-foreground">
+                        <X size={15} />
+                      </button>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      {state.status === "loading" && (
-                        <div className="flex h-[160px] flex-col items-center justify-center gap-2 text-muted-foreground">
-                          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                          <span className="text-[11px]">Running query…</span>
-                        </div>
-                      )}
-                      {state.status === "error" && (
-                        <div className="flex h-[160px] flex-col items-center justify-center gap-2 rounded-lg border border-destructive/20 bg-destructive/5 text-center">
-                          <AlertTriangle size={16} className="text-destructive" />
-                          <p className="max-w-full break-words [overflow-wrap:anywhere] px-3 text-[11px] text-muted-foreground">{state.message}</p>
-                        </div>
-                      )}
-                      {state.status === "ready" && <PanelChart panel={panel} rows={state.rows} />}
+                    <div className="max-h-[calc(100vh-12rem)] overflow-y-auto">
+                      <CollabPanel resourceType="dashboard" resourceId={active.id} allowSharing />
                     </div>
                   </Card>
                 </motion.div>
-              );
-            })}
-          </div>
-        )}
-
-        {showCollab && (
-          <Card className="p-4 sm:p-5">
-            <CollabPanel resourceType="dashboard" resourceId={active.id} allowSharing />
-          </Card>
-        )}
+              </>
+            )}
+          </AnimatePresence>
+        </div>
 
         <ConfirmDialog
           open={!!deleteId}

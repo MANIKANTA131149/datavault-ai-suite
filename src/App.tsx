@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { PremiumToaster } from "@/lib/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { CommandPalette } from "@/components/CommandPalette";
 import AppLayout from "@/components/AppLayout";
 import AuthPage from "@/pages/AuthPage";
 import { Seo } from "@/components/Seo";
@@ -43,7 +42,6 @@ const App = () => (
       <BrowserRouter>
         <ClerkAuthBridge />
         <Seo />
-        <CommandPalette />
         <Suspense fallback={<BrandLoader />}>
           <Routes>
             <Route path="/" element={<Navigate to="/website" replace />} />
