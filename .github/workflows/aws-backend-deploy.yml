@@ -72,3 +72,10 @@ jobs:
           VITE_AWS_ACCESS_KEY_ID: ${{ secrets.VITE_AWS_ACCESS_KEY_ID }}
           VITE_AWS_SECRET_ACCESS_KEY: ${{ secrets.VITE_AWS_SECRET_ACCESS_KEY }}
           VITE_AWS_REGION: ${{ secrets.VITE_AWS_REGION }}
+          # Cashfree Payments. CASHFREE_SECRET_KEY is also the webhook-signature key.
+          # CASHFREE_ENV = sandbox | production. PUBLIC_API_URL = the API's public
+          # host (no trailing slash) so Cashfree knows where to POST webhooks.
+          CASHFREE_ENV: ${{ secrets.CASHFREE_ENV }}
+          CASHFREE_APP_ID: ${{ secrets.CASHFREE_APP_ID }}
+          CASHFREE_SECRET_KEY: ${{ secrets.CASHFREE_SECRET_KEY }}
+          PUBLIC_API_URL: ${{ secrets.PUBLIC_API_URL }}
