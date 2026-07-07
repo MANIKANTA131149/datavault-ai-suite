@@ -11,6 +11,7 @@ const {
 } = require("../lib/live-db");
 const { buildSqlFromOperation } = require("../lib/sql-builder");
 const { SQL_NATIVE_DB_TYPES, validateReadOnlySql } = require("../lib/sql-validator");
+const { decryptConfig } = require("../lib/secret-crypto");
 
 const router = express.Router();
 const SQL_OPERATION_DB_TYPES = new Set([
@@ -33,9 +34,12 @@ async function loadConnection(req) {
   // 500. Treat an invalid id as "not found" (it can never match a real doc).
   if (!ObjectId.isValid(req.params.connectionId)) return null;
   const db = await getDb();
-  return db
+  const conn = await db
     .collection("connections")
     .findOne({ _id: new ObjectId(req.params.connectionId), userId: req.userId });
+  if (!conn) return null;
+  // Decrypt credentials for live use (encrypted at rest via secret-crypto).
+  return { ...conn, config: decryptConfig(conn.config) };
 }
 
 router.get("/:connectionId/schema", authMiddleware, async (req, res) => {

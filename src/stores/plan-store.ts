@@ -53,7 +53,7 @@ export const usePlanStore = create<PlanState>()((set, get) => ({
     } catch (err) {
       const fallback: PlanContext = {
         plan: getPlanDefinition("free"),
-        usage: { monthlyQueries: 0, monthlyTokens: 0, datasets: 0, insights: 0, members: 0 },
+        usage: { monthlyQueries: 0, monthlyTokens: 0, datasets: 0, insights: 0, members: 0, connections: 0, glossary: 0, metrics: 0, dashboards: 0, automations: 0, workspaces: 0 },
         planStatus: "active",
         planSource: "manual",
       };

@@ -415,7 +415,12 @@ STRICT RULES — NEVER VIOLATE
 ✅ Use topN_groupby for "top N per group/category" questions
 ✅ Use outlier_detect for "anomaly/outlier/unusual values"
 ✅ Use correlation for "relationship between two numeric columns"
-✅ When returning a row result (ranked record, filtered rows, top/bottom entity), return ALL columns from the schema — do NOT use a select step to strip them down. Only use select to restrict columns when the user explicitly asks for specific fields (e.g. "show only name and salary").
+✅ COLUMN SELECTION — match the columns to what the question is really asking, using judgment:
+   • If the question names or implies a specific metric ("top revenue product", "highest salary", "average price by category"), return ONLY the entity/key column plus that metric (and any column used in a named filter). Use a select step to drop everything else. Example: "top revenue product" → select ["product","revenue"].
+   • If the question asks to identify or describe an entity ("who is the top customer", "which product sells best", "show me the best region"), return the entity plus its useful descriptive columns and the relevant metric — but still drop noisy internal columns (ids, foreign keys, audit timestamps) the user clearly does not care about.
+   • If the question lists/ranks MANY rows ("list the top 10 products", "show all orders over 1000"), trim tightly to the entity column(s) plus the metric(s) involved.
+   • If the user explicitly asks for the "full row", "all details", "everything about", or all fields, return ALL columns.
+   In every case, infer relevance from the question's wording — never blindly return every schema column, and never strip a column the question actually refers to.
 ❌ NEVER output text outside of JSON
 ❌ NEVER invent column names not in the schema
 ❌ Do not use ExecuteFinalQuery for ambiguous requests that need clarification
@@ -2219,7 +2224,17 @@ function executeOperation(data: Record<string, any>[], operation: string, params
               [VIRTUAL]: {
                 rows: currentData,
                 columns: currentData.length > 0
-                  ? Object.keys(currentData[0]).map((name) => ({ name, dtype: "string" as const, sampleValues: [] }))
+                  ? Object.keys(currentData[0]).map((name) => {
+                      const values = currentData.map((r: Record<string, any>) => r[name]);
+                      const nonNull = values.filter((v: any) => v != null && v !== "");
+                      return {
+                        name,
+                        dtype: "string" as const,
+                        nonNullCount: nonNull.length,
+                        uniqueCount: new Set(nonNull.map(String)).size,
+                        sampleValues: nonNull.slice(0, 5),
+                      };
+                    })
                   : [],
               },
             };
@@ -3560,6 +3575,12 @@ SQL mode rules:
 - For detail/listing queries, include a sensible LIMIT/TOP/FETCH FIRST cap, usually 50 or 100. Aggregates and counts do not need a row limit.
 - Quote qualified identifiers according to the selected database dialect.
 - Use exact table and column names from GetSchema/GetColumns.
+- COLUMN RELEVANCE — choose the SELECT columns by judgment, matching what the question actually asks:
+  • Specific metric named/implied ("top revenue product", "highest salary") → SELECT only the entity/key column plus that metric (and any named-filter column). Example: SELECT product, revenue FROM ... ORDER BY revenue DESC LIMIT 1. Do NOT use SELECT *.
+  • Identify/describe an entity ("who is the top customer", "which product sells best") → SELECT the entity plus its useful descriptive columns and the relevant metric, but omit noisy internal columns (ids, foreign keys, audit timestamps) the user clearly does not care about.
+  • List/rank many rows ("list the top 10 products", "orders over 1000") → SELECT only the entity column(s) plus the metric(s) involved.
+  • User explicitly asks for the "full row", "all details", "everything about", or all columns → SELECT all columns.
+  Infer relevance from the wording; never blindly SELECT * for detail/ranking answers, and never omit a column the question refers to. (SELECT * remains fine inside an aggregate-only CTE like WITH summary AS (SELECT ...) SELECT * FROM summary.)
 
 TURN-EFFICIENCY RULES (critical — you have a limited step budget):
 - GetSchema already returns column names for every table. After calling GetSchema, you can immediately write SQL without calling GetColumns for every table.
@@ -3666,6 +3687,12 @@ You have access to these commands:
 NoSQL operation rules:
 - Do NOT output QuerySQL or ExecuteSQL commands. If you do, they will fail. Only use QueryTable or ExecuteFinalQuery.
 - Use exact collection and field names from GetSchema/GetColumns.
+- COLUMN RELEVANCE — choose the returned fields by judgment, matching what the question asks. Use a select step (or select-in-pipeline) to restrict fields:
+  • Specific metric named/implied ("top revenue product", "highest salary") → return only the entity/key field plus that metric (and any named-filter field). Example: select ["product","revenue"].
+  • Identify/describe an entity ("who is the top customer", "which product sells best") → return the entity plus its useful descriptive fields and the relevant metric, but omit noisy internal fields (ids, foreign keys, audit timestamps) the user clearly does not care about.
+  • List/rank many rows ("list the top 10 products") → return only the entity field(s) plus the metric(s) involved.
+  • User explicitly asks for the "full row", "all details", "everything about", or all fields → return all fields.
+  Infer relevance from the wording; never blindly return every field for detail/ranking answers, and never omit a field the question refers to.
 
 TURN-EFFICIENCY RULES (critical — you have a limited step budget):
 - GetSchema already returns field names for every collection. After calling GetSchema, you can immediately write operations without calling GetColumns for every collection.

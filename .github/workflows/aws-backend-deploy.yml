@@ -60,6 +60,7 @@ jobs:
           # Must equal the frontend's VITE_API_ENCRYPTION_KEY (used at build time)
           # or request-body decryption fails with "Invalid encrypted payload".
           API_ENCRYPTION_KEY: ${{ secrets.API_ENCRYPTION_KEY }}
+          SECRET_ENCRYPTION_KEY: ${{ secrets.SECRET_ENCRYPTION_KEY }}
           # Analytics dashboard (audit-team login). ANALYTICS_TOKEN_SECRET is
           # optional — leave it unset to reuse JWT_SECRET for signing.
           ANALYTICS_USERNAME: ${{ secrets.ANALYTICS_USERNAME }}

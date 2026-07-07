@@ -9,6 +9,7 @@ const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { validateReadOnlySql } = require("../lib/sql-validator");
 const { logAudit } = require("../middleware/auditLogger");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -19,7 +20,6 @@ const INTERVALS = {
   daily: 24 * 60 * 60 * 1000,
   weekly: 7 * 24 * 60 * 60 * 1000,
 };
-const MAX_SCHEDULES_PER_USER = 20;
 
 function computeNextRun(interval, fromTs = Date.now()) {
   return new Date(fromTs + (INTERVALS[interval] || INTERVALS.daily)).toISOString();
@@ -76,10 +76,11 @@ router.post("/", async (req, res) => {
     validateReadOnlySql(sql, connectionId ? "postgresql" : "duckdb");
 
     const db = await getDb();
-    const count = await db.collection("schedules").countDocuments({ userId: req.userId });
-    if (count >= MAX_SCHEDULES_PER_USER) {
-      return res.status(403).json({ error: `Maximum of ${MAX_SCHEDULES_PER_USER} schedules per user reached` });
-    }
+
+    // Plan limit: automations = schedules + alerts combined.
+    const planContext = await getPlanContext(db, req.userId);
+    const autoCheck = canUseMetric(planContext.plan, "automations", planContext.usage.automations, 1);
+    if (!autoCheck.allowed) return res.status(403).json(autoCheck.details);
 
     // Verify target ownership.
     if (datasetId) {

@@ -9,11 +9,11 @@ const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { recordLineage } = require("../lib/lineage");
 const { logAudit } = require("../middleware/auditLogger");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const MAX_DASHBOARDS = 30;
 const MAX_PANELS = 12;
 const CHART_TYPES = new Set(["bar", "line", "area", "pie", "table", "metric"]);
 
@@ -65,8 +65,11 @@ router.post("/", async (req, res) => {
     if (!name) return res.status(400).json({ error: "name is required" });
 
     const db = await getDb();
-    const count = await db.collection("dashboards").countDocuments({ userId: req.userId });
-    if (count >= MAX_DASHBOARDS) return res.status(403).json({ error: `Maximum of ${MAX_DASHBOARDS} dashboards reached` });
+
+    // Plan limit: cap the number of reports (dashboards) per plan.
+    const planContext = await getPlanContext(db, req.userId);
+    const dashCheck = canUseMetric(planContext.plan, "dashboards", planContext.usage.dashboards, 1);
+    if (!dashCheck.allowed) return res.status(403).json(dashCheck.details);
 
     const doc = {
       _id: `dsh_${crypto.randomBytes(8).toString("hex")}`,

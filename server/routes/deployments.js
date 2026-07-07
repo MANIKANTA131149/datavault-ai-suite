@@ -12,6 +12,7 @@ const {
 } = require("../lib/live-db");
 const { buildSqlFromOperation } = require("../lib/sql-builder");
 const { SQL_NATIVE_DB_TYPES, validateReadOnlySql } = require("../lib/sql-validator");
+const { decryptConfig } = require("../lib/secret-crypto");
 
 const router = express.Router();
 
@@ -903,7 +904,7 @@ router.post("/public/:id/execute", async (req, res) => {
 
     const mockConn = {
       dbType: connectionSnapshot.dbType,
-      config: connectionSnapshot.config,
+      config: decryptConfig(connectionSnapshot.config), // creds encrypted at rest
       name: connectionSnapshot.name,
     };
 
@@ -980,8 +981,10 @@ router.post("/public/:id/execute", async (req, res) => {
 
     res.json(result);
   } catch (err) {
+    // Public endpoint: log full detail server-side, return a generic message so
+    // we don't leak DB schema/host internals to anonymous callers.
     console.error("Public DB proxy execute error:", err);
-    res.status(500).json({ error: "Query execution failed: " + err.message });
+    res.status(500).json({ error: "Query execution failed. Please check your query and try again." });
   }
 });
 

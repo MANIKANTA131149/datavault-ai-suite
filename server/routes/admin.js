@@ -2,7 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const { getDb } = require("../db");
 const { logAudit } = require("../middleware/auditLogger");
-const { authMiddleware } = require("../middleware/auth");
+const { authMiddleware, invalidateSuspendCache } = require("../middleware/auth");
 const { defaultPlanFields, getPlanContext, canUseMetric, getOrganizationMemberIds, isPlanOwner } = require("../lib/plans");
 
 const router = express.Router();
@@ -147,6 +147,8 @@ router.put("/users/:id/status", requirePaidAdmin, async (req, res) => {
       { _id: req.params.id, organizationId: req.adminUser.organizationId },
       { $set: { status } }
     );
+    // Make suspension/reactivation effective immediately (bypass the 60s cache).
+    invalidateSuspendCache(req.params.id);
 
     res.json({ success: true });
     logAudit(req.userId, "", "admin.status_change", { targetUserId: req.params.id, newStatus: status }, "warn");

@@ -10,12 +10,12 @@ const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { validateReadOnlySql } = require("../lib/sql-validator");
 const { logAudit } = require("../middleware/auditLogger");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
 
 const OPERATORS = new Set(["<", "<=", ">", ">=", "=", "!="]);
-const MAX_ALERTS_PER_USER = 25;
 
 // ─── List alerts ──────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -74,8 +74,11 @@ router.post("/", async (req, res) => {
     validateReadOnlySql(metricSql, connectionId ? "postgresql" : "duckdb");
 
     const db = await getDb();
-    const count = await db.collection("alerts").countDocuments({ userId: req.userId });
-    if (count >= MAX_ALERTS_PER_USER) return res.status(403).json({ error: `Maximum of ${MAX_ALERTS_PER_USER} alerts per user reached` });
+
+    // Plan limit: automations = schedules + alerts combined.
+    const planContext = await getPlanContext(db, req.userId);
+    const autoCheck = canUseMetric(planContext.plan, "automations", planContext.usage.automations, 1);
+    if (!autoCheck.allowed) return res.status(403).json(autoCheck.details);
 
     const doc = {
       _id: `alr_${crypto.randomBytes(8).toString("hex")}`,

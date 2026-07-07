@@ -3,6 +3,8 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { testLiveConnection } = require("../lib/live-db");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
+const { encryptConfig, decryptConfig } = require("../lib/secret-crypto");
 
 const router = express.Router();
 
@@ -161,6 +163,11 @@ router.post("/", authMiddleware, async (req, res) => {
 
     const db = await getDb();
 
+    // Plan limit: cap the number of database connections per plan.
+    const planContext = await getPlanContext(db, req.userId);
+    const connCheck = canUseMetric(planContext.plan, "connections", planContext.usage.connections, 1);
+    if (!connCheck.allowed) return res.status(403).json(connCheck.details);
+
     // Check for duplicate name for this user
     const existing = await db
       .collection("connections")
@@ -174,7 +181,7 @@ router.post("/", authMiddleware, async (req, res) => {
       userEmail: req.userEmail,
       name: name.trim(),
       dbType,
-      config,
+      config: encryptConfig(config), // encrypt credentials at rest
       description: description?.trim() || "",
       tags: Array.isArray(tags) ? tags : [],
       status: "untested",
@@ -226,7 +233,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
 
     const update = {
       ...(name !== undefined && { name: name.trim() }),
-      ...(config !== undefined && { config }),
+      ...(config !== undefined && { config: encryptConfig(config) }),
       ...(description !== undefined && { description: description.trim() }),
       ...(tags !== undefined && { tags }),
       ...(status !== undefined && { status }),
@@ -290,7 +297,8 @@ router.post("/:id/test", authMiddleware, async (req, res) => {
       });
     }
 
-    await testLiveConnection(conn);
+    // Decrypt stored credentials only at the moment we actually connect.
+    await testLiveConnection({ ...conn, config: decryptConfig(conn.config) });
 
     await db.collection("connections").updateOne(
       { _id: new ObjectId(req.params.id) },
