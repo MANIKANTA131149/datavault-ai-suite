@@ -10,6 +10,13 @@ export interface PlanDefinition {
   fileSizeLimitBytes: number | null;
   insights: number | null;
   members: number | null;
+  connections: number | null;
+  glossary: number | null;
+  metrics: number | null;
+  dashboards: number | null;
+  automations: number | null;
+  workspaces: number | null;
+  traceRetentionDays: number | null;
   adminPage: boolean;
   exports: ExportFormat[];
   features: string[];
@@ -21,6 +28,12 @@ export interface PlanUsage {
   datasets: number;
   insights: number;
   members: number;
+  connections: number;
+  glossary: number;
+  metrics: number;
+  dashboards: number;
+  automations: number;
+  workspaces: number;
 }
 
 export interface PlanContext {
@@ -50,6 +63,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     fileSizeLimitBytes: 1 * 1024 * 1024,
     insights: 3,
     members: 0,
+    connections: 1,
+    glossary: 10,
+    metrics: 3,
+    dashboards: 2,
+    automations: 1,
+    workspaces: 0,
+    traceRetentionDays: 7,
     adminPage: false,
     exports: ["csv", "json"],
     features: ["200k daily tokens", "2 datasets", "1 MB files", "CSV/JSON exports"],
@@ -63,6 +83,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     fileSizeLimitBytes: 15 * 1024 * 1024,
     insights: 25,
     members: 1,
+    connections: 5,
+    glossary: 50,
+    metrics: 20,
+    dashboards: 15,
+    automations: 10,
+    workspaces: 1,
+    traceRetentionDays: 30,
     adminPage: true,
     exports: ["csv", "json", "markdown", "pdf"],
     features: ["400k daily tokens", "20 datasets", "15 MB files", "1 shared member", "PDF exports", "Admin page"],
@@ -76,6 +103,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     fileSizeLimitBytes: 35 * 1024 * 1024,
     insights: 100,
     members: 3,
+    connections: 25,
+    glossary: 250,
+    metrics: 100,
+    dashboards: 60,
+    automations: 50,
+    workspaces: 3,
+    traceRetentionDays: 90,
     adminPage: true,
     exports: ["csv", "json", "markdown", "html", "pdf"],
     features: ["800k daily tokens", "100 datasets", "35 MB files", "3 shared members", "PDF exports"],
@@ -89,6 +123,13 @@ export const PLAN_DEFINITIONS: Record<PlanTier, PlanDefinition> = {
     fileSizeLimitBytes: null,
     insights: null,
     members: null,
+    connections: null,
+    glossary: null,
+    metrics: null,
+    dashboards: null,
+    automations: null,
+    workspaces: null,
+    traceRetentionDays: null,
     adminPage: true,
     exports: ["csv", "json", "markdown", "html", "pdf", "audit", "history"],
     features: ["Unlimited tokens", "No file size limit", "Unlimited members", "All exports", "Audit and history export"],

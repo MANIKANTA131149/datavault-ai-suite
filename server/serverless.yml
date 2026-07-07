@@ -19,6 +19,9 @@ provider:
     # If it doesn't, the backend can't decrypt request bodies → "Invalid encrypted payload".
     # If left empty, both sides fall back to the same default key (works, but the key is public).
     API_ENCRYPTION_KEY: ${env:API_ENCRYPTION_KEY, ""}
+    # At-rest field encryption for stored secrets (external DB connection
+    # credentials). Server-only — NEVER shipped to the browser. 32+ random bytes.
+    SECRET_ENCRYPTION_KEY: ${env:SECRET_ENCRYPTION_KEY, ""}
     # Analytics dashboard (audit-team login). If unset, the analytics login
     # endpoint returns 503 "credentials not configured" — the rest of the app
     # is unaffected. ANALYTICS_TOKEN_SECRET is optional; it falls back to JWT_SECRET.

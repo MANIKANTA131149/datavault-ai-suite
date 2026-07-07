@@ -11,20 +11,47 @@
 
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const rateLimit = require("express-rate-limit");
 const { getDb } = require("../db");
+
+// Constant-time string compare to avoid leaking credential length/content via timing.
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
 
 const router = express.Router();
 
+// Tight brute-force limiter for the analytics login (separate creds, no Clerk).
+// 5 attempts/min/IP — the surrounding apiLimiter (300/min) is far too loose for
+// a password endpoint.
+const analyticsLoginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false, xForwardedForHeader: false },
+  message: { error: "Too many login attempts. Please wait a minute and try again." },
+});
+
 function getAnalyticsSecret() {
-  return (
-    process.env.ANALYTICS_TOKEN_SECRET ||
-    process.env.JWT_SECRET ||
-    "analytics-fallback-secret"
-  );
+  const secret = process.env.ANALYTICS_TOKEN_SECRET || process.env.JWT_SECRET;
+  if (!secret) {
+    // In a deployed environment, refuse to sign/verify with a public default —
+    // that would let anyone forge analytics tokens. Fail closed.
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      throw new Error("ANALYTICS_TOKEN_SECRET or JWT_SECRET must be set in production");
+    }
+    return "analytics-fallback-secret-dev-only";
+  }
+  return secret;
 }
 
 // ── POST /api/admin/analytics/login ───────────────────────────────────────────
-router.post("/login", (req, res) => {
+router.post("/login", analyticsLoginLimiter, (req, res) => {
   const { username, password } = req.body || {};
 
   const expectedUser = process.env.ANALYTICS_USERNAME;
@@ -37,7 +64,7 @@ router.post("/login", (req, res) => {
     });
   }
 
-  if (username !== expectedUser || password !== expectedPass) {
+  if (!safeEqual(username, expectedUser) || !safeEqual(password, expectedPass)) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 

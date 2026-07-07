@@ -10,6 +10,13 @@ const PLAN_DEFINITIONS = {
     fileSizeLimitBytes: 1 * 1024 * 1024,
     insights: 3,
     members: 0,
+    connections: 1,
+    glossary: 10,
+    metrics: 3,
+    dashboards: 2,
+    automations: 1,
+    workspaces: 0,
+    traceRetentionDays: 7,
     adminPage: false,
     exports: ["csv", "json"],
     features: ["200k daily tokens", "2 datasets", "1 MB files", "CSV/JSON exports"],
@@ -23,6 +30,13 @@ const PLAN_DEFINITIONS = {
     fileSizeLimitBytes: 15 * 1024 * 1024,
     insights: 25,
     members: 1,
+    connections: 5,
+    glossary: 50,
+    metrics: 20,
+    dashboards: 15,
+    automations: 10,
+    workspaces: 1,
+    traceRetentionDays: 30,
     adminPage: true,
     exports: ["csv", "json", "markdown", "pdf"],
     features: ["400k daily tokens", "20 datasets", "15 MB files", "1 shared member", "PDF exports", "Admin page"],
@@ -36,6 +50,13 @@ const PLAN_DEFINITIONS = {
     fileSizeLimitBytes: 35 * 1024 * 1024,
     insights: 100,
     members: 3,
+    connections: 25,
+    glossary: 250,
+    metrics: 100,
+    dashboards: 60,
+    automations: 50,
+    workspaces: 3,
+    traceRetentionDays: 90,
     adminPage: true,
     exports: ["csv", "json", "markdown", "html", "pdf"],
     features: ["800k daily tokens", "100 datasets", "35 MB files", "3 shared members", "PDF exports"],
@@ -49,6 +70,13 @@ const PLAN_DEFINITIONS = {
     fileSizeLimitBytes: null,
     insights: null,
     members: null,
+    connections: null,
+    glossary: null,
+    metrics: null,
+    dashboards: null,
+    automations: null,
+    workspaces: null,
+    traceRetentionDays: null,
     adminPage: true,
     exports: ["csv", "json", "markdown", "html", "pdf", "audit", "history"],
     features: ["Unlimited usage", "No file size limit", "Unlimited members", "All exports", "Audit and history export"],
@@ -140,6 +168,12 @@ function buildLimitError(metric, plan, usageValue, attempted = 1) {
     datasets: "Dataset",
     insights: "Saved insight",
     members: "Shared member",
+    connections: "Database connection",
+    glossary: "Glossary term",
+    metrics: "Certified metric",
+    dashboards: "Report",
+    automations: "Automation",
+    workspaces: "Team workspace",
   }[metric] || "Plan";
   return {
     error: `${label} limit reached for ${plan.name} plan`,
@@ -258,7 +292,12 @@ async function getUsage(db, user, planOwner = user) {
     ] }
   };
 
-  const [queryCount, tokenAgg, datasetCount, insightCount, memberCount] = await Promise.all([
+  const orgId = user.organizationId;
+  const [
+    queryCount, tokenAgg, datasetCount, insightCount, memberCount,
+    connectionCount, glossaryCount, metricCount, dashboardCount, scheduleCount, alertCount,
+    workspaceCount,
+  ] = await Promise.all([
     db.collection("history").countDocuments(historyFilter),
     db.collection("history").aggregate([
       { $match: historyFilter },
@@ -267,10 +306,21 @@ async function getUsage(db, user, planOwner = user) {
     db.collection("datasets").countDocuments({ userId: { $in: userIds }, archived: { $ne: true } }),
     db.collection("insights").countDocuments({ userId: { $in: userIds } }),
     db.collection("users").countDocuments({
-      organizationId: user.organizationId,
+      organizationId: orgId,
       status: { $ne: "suspended" },
       $expr: { $ne: [{ $toString: "$_id" }, ownerId] },
     }),
+    // userId-scoped resources (shared across org members)
+    db.collection("connections").countDocuments({ userId: { $in: userIds }, deleted: { $ne: true } }),
+    // orgId-scoped resources (glossary + metrics live at the org level)
+    db.collection("glossary").countDocuments({ orgId }),
+    db.collection("metrics").countDocuments({ orgId }),
+    db.collection("dashboards").countDocuments({ userId: { $in: userIds } }),
+    // automations = schedules + alerts combined
+    db.collection("schedules").countDocuments({ userId: { $in: userIds } }),
+    db.collection("alerts").countDocuments({ userId: { $in: userIds } }),
+    // Team workspaces the plan owner has created (Personal workspace isn't a row here).
+    db.collection("organizations").countDocuments({ ownerId, type: "team" }),
   ]);
 
   return {
@@ -279,6 +329,12 @@ async function getUsage(db, user, planOwner = user) {
     datasets: datasetCount,
     insights: insightCount,
     members: memberCount,
+    connections: connectionCount,
+    glossary: glossaryCount,
+    metrics: metricCount,
+    dashboards: dashboardCount,
+    automations: scheduleCount + alertCount,
+    workspaces: workspaceCount,
   };
 }
 
@@ -295,6 +351,41 @@ function isPlanOwner(user, planOwner) {
   const userId = user?._id?.toString ? user._id.toString() : String(user?._id || "");
   const ownerId = planOwner?._id?.toString ? planOwner._id.toString() : String(planOwner?._id || "");
   return Boolean(userId && ownerId && userId === ownerId);
+}
+
+// Delete agent_traces older than each user's plan retention window. Traces are
+// auto-generated per agent run, so we limit by RETENTION (age) rather than a
+// hard count cap. Run from the scheduler. Enterprise (null retention) keeps all.
+async function pruneTracesByRetention(db, now = new Date()) {
+  // Group users by plan tier so we issue one deleteMany per distinct cutoff.
+  const tierByUser = await db.collection("users")
+    .find({}, { projection: { _id: 1, planTier: 1 } })
+    .toArray();
+
+  // Bucket userIds by their plan's retention days (skip null = unlimited).
+  const buckets = new Map(); // days -> [userId]
+  for (const u of tierByUser) {
+    const plan = getPlanDefinition(u.planTier);
+    const days = plan.traceRetentionDays;
+    if (days === null || days === undefined) continue; // unlimited
+    if (!buckets.has(days)) buckets.set(days, []);
+    buckets.get(days).push(u._id);
+  }
+
+  let deleted = 0;
+  for (const [days, userIds] of buckets) {
+    const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    // Process in chunks so a huge org doesn't build an oversized $in.
+    for (let i = 0; i < userIds.length; i += 500) {
+      const chunk = userIds.slice(i, i + 500);
+      const res = await db.collection("agent_traces").deleteMany({
+        userId: { $in: chunk },
+        ts: { $lt: cutoff },
+      });
+      deleted += res.deletedCount || 0;
+    }
+  }
+  return deleted;
 }
 
 async function canAccessAdmin(db, user) {
@@ -339,4 +430,5 @@ module.exports = {
   getOrganizationMemberIds,
   canAccessAdmin,
   serializePlanContext,
+  pruneTracesByRetention,
 };

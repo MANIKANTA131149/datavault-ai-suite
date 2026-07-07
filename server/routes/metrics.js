@@ -14,11 +14,11 @@ const { authMiddleware } = require("../middleware/auth");
 const { getOrgContext } = require("../lib/orgs");
 const { validateReadOnlySql } = require("../lib/sql-validator");
 const { logAudit } = require("../middleware/auditLogger");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const MAX_METRICS_PER_ORG = 200;
 
 // Attach org context (authMiddleware alone doesn't set req.orgId).
 router.use(async (req, _res, next) => {
@@ -83,8 +83,11 @@ router.post("/", async (req, res) => {
     if (!expression || typeof expression !== "string") return res.status(400).json({ error: "expression is required" });
 
     const db = await getDb();
-    const count = await db.collection("metrics").countDocuments({ orgId: req.orgId });
-    if (count >= MAX_METRICS_PER_ORG) return res.status(403).json({ error: `Maximum of ${MAX_METRICS_PER_ORG} metrics reached` });
+
+    // Plan limit: cap the number of certified metrics per plan.
+    const planContext = await getPlanContext(db, req.userId);
+    const metricCheck = canUseMetric(planContext.plan, "metrics", planContext.usage.metrics, 1);
+    if (!metricCheck.allowed) return res.status(403).json(metricCheck.details);
 
     const doc = {
       _id: `met_${crypto.randomBytes(8).toString("hex")}`,

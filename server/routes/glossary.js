@@ -10,6 +10,7 @@ const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { orgContextMiddleware } = require("../lib/orgs");
 const { logAudit } = require("../middleware/auditLogger");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -40,6 +41,12 @@ router.post("/", async (req, res) => {
     if (!definition || definition.length > 1000) return res.status(400).json({ error: "definition (1-1000 chars) is required" });
 
     const db = await getDb();
+
+    // Plan limit: cap the number of glossary terms per plan.
+    const planContext = await getPlanContext(db, req.userId);
+    const glossaryCheck = canUseMetric(planContext.plan, "glossary", planContext.usage.glossary, 1);
+    if (!glossaryCheck.allowed) return res.status(403).json(glossaryCheck.details);
+
     const existing = await db.collection("glossary").findOne({
       orgId: req.orgId,
       termLower: term.toLowerCase(),

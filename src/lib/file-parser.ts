@@ -10,6 +10,8 @@ export interface ColumnInfo {
 }
 
 export interface SheetData {
+  /** Optional sheet/table name. Set when a SheetData travels with its source name (e.g. virtual/cross-sheet results). */
+  name?: string;
   columns: ColumnInfo[];
   rows: Record<string, any>[];
 }

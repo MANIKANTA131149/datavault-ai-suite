@@ -148,6 +148,17 @@ interface ComparisonRow {
   category?: string;
 }
 
+// Build a {free, standard, professional, enterprise} row of formatted limits
+// for a numeric plan metric (null → "Unlimited").
+function limitRow(metric: "connections" | "glossary" | "metrics" | "dashboards" | "automations" | "workspaces"): Record<PlanTier, string> {
+  return {
+    free: formatPlanLimit(PLAN_DEFINITIONS.free[metric]),
+    standard: formatPlanLimit(PLAN_DEFINITIONS.standard[metric]),
+    professional: formatPlanLimit(PLAN_DEFINITIONS.professional[metric]),
+    enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise[metric]),
+  };
+}
+
 function buildComparisonRows(): ComparisonRow[] {
   return [
     { label: "Daily Tokens", icon: MessageSquare, values: { free: formatPlanLimit(PLAN_DEFINITIONS.free.monthlyTokens), standard: formatPlanLimit(PLAN_DEFINITIONS.standard.monthlyTokens), professional: formatPlanLimit(PLAN_DEFINITIONS.professional.monthlyTokens), enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise.monthlyTokens) } },
@@ -155,6 +166,18 @@ function buildComparisonRows(): ComparisonRow[] {
     { label: "File Size Limit", icon: FileUp, values: { free: formatFileSizeLimit(PLAN_DEFINITIONS.free.fileSizeLimitBytes), standard: formatFileSizeLimit(PLAN_DEFINITIONS.standard.fileSizeLimitBytes), professional: formatFileSizeLimit(PLAN_DEFINITIONS.professional.fileSizeLimitBytes), enterprise: formatFileSizeLimit(PLAN_DEFINITIONS.enterprise.fileSizeLimitBytes) } },
     { label: "Saved Insights", icon: Bookmark, values: { free: formatPlanLimit(PLAN_DEFINITIONS.free.insights), standard: formatPlanLimit(PLAN_DEFINITIONS.standard.insights), professional: formatPlanLimit(PLAN_DEFINITIONS.professional.insights), enterprise: formatPlanLimit(PLAN_DEFINITIONS.enterprise.insights) } },
     { label: "Team Members", icon: Users, values: { free: "0", standard: "1", professional: "3", enterprise: "Unlimited" } },
+    { label: "Team Workspaces", icon: Building2, values: limitRow("workspaces") },
+    { label: "Database Connections", icon: Database, values: limitRow("connections") },
+    { label: "Glossary Terms", icon: Bookmark, values: limitRow("glossary") },
+    { label: "Certified Metrics", icon: Sparkles, values: limitRow("metrics") },
+    { label: "Reports", icon: Database, values: limitRow("dashboards") },
+    { label: "Automations", icon: RefreshCw, values: limitRow("automations") },
+    { label: "Trace Retention", icon: Shield, values: {
+      free: `${PLAN_DEFINITIONS.free.traceRetentionDays} days`,
+      standard: `${PLAN_DEFINITIONS.standard.traceRetentionDays} days`,
+      professional: `${PLAN_DEFINITIONS.professional.traceRetentionDays} days`,
+      enterprise: "Unlimited",
+    } },
     { label: "CSV Export", icon: Download, values: { free: true, standard: true, professional: true, enterprise: true } },
     { label: "JSON Export", icon: Download, values: { free: true, standard: true, professional: true, enterprise: true } },
     { label: "PDF Export", icon: Download, values: { free: false, standard: true, professional: true, enterprise: true } },

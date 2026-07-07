@@ -13,6 +13,7 @@ const { recordUsage } = require("./lib/metering");
 const { recordLineage } = require("./lib/lineage");
 const { evaluateCondition, dispatchAction } = require("./lib/automation-actions");
 const { downgradeExpiredPlans, flagPastDuePlans } = require("./lib/subscriptions");
+const { pruneTracesByRetention } = require("./lib/plans");
 
 const BATCH_LIMIT = 25;
 
@@ -254,17 +255,19 @@ async function runScheduler() {
   // error never aborts schedules/alerts.
   let pastDue = 0;
   let downgraded = 0;
+  let tracesPruned = 0;
   try {
     pastDue = await flagPastDuePlans(db, new Date(now));
     downgraded = await downgradeExpiredPlans(db, new Date(now));
+    tracesPruned = await pruneTracesByRetention(db, new Date(now));
   } catch (err) {
     console.error("billing lifecycle pass failed:", err.message);
   }
 
   console.log(
-    `scheduler tick: ${schedules} schedules run, ${alerts} alerts evaluated, ${pastDue} past_due, ${downgraded} downgraded`
+    `scheduler tick: ${schedules} schedules run, ${alerts} alerts evaluated, ${pastDue} past_due, ${downgraded} downgraded, ${tracesPruned} traces pruned`
   );
-  return { schedules, alerts, pastDue, downgraded };
+  return { schedules, alerts, pastDue, downgraded, tracesPruned };
 }
 
 module.exports.handler = async () => {

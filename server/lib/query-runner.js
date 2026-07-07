@@ -7,6 +7,7 @@ const { ObjectId } = require("mongodb");
 const { executeLiveSql } = require("./live-db");
 const { validateReadOnlySql, SQL_NATIVE_DB_TYPES } = require("./sql-validator");
 const { executeSheetSql } = require("./sheet-engine");
+const { decryptConfig } = require("./secret-crypto");
 
 const MAX_RESULT_ROWS = 1000;
 
@@ -31,7 +32,7 @@ async function runStoredQuery(db, userId, target) {
       throw new Error(`${conn.dbType} does not support SQL execution`);
     }
     const validated = validateReadOnlySql(sql, conn.dbType);
-    const result = await executeLiveSql(conn, validated.sql);
+    const result = await executeLiveSql({ ...conn, config: decryptConfig(conn.config) }, validated.sql);
     const rows = (result.data || result.rows || []).slice(0, MAX_RESULT_ROWS);
     return { rows, rowCount: rows.length, source: `connection:${conn.name}`, dbType: conn.dbType };
   }
@@ -83,7 +84,7 @@ async function describeTarget(db, userId, target) {
       userId,
     });
     if (!conn) throw new Error("Connection not found");
-    const tables = await getLiveSchema(conn, { includeColumns: true, includeCounts: false });
+    const tables = await getLiveSchema({ ...conn, config: decryptConfig(conn.config) }, { includeColumns: true, includeCounts: false });
     const lines = (tables || []).slice(0, 40).map((t) => {
       const cols = (t.columns || []).slice(0, 60).map((c) => `"${c.name}" (${c.dtype || c.type || "?"})`).join(", ");
       return `Table "${t.name}": ${cols}`;

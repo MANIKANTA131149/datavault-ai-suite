@@ -5,6 +5,7 @@ const { getDb } = require("../db");
 const { authMiddleware } = require("../middleware/auth");
 const { getOrgContext, listUserOrgs, personalOrgId } = require("../lib/orgs");
 const { logAudit } = require("../middleware/auditLogger");
+const { getPlanContext, canUseMetric } = require("../lib/plans");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -45,6 +46,13 @@ router.post("/", async (req, res) => {
     if (!name || name.length > 80) return res.status(400).json({ error: "Organization name (1-80 chars) is required" });
 
     const db = await getDb();
+
+    // Plan limit: cap how many team workspaces a user can create. Everyone
+    // always has their Personal workspace, which isn't counted here.
+    const planContext = await getPlanContext(db, req.userId);
+    const wsCheck = canUseMetric(planContext.plan, "workspaces", planContext.usage.workspaces, 1);
+    if (!wsCheck.allowed) return res.status(403).json(wsCheck.details);
+
     const orgId = `org_${crypto.randomBytes(8).toString("hex")}`;
     await db.collection("organizations").insertOne({
       _id: orgId,
